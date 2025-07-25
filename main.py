@@ -4,6 +4,8 @@ import os
 from dotenv import load_dotenv
 import asyncio
 import random
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # Load environment variables
 load_dotenv()
@@ -320,6 +322,42 @@ async def on_command_error(ctx, error):
     else:
         print(f"Unexpected error: {error}")
 
+# Simple HTTP server for Render deployment
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            
+            # Get bot status
+            status = {
+                "status": "online" if bot.is_ready() else "offline",
+                "bot_name": str(bot.user) if bot.user else "GKR Bot",
+                "guilds": len(bot.guilds) if bot.guilds else 0,
+                "message": "GKR Discord Bot is running! 🚀"
+            }
+            
+            import json
+            self.wfile.write(json.dumps(status, indent=2).encode())
+        else:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b'Not Found')
+    
+    def log_message(self, format, *args):
+        # Suppress HTTP server logs
+        pass
+
+def start_http_server():
+    """Start HTTP server for Render health checks"""
+    try:
+        server = HTTPServer(('0.0.0.0', PORT), HealthCheckHandler)
+        print(f"🌐 HTTP server started on port {PORT} for Render deployment")
+        server.serve_forever()
+    except Exception as e:
+        print(f"❌ Failed to start HTTP server: {e}")
+
 # Run the bot
 if __name__ == "__main__":
     try:
@@ -329,6 +367,12 @@ if __name__ == "__main__":
         print("- Message Content Intent")
         print("You can enable these at: https://discord.com/developers/applications/")
         print()
+        
+        # Start HTTP server in background thread for Render
+        http_thread = Thread(target=start_http_server, daemon=True)
+        http_thread.start()
+        
+        # Start Discord bot
         bot.run(TOKEN)
     except discord.PrivilegedIntentsRequired as e:
         print("\n❌ PRIVILEGED INTENTS ERROR:")
