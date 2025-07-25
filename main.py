@@ -23,7 +23,7 @@ intents.members = True  # Required for member events (privileged intent)
 intents.guilds = True
 intents.message_content = True  # Required for reading message content (privileged intent)
 
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix='/', intents=intents)
 
 # Activity rotation list - Cool and dynamic activities
 base_activities = [
@@ -66,6 +66,10 @@ async def on_ready():
     rotate_activity.start()
     print("🔄 Activity rotation started! (Every 5 seconds - Super Dynamic!)")
     
+    # Start periodic nickname sync
+    periodic_nickname_sync.start()
+    print("🔄 Periodic nickname sync started! (Every hour)")
+    
     # Update member count activity
     guild = bot.get_guild(GUILD_ID)
     if guild:
@@ -101,6 +105,42 @@ async def on_ready():
     
     print('✅ Bot is ready to manage GKR nicknames!')
     print('='*50)
+    
+    # Sync nicknames for existing members with the role
+    await sync_existing_nicknames()
+
+async def sync_existing_nicknames():
+    """Sync nicknames for all existing members with the specified role"""
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        print("❌ Guild not found for nickname sync")
+        return
+    
+    bot_role = guild.get_role(BOT_ROLE_ID)
+    if not bot_role:
+        print("❌ Bot role not found for nickname sync")
+        return
+    
+    print(f"🔄 Starting nickname sync for {bot_role.name} role members...")
+    
+    changed = 0
+    failed = 0
+    
+    for member in bot_role.members:
+        if member.nick != "GKR":
+            try:
+                await member.edit(nick="GKR")
+                changed += 1
+                print(f"✅ Synced {member.display_name} → GKR")
+            except discord.Forbidden:
+                failed += 1
+                print(f"❌ No permission to change {member.display_name}")
+            except discord.HTTPException as e:
+                failed += 1
+                print(f"⚠️  Failed to change {member.display_name}: {e}")
+    
+    print(f"🎯 Nickname sync complete: {changed} changed, {failed} failed")
+    print('='*50)
 
 @bot.event
 async def on_member_join(member):
@@ -110,6 +150,17 @@ async def on_member_join(member):
     # Check if this is the correct guild
     if guild.id != GUILD_ID:
         return
+    
+    print(f"👋 New member joined: {member.display_name}")
+    
+    # Small delay to allow role assignment bots to work
+    await asyncio.sleep(2)
+    
+    # Refresh member data to get updated roles
+    try:
+        member = await guild.fetch_member(member.id)
+    except:
+        pass
     
     try:
         # Check if the member has the specified role
@@ -123,6 +174,8 @@ async def on_member_join(member):
             # channel = discord.utils.get(guild.channels, name='general')
             # if channel:
             #     await channel.send(f"🔥 Welcome {member.mention}! You're now officially **GKR**! 👑")
+        else:
+            print(f"ℹ️  {member.display_name} doesn't have the required role yet")
             
     except discord.Forbidden:
         print(f"❌ No permission to change nickname for {member.display_name}")
@@ -217,6 +270,35 @@ async def rotate_activity():
         if random.randint(1, 12) == 1:  # Only log every ~12th change to reduce console spam
             print(f"🔄 Activity changed to: {activity_name}")
 
+@tasks.loop(hours=1)  # Run nickname sync every hour
+async def periodic_nickname_sync():
+    """Periodically sync nicknames to catch any missed changes"""
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        return
+    
+    bot_role = guild.get_role(BOT_ROLE_ID)
+    if not bot_role:
+        return
+    
+    changed = 0
+    
+    for member in bot_role.members:
+        if member.nick != "GKR":
+            try:
+                await member.edit(nick="GKR")
+                changed += 1
+                print(f"🔄 Periodic sync: {member.display_name} → GKR")
+            except (discord.Forbidden, discord.HTTPException):
+                pass
+    
+    if changed > 0:
+        print(f"🎯 Periodic sync complete: {changed} nicknames updated")
+
+@periodic_nickname_sync.before_loop
+async def before_periodic_sync():
+    await bot.wait_until_ready()
+
 @bot.command(name='setnick')
 @commands.has_permissions(manage_nicknames=True)
 async def set_nickname(ctx, member: discord.Member = None):
@@ -260,6 +342,34 @@ async def set_all_nicknames(ctx):
                 failed += 1
     
     result_msg = f"✅ Changed {changed} nicknames to GKR"
+    if failed > 0:
+        result_msg += f" ({failed} failed due to permissions)"
+    
+    await ctx.send(result_msg)
+
+@bot.command(name='syncnicks')
+@commands.has_permissions(manage_nicknames=True)
+async def sync_nicknames(ctx):
+    """Manually sync all nicknames for members with the specified role"""
+    role = ctx.guild.get_role(BOT_ROLE_ID)
+    if not role:
+        await ctx.send("❌ Specified role not found.")
+        return
+    
+    changed = 0
+    failed = 0
+    
+    await ctx.send(f"🔄 Syncing nicknames for all {role.name} role members...")
+    
+    for member in role.members:
+        if member.nick != "GKR":
+            try:
+                await member.edit(nick="GKR")
+                changed += 1
+            except (discord.Forbidden, discord.HTTPException):
+                failed += 1
+    
+    result_msg = f"✅ Sync complete: {changed} nicknames updated to GKR"
     if failed > 0:
         result_msg += f" ({failed} failed due to permissions)"
     
