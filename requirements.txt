@@ -1,7 +1,7 @@
 # Core Discord Bot Dependencies
-discord.py>=2.3.2
-python-dotenv>=1.0.0
-asyncio
+discord.py>=2.0.0
+python-dotenv>=0.19.0
+asyncio>=3.4.3
 
 # Web Framework (for webhook endpoints)
 flask>=3.0.0

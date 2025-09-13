@@ -1,9 +1,10 @@
 import discord
 from discord.ext import commands, tasks
 import os
-from dotenv import load_dotenv
+import datetime
 import asyncio
 import random
+from dotenv import load_dotenv
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
@@ -17,38 +18,35 @@ BOT_ROLE_ID = int(os.getenv('BOT_ROLE_ID'))  # Role for bot nickname management
 MEMBER_ROLE_ID = int(os.getenv('memeber_role_id'))  # Role for member count watching
 PORT = int(os.getenv('PORT', 8080))
 
+# Reaction roles configuration
+REACTION_CHANNEL_ID = int(os.getenv('REACTION_CHANNEL_ID', '0'))  # Default to 0 if not set
+REACTION_MESSAGE_ID = None  # Will be set when message is created
+
+# Emoji to role mapping - Use custom emoji IDs from your server
+# You must first upload gta5.jpeg, other.jpeg, and valo.jpeg as custom emojis in your Discord server
+# Then replace these with your actual emoji IDs and names
+EMOJI_ROLE_MAP = {
+    # Format for custom emoji is either:
+    # "<:emoji_name:emoji_id>" or "<a:emoji_name:emoji_id>" for animated emojis
+    "<:valo:1416294130648088718>": int(os.getenv('VALORANT_ROLE_ID', '0')),    # Valorant
+    "<:gta5:1416294123987669094>": int(os.getenv('GTA_ROLE_ID', '0')),         # GTA V
+    "<:other:1416294127972384818>": int(os.getenv('OTHER_ROLE_ID', '0')),      # Other
+}
+
 # Bot setup with intents
 intents = discord.Intents.default()
 intents.members = True  # Required for member events (privileged intent)
 intents.guilds = True
 intents.message_content = True  # Required for reading message content (privileged intent)
+intents.reactions = True  # Required for reaction events
 
 bot = commands.Bot(command_prefix='/', intents=intents)
 
-# Activity rotation list - Cool and dynamic activities
+# Activity rotation list - Simple and focused activities
 base_activities = [
-    # Watching activities
-    {"type": discord.ActivityType.watching, "name": "the member count 👥"},
-    {"type": discord.ActivityType.watching, "name": "{member_count} members online 🔥"},
-    {"type": discord.ActivityType.watching, "name": "GKR members grow 📈"},
-    {"type": discord.ActivityType.watching, "name": "over the server 👀"},
-    {"type": discord.ActivityType.watching, "name": "you all vibe ✨"},
-    
-    # Playing games activities
-    {"type": discord.ActivityType.playing, "name": "games with the crew 🎮"},
-    {"type": discord.ActivityType.playing, "name": "hide and seek 🕵️"},
-    {"type": discord.ActivityType.playing, "name": "with server stats 📊"},
-    {"type": discord.ActivityType.playing, "name": "GKR Championship 🏆"},
-    {"type": discord.ActivityType.playing, "name": "mind games 🧠"},
-    
-    # Chilling activities
-    {"type": discord.ActivityType.listening, "name": "chill vibes 🎵"},
-    {"type": discord.ActivityType.listening, "name": "to the community 💬"},
-    {"type": discord.ActivityType.listening, "name": "GKR stories 📚"},
-    {"type": discord.ActivityType.custom, "name": "😎 Chilling with GKR"},
-    {"type": discord.ActivityType.custom, "name": "🌟 Vibing in the server"},
-    {"type": discord.ActivityType.custom, "name": "💯 Living the GKR life"},
-    {"type": discord.ActivityType.custom, "name": "🚀 Keeping it cool"},
+    # Only two core activities
+    {"type": discord.ActivityType.watching, "name": "all members �"},
+    {"type": discord.ActivityType.playing, "name": "helping players 🤝"}
 ]
 
 @bot.event
@@ -205,70 +203,17 @@ async def on_member_update(before, after):
 
 @tasks.loop(seconds=5)  # Changed to 5 seconds for continuous automatic rotation
 async def rotate_activity():
-    """Rotate bot activities with cool and dynamic descriptions"""
-    guild = bot.get_guild(GUILD_ID)
+    """Rotate bot activities with simple descriptions"""
     
-    if guild:
-        # Create dynamic activities list
-        current_activities = []
-        
-        for activity_data in base_activities:
-            name = activity_data["name"]
-            
-            # Replace placeholders with actual data
-            if "{member_count}" in name:
-                name = name.replace("{member_count}", str(guild.member_count))
-            
-            # Create the activity object
-            if activity_data["type"] == discord.ActivityType.custom:
-                activity = discord.CustomActivity(name=name)
-            else:
-                activity = discord.Activity(type=activity_data["type"], name=name)
-            
-            current_activities.append(activity)
-        
-        # Add some special dynamic activities based on current stats
-        bot_role = guild.get_role(BOT_ROLE_ID)
-        member_role = guild.get_role(MEMBER_ROLE_ID)
-        
-        if bot_role and bot.intents.members:
-            bot_role_count = len(bot_role.members)
-            if bot_role_count > 0:
-                current_activities.extend([
-                    discord.Activity(type=discord.ActivityType.watching, name=f"{bot_role_count} members with {bot_role.name} role 👑"),
-                    discord.Activity(type=discord.ActivityType.custom, name=f"🎯 Managing {bot_role_count} GKR members"),
-                ])
-        
-        if member_role and bot.intents.members:
-            member_role_count = len(member_role.members)
-            if member_role_count > 0:
-                current_activities.extend([
-                    discord.Activity(type=discord.ActivityType.watching, name=f"{member_role_count} members with {member_role.name} role 👥"),
-                    discord.Activity(type=discord.ActivityType.watching, name=f"both roles: {bot_role_count if bot_role else 0} + {member_role_count} members 🔥"),
-                ])
-        
-        # Add time-based activities
-        import datetime
-        hour = datetime.datetime.now().hour
-        
-        if 6 <= hour < 12:
-            current_activities.append(discord.Activity(type=discord.ActivityType.custom, name="🌅 Good morning GKR!"))
-        elif 12 <= hour < 18:
-            current_activities.append(discord.Activity(type=discord.ActivityType.custom, name="☀️ Afternoon vibes"))
-        elif 18 <= hour < 22:
-            current_activities.append(discord.Activity(type=discord.ActivityType.custom, name="🌆 Evening chill"))
-        else:
-            current_activities.append(discord.Activity(type=discord.ActivityType.custom, name="🌙 Night owl mode"))
-        
-        # Choose a random activity
-        activity = random.choice(current_activities)
-        
-        await bot.change_presence(activity=activity)
-        
-        # Cool logging with emojis (reduced frequency to avoid spam)
-        activity_name = activity.name if hasattr(activity, 'name') else str(activity)
-        if random.randint(1, 12) == 1:  # Only log every ~12th change to reduce console spam
-            print(f"🔄 Activity changed to: {activity_name}")
+    # Simply alternate between the two defined activities
+    activity_data = random.choice(base_activities)
+    activity = discord.Activity(type=activity_data["type"], name=activity_data["name"])
+    
+    await bot.change_presence(activity=activity)
+    
+    # Occasional logging to avoid console spam
+    if random.randint(1, 12) == 1:  # Only log every ~12th change to reduce console spam
+        print(f"🔄 Activity changed to: {activity.name}")
 
 @tasks.loop(hours=1)  # Run nickname sync every hour
 async def periodic_nickname_sync():
@@ -471,31 +416,282 @@ def start_http_server():
 # Run the bot
 if __name__ == "__main__":
     try:
-        print("Starting Discord bot...")
-        print("Make sure you have enabled the following privileged intents in Discord Developer Portal:")
-        print("- Server Members Intent")
-        print("- Message Content Intent")
-        print("You can enable these at: https://discord.com/developers/applications/")
-        print()
+        # Start HTTP server for Render in a separate thread
+        server_thread = Thread(target=start_http_server)
+        server_thread.daemon = True
+        server_thread.start()
+        print(f"🌐 HTTP server started on port {PORT}")
         
-        # Start HTTP server in background thread for Render
-        http_thread = Thread(target=start_http_server, daemon=True)
-        http_thread.start()
+        # Start the bot
+        print('='*50)
+        print("🚀 Starting GKR Discord Bot...")
+        print(f"⚙️ Configured for Guild ID: {GUILD_ID}")
+        if REACTION_CHANNEL_ID != 0:
+            print(f"🎮 Reaction roles channel ID: {REACTION_CHANNEL_ID}")
+        else:
+            print("⚠️ Reaction roles channel not set. Use REACTION_CHANNEL_ID in .env")
+        print('='*50)
         
-        # Start Discord bot
+        # Run the bot
         bot.run(TOKEN)
     except discord.PrivilegedIntentsRequired as e:
-        print("\n❌ PRIVILEGED INTENTS ERROR:")
-        print("You need to enable privileged intents in the Discord Developer Portal.")
+        print('='*50)
+        print("❌ ERROR: Privileged Intents Required")
+        print("🔍 This bot requires privileged intents that are not enabled.")
+        print("\n📋 To fix this issue:")
         print("1. Go to https://discord.com/developers/applications/")
         print("2. Select your bot application")
         print("3. Go to the 'Bot' section")
-        print("4. Enable 'Server Members Intent' and 'Message Content Intent'")
+        print("4. Enable 'SERVER MEMBERS INTENT' and 'MESSAGE CONTENT INTENT'")
         print("5. Save changes and restart the bot")
-        print(f"\nDetailed error: {e}")
+        print('='*50)
     except discord.LoginFailure:
-        print("\n❌ LOGIN ERROR:")
-        print("Invalid bot token. Please check your DISCORD_TOKEN in the .env file.")
+        print('='*50)
+        print("❌ ERROR: Invalid Token")
+        print("🔑 The Discord token is invalid or expired.")
+        print("\n📋 To fix this issue:")
+        print("1. Check your .env file and ensure DISCORD_TOKEN is correct")
+        print("2. Generate a new token if necessary at https://discord.com/developers/applications/")
+        print('='*50)
     except Exception as e:
-        print(f"\n❌ UNEXPECTED ERROR: {e}")
-        print("Please check your configuration and try again.")
+        print('='*50)
+        print(f"❌ ERROR: An unexpected error occurred: {e}")
+        print('='*50)
+
+@bot.command(name='reactionroles')
+@commands.has_permissions(manage_roles=True)
+async def setup_reaction_roles(ctx):
+    """Create a reaction role message in the specified channel"""
+    # Check if we're in the correct guild
+    if ctx.guild.id != GUILD_ID:
+        await ctx.send("❌ This command can only be used in the configured guild.")
+        return
+        
+    # Check if we're in the correct channel for reaction roles
+    if ctx.channel.id != REACTION_CHANNEL_ID:
+        channel = ctx.guild.get_channel(REACTION_CHANNEL_ID)
+        if channel:
+            await ctx.send(f"❌ Reaction roles can only be set up in {channel.mention}")
+        else:
+            await ctx.send("❌ Reaction roles channel not configured. Set REACTION_CHANNEL_ID in .env file.")
+        return
+    
+    # Check if roles exist
+    valid_roles = 0
+    invalid_roles = []
+    for emoji, role_id in EMOJI_ROLE_MAP.items():
+        role = ctx.guild.get_role(role_id)
+        if role:
+            valid_roles += 1
+        else:
+            invalid_roles.append((emoji, role_id))
+    
+    if valid_roles == 0:
+        await ctx.send("❌ No valid roles configured. Please check your role IDs in .env file.")
+        return
+        
+    if invalid_roles:
+        warning = "⚠️ Some roles are not configured correctly:\n"
+        for emoji, role_id in invalid_roles:
+            warning += f"- Role ID {role_id} ({emoji}) not found\n"
+        await ctx.send(warning)
+    
+    # Create the embed message with role options and enhanced visual design
+    embed = discord.Embed(
+        title="🎮 Choose Your Game Roles",
+        description="React with an emoji below to receive a role.\nRoles grant you access to exclusive channels, updates, and community events.\n\nYou can remove your reaction anytime to remove the role.",
+        color=0x8A2BE2  # Vibrant purple color to match your self-role image
+    )
+    
+    # Add a cool GIF banner image to the embed
+    embed.set_image(url=get_role_menu_gif())  # Use custom GIF if set
+    
+    # Add fields for each role with enhanced formatting
+    for emoji, role_id in EMOJI_ROLE_MAP.items():
+        role = ctx.guild.get_role(role_id)
+        if role:
+            # Create more visually appealing role entries
+            if "valo" in emoji.lower():
+                embed.add_field(
+                    name=f"{emoji} — @{role.name}",
+                    value="🔫 Tactical 5v5 shooter with abilities",
+                    inline=False
+                )
+            elif "gta" in emoji.lower():
+                embed.add_field(
+                    name=f"{emoji} — @{role.name}",
+                    value="🚗 Open-world crime action adventure",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name=f"{emoji} — @{role.name}",
+                    value="🎲 Other awesome games",
+                    inline=False
+                )
+    
+    # Add footer with powered by text and timestamp
+    embed.set_footer(text="Powered by GKR Bot • Select your roles below")
+    embed.timestamp = datetime.datetime.now()
+    
+    # Send a header message with animated text effect
+    await ctx.send("**✨ `S E L F   R O L E S` ✨**")
+    
+    # Send the embed message
+    message = await ctx.send(embed=embed)
+    
+    # Add reactions
+    for emoji in EMOJI_ROLE_MAP.keys():
+        if ctx.guild.get_role(EMOJI_ROLE_MAP[emoji]):
+            await message.add_reaction(emoji)
+    
+    # Store the message ID for reaction handling
+    global REACTION_MESSAGE_ID
+    REACTION_MESSAGE_ID = message.id
+    await ctx.send(f"✅ Reaction roles set up! Message ID: {REACTION_MESSAGE_ID}")
+    print(f"🎮 Reaction roles message created. ID: {REACTION_MESSAGE_ID}")
+
+@bot.event
+async def on_raw_reaction_add(payload):
+    """Handle adding roles when users react to the reaction roles message"""
+    # Skip if reaction is not on the reaction roles message or is from the bot
+    if payload.message_id != REACTION_MESSAGE_ID or payload.user_id == bot.user.id:
+        return
+    
+    # Skip if not in the specified channel
+    if payload.channel_id != REACTION_CHANNEL_ID:
+        return
+        
+    guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        return
+        
+    member = guild.get_member(payload.user_id)
+    if not member:
+        return
+        
+    emoji = str(payload.emoji)
+    
+    # Check if this emoji is mapped to a role
+    if emoji in EMOJI_ROLE_MAP:
+        role_id = EMOJI_ROLE_MAP[emoji]
+        role = guild.get_role(role_id)
+        
+        if role:
+            # Add the role to the user
+            try:
+                await member.add_roles(role)
+                print(f"✅ Added role {role.name} to {member.display_name}")
+                
+                # Keep only this user's reaction for this emoji (count stays at 1)
+                channel = guild.get_channel(payload.channel_id)
+                message = await channel.fetch_message(payload.message_id)
+                for reaction in message.reactions:
+                    if str(reaction.emoji) == emoji:
+                        async for user in reaction.users():
+                            if user.id != payload.user_id and user.id != bot.user.id:
+                                await message.remove_reaction(reaction.emoji, user)
+                                
+            except discord.Forbidden:
+                print(f"❌ No permission to add role {role.name} to {member.display_name}")
+            except discord.HTTPException as e:
+                print(f"❌ Error adding role: {e}")
+
+@bot.event
+async def on_raw_reaction_remove(payload):
+    """Handle removing roles when users remove their reaction"""
+    # Skip if reaction is not on the reaction roles message
+    if payload.message_id != REACTION_MESSAGE_ID:
+        return
+        
+    # Skip if not in the specified channel
+    if payload.channel_id != REACTION_CHANNEL_ID:
+        return
+        
+    guild = bot.get_guild(payload.guild_id)
+    if not guild:
+        return
+        
+    member = guild.get_member(payload.user_id)
+    if not member:
+        return
+        
+    emoji = str(payload.emoji)
+    
+    # Check if this emoji is mapped to a role
+    if emoji in EMOJI_ROLE_MAP:
+        role_id = EMOJI_ROLE_MAP[emoji]
+        role = guild.get_role(role_id)
+        
+        if role:
+            # Remove the role from the user
+            try:
+                await member.remove_roles(role)
+                print(f"✅ Removed role {role.name} from {member.display_name}")
+            except discord.Forbidden:
+                print(f"❌ No permission to remove role {role.name} from {member.display_name}")
+            except discord.HTTPException as e:
+                print(f"❌ Error removing role: {e}")
+
+@bot.command(name='setrolemenugif')
+@commands.has_permissions(manage_roles=True)
+async def set_role_menu_gif(ctx, gif_url=None):
+    """Set a custom GIF URL for the reaction roles menu
+    
+    Args:
+        gif_url: The URL to the GIF you want to display. If not provided, shows current GIF
+    
+    Example:
+        /setrolemenugif https://media.giphy.com/media/example/giphy.gif
+    """
+    # Save the GIF URL to a file
+    gif_file_path = os.path.join(os.path.dirname(__file__), 'role_menu_gif.txt')
+    
+    # If no URL provided, show the current one
+    if gif_url is None:
+        try:
+            if os.path.exists(gif_file_path):
+                with open(gif_file_path, 'r') as f:
+                    current_gif = f.read().strip()
+                embed = discord.Embed(title="Current Role Menu GIF", color=0x8A2BE2)
+                embed.set_image(url=current_gif)
+                embed.description = f"Current GIF URL: {current_gif}\n\nTo change it, use `/setrolemenugif [new URL]`"
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send("❌ No custom GIF has been set yet. Use `/setrolemenugif [URL]` to set one.")
+        except Exception as e:
+            await ctx.send(f"❌ Error retrieving current GIF: {e}")
+        return
+        
+    # Basic validation that it's a URL
+    if not (gif_url.startswith('http://') or gif_url.startswith('https://')):
+        await ctx.send("❌ Please provide a valid URL starting with http:// or https://")
+        return
+        
+    # Save the URL
+    try:
+        with open(gif_file_path, 'w') as f:
+            f.write(gif_url)
+        
+        # Show a preview
+        embed = discord.Embed(title="Role Menu GIF Updated", color=0x8A2BE2)
+        embed.set_image(url=gif_url)
+        embed.description = "✅ Your custom GIF has been set! It will be used for future reaction role menus."
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Failed to save GIF URL: {e}")
+
+def get_role_menu_gif():
+    """Get the custom role menu GIF URL if available"""
+    gif_file_path = os.path.join(os.path.dirname(__file__), 'role_menu_gif.txt')
+    
+    if os.path.exists(gif_file_path):
+        try:
+            with open(gif_file_path, 'r') as f:
+                return f.read().strip()
+        except:
+            pass
+            
+    # Default GIF if none is set
+    return "https://media.giphy.com/media/3o7qE6zfkGHpAQgLrq/giphy.gif"
