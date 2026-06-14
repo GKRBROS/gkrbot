@@ -27,7 +27,7 @@ class WelcomeConfig:
     guild_id: int
     enabled: bool = True
     channel_id: Optional[int] = None
-    welcome_message: str = "**welcome to FAMILY**\n\n🎉 Welcome to the {server} – Where Friends Become Family! 🎉\n\nHey besties! 👋 This is your ultimate hangout spot for memes, gaming, late-night talks, and everything in between. Whether we're roasting each other, sharing life updates, or just vibing, this server is our digital home."
+    welcome_message: str = "**Welcome to FAMILY** 🎉\n\nWelcome to **{server}** – Where Friends Become Family! 🎉\n\nHey besties! 👋 This is your ultimate hangout spot for memes, gaming, late-night talks, and everything in between.\n\nWhether we're roasting each other, sharing life updates, or just vibing — this server is our digital home."
     background_path: Optional[str] = None
 
 
@@ -65,11 +65,16 @@ class WelcomeDatabase:
         if not row:
             return WelcomeConfig(guild_id=guild_id)
 
+        # Decode stored \n escape sequences into real newlines so Discord
+        # renders line breaks correctly in embed descriptions.
+        raw_msg = row["welcome_message"]
+        decoded_msg = raw_msg.replace("\\n", "\n")
+
         return WelcomeConfig(
             guild_id=guild_id,
             enabled=bool(row["enabled"]),
             channel_id=int(row["channel_id"]) if row["channel_id"] else None,
-            welcome_message=row["welcome_message"],
+            welcome_message=decoded_msg,
             background_path=row["background_path"],
         )
 
