@@ -1,0 +1,27 @@
+# Environments
+.env
+.env.local
+.env.*.local
+
+# Database
+*.sqlite3
+*.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Log files
+*.log
+reaction_message_id.txt
+
+# VS Code / IDE
+.vscode/
+.idea/
