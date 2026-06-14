@@ -742,12 +742,11 @@ class FontStyleView(discord.ui.View):
             )
             return
         config = await self.service.set_font_style(self.guild.id, self.selected_style)
-        queued = await self.service.sync_guild(self.guild, "Font Sync font update")
         await interaction.response.edit_message(
             embed=build_status_embed(self.guild, config),
             view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
         )
-        await interaction.followup.send(f"Queued {queued} rename(s) for the new font.", ephemeral=True)
+        await interaction.followup.send("Font style saved! Use the **Apply Changes** button on the main panel to update channels.", ephemeral=True)
 
     @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
     async def go_back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -812,13 +811,12 @@ class ScopeModeSelect(discord.ui.Select):
         # If it's an automatic mode that doesn't need channel/category picker, save & sync immediately!
         if mode in ("server", "category_only", "category_channels_only", "category_combined"):
             config = await view.service.set_scope(view.guild.id, mode)
-            queued = await view.service.sync_guild(view.guild, "Font Sync scope update")
             await interaction.response.edit_message(
                 embed=build_status_embed(view.guild, config),
                 view=FontSyncPanelView(view.service, view.guild, view.owner_id, config),
             )
             await interaction.followup.send(
-                f"Scope updated to **{mode.replace('_', ' ').title()}**. Queued {queued} rename(s).",
+                f"Scope updated to **{mode.replace('_', ' ').title()}**. Use the **Apply Changes** button on the main panel to update channels.",
                 ephemeral=True,
             )
         else:
@@ -892,13 +890,12 @@ class ScopeModeView(discord.ui.View):
     async def configure_selection(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         if self.draft.sync_mode in ("server", "category_only", "category_channels_only", "category_combined"):
             config = await self.service.set_scope(self.guild.id, self.draft.sync_mode)
-            queued = await self.service.sync_guild(self.guild, "Font Sync scope update")
             await interaction.response.edit_message(
                 embed=build_status_embed(self.guild, config),
                 view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
             )
             await interaction.followup.send(
-                f"Scope updated to **{self.draft.sync_mode.replace('_', ' ').title()}**. Queued {queued} rename(s).",
+                f"Scope updated to **{self.draft.sync_mode.replace('_', ' ').title()}**. Use the **Apply Changes** button on the main panel to update channels.",
                 ephemeral=True,
             )
             return
@@ -982,12 +979,11 @@ class CategorySelectionView(discord.ui.View):
     @discord.ui.button(label="Save Categories", style=discord.ButtonStyle.primary)
     async def save_categories(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         config = await self.service.set_scope(self.guild.id, "category_individual", category_ids=self.draft.category_ids)
-        queued = await self.service.sync_guild(self.guild, "Font Sync category update")
         await interaction.response.edit_message(
             embed=build_status_embed(self.guild, config),
             view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
         )
-        await interaction.followup.send(f"Queued {queued} rename(s) for the selected categories.", ephemeral=True)
+        await interaction.followup.send("Selected categories saved! Use the **Apply Changes** button on the main panel to update channels.", ephemeral=True)
 
     @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
     async def go_back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -1052,12 +1048,11 @@ class ChannelSelectionView(discord.ui.View):
     @discord.ui.button(label="Save Channels", style=discord.ButtonStyle.primary)
     async def save_channels(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         config = await self.service.set_scope(self.guild.id, "channel", channel_ids=self.draft.channel_ids)
-        queued = await self.service.sync_guild(self.guild, "Font Sync channel update")
         await interaction.response.edit_message(
             embed=build_status_embed(self.guild, config),
             view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
         )
-        await interaction.followup.send(f"Queued {queued} rename(s) for the selected channels.", ephemeral=True)
+        await interaction.followup.send("Selected channels saved! Use the **Apply Changes** button on the main panel to update channels.", ephemeral=True)
 
     @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
     async def go_back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -1109,11 +1104,10 @@ class CustomFontModal(discord.ui.Modal, title="Set Custom Font"):
 
         try:
             config = await self.service.set_custom_font(self.guild.id, lower_raw, upper_raw)
-            queued = await self.service.sync_guild(self.guild, "Font Sync custom font update")
             preview = apply_font("example-channel", "custom", config.custom_font)
             embed = discord.Embed(
                 title="✅ Custom Font Saved",
-                description=f"**Preview:** {preview}\n\nQueued **{queued}** rename(s).",
+                description=f"**Preview:** {preview}\n\nUse the **Apply Changes** button on the main panel to update channels.",
                 color=0x8A2BE2,
             )
             embed.add_field(name="Chars Mapped", value=f"{len(config.custom_font)} letter(s)", inline=True)
@@ -1172,10 +1166,10 @@ class FontSyncPanelView(discord.ui.View):
         view = DecorationStyleView(self.service, self.guild, self.owner_id, config.decoration)
         await interaction.response.edit_message(embed=view.build_embed(), view=view)
 
-    @discord.ui.button(label="Resync", style=discord.ButtonStyle.success, row=1)
-    async def resync(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        queued = await self.service.sync_guild(self.guild, "Font Sync manual resync")
-        await interaction.response.send_message(f"Queued {queued} rename(s) for resync.", ephemeral=True)
+    @discord.ui.button(label="Apply Changes", style=discord.ButtonStyle.success, row=1)
+    async def apply_changes(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        queued = await self.service.sync_guild(self.guild, "Font Sync manual apply")
+        await interaction.response.send_message(f"✅ Successfully queued {queued} channel/category rename(s) to match your scope, font, and decoration settings.", ephemeral=True)
 
     @discord.ui.button(label="Disable", style=discord.ButtonStyle.danger, row=1)
     async def toggle_enabled(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
@@ -1187,8 +1181,7 @@ class FontSyncPanelView(discord.ui.View):
         await interaction.response.edit_message(embed=build_status_embed(self.guild, config), view=view)
         
         if new_state:
-            queued = await self.service.sync_guild(self.guild, "Font Sync enabled")
-            await interaction.followup.send(f"Font Sync enabled! Queued {queued} rename(s).", ephemeral=True)
+            await interaction.followup.send("Font Sync enabled! Use the **Apply Changes** button to update existing channels.", ephemeral=True)
         else:
             await interaction.followup.send("Font Sync disabled.", ephemeral=True)
 
@@ -1246,12 +1239,11 @@ class DecorationStyleView(discord.ui.View):
     @discord.ui.button(label="Save Decoration", style=discord.ButtonStyle.primary)
     async def save_decoration(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         config = await self.service.set_decoration(self.guild.id, self.selected_decoration)
-        queued = await self.service.sync_guild(self.guild, "Font Sync decoration update")
         await interaction.response.edit_message(
             embed=build_status_embed(self.guild, config),
             view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
         )
-        await interaction.followup.send(f"Queued {queued} rename(s) for the new decoration.", ephemeral=True)
+        await interaction.followup.send("Decoration saved! Use the **Apply Changes** button on the main panel to update channels.", ephemeral=True)
 
     @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
     async def go_back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
