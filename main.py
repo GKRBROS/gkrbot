@@ -21,6 +21,7 @@ if sys.platform.startswith('win'):
         pass
 
 from font_sync import setup_font_sync
+from welcome import setup_welcome
 
 # Load environment variables
 load_dotenv()
@@ -188,6 +189,9 @@ bot = commands.Bot(**bot_kwargs)
 
 # Font Sync system
 setup_font_sync(bot)
+
+# Welcome message & card system
+setup_welcome(bot, GUILD_ID)
 
 # Add app_commands tree for slash commands
 tree = bot.tree
@@ -583,6 +587,15 @@ async def on_member_join(member):
         return
     
     print(f"👋 New member joined: {member.display_name}")
+    
+    # Send welcome card and message
+    try:
+        from welcome import WelcomeDatabase, send_welcome
+        db = WelcomeDatabase()
+        config = db.get_config(guild.id)
+        await send_welcome(member, config)
+    except Exception as e:
+        print(f"❌ Failed to send welcome card: {e}")
     
     # Small delay to allow role assignment bots to work
     await asyncio.sleep(2)
