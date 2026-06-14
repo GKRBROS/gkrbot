@@ -55,6 +55,18 @@ class WelcomeDatabase:
             )
             conn.commit()
 
+        # One-time migration: replace any literal \n in stored messages
+        with self._connect() as conn:
+            rows = conn.execute("SELECT guild_id, welcome_message FROM welcome_configs").fetchall()
+            for row in rows:
+                if "\\n" in row["welcome_message"]:
+                    fixed = row["welcome_message"].replace("\\n", "\n")
+                    conn.execute(
+                        "UPDATE welcome_configs SET welcome_message = ? WHERE guild_id = ?",
+                        (fixed, row["guild_id"]),
+                    )
+            conn.commit()
+
     def get_config(self, guild_id: int) -> WelcomeConfig:
         with self._connect() as conn:
             row = conn.execute(
@@ -369,9 +381,12 @@ def setup_welcome(bot: commands.Bot, guild_id: int) -> None:
     @app_commands.checks.has_permissions(manage_guild=True)
     async def set_message(interaction: discord.Interaction, message: str) -> None:
         config = db.get_config(interaction.guild.id)
-        config.welcome_message = message
+        # Decode any \n the user typed so they become real newlines in the embed
+        decoded = message.replace("\\n", "\n")
+        config.welcome_message = decoded
         db.save_config(config)
-        await interaction.response.send_message(f"✅ Welcome message text set to:\n`{message}`", ephemeral=True)
+        preview = decoded[:200] + "..." if len(decoded) > 200 else decoded
+        await interaction.response.send_message(f"✅ Welcome message set:\n>>> {preview}", ephemeral=True)
 
     @welcome_group.command(name="setbg", description="Upload a custom background image (Recommended 1024x500)")
     @app_commands.checks.has_permissions(manage_guild=True)
