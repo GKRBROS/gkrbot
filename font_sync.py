@@ -88,13 +88,50 @@ def normalize_font_text(text: str) -> str:
     return "".join(_REVERSE_FONT_MAP.get(char, char) for char in text)
 
 
+DECORATION_STYLES: dict[str, tuple[str, str]] = {
+    "none": ("", ""),
+    "brackets": ("[", "]"),
+    "double_brackets": ("[[", "]]"),
+    "frames": ("【", "】"),
+    "curly": ("{", "}"),
+    "stars": ("✦ ", " ✦"),
+    "arrows": ("» ", " «"),
+    "diamonds": ("❖ ", " ❖"),
+    "shells": ("🐚 ", " 🐚"),
+}
+
+DECORATION_LABELS: dict[str, str] = {
+    "none": "No Decoration",
+    "brackets": "[ Brackets ]",
+    "double_brackets": "[[ Double Brackets ]]",
+    "frames": "【 Frames 】",
+    "curly": "{ Curly }",
+    "stars": "✦ Stars ✦",
+    "arrows": "» Arrows «",
+    "diamonds": "❖ Diamonds ❖",
+    "shells": "🐚 Custom Emojis 🐚",
+}
+
+
 def _normalize_name(name: str, custom_reverse: Optional[dict[str, str]] = None) -> str:
     """
     Reverse both built-in font chars AND optional custom font chars back to plain text.
+    Also strips any configured decoration prefix/suffix symbols.
     Non-font Unicode (emoji, symbols) pass through unchanged.
     """
+    # Strip known decoration brackets/frames/stars/arrows
+    cleaned = name
+    for prefix, suffix in DECORATION_STYLES.values():
+        if prefix and cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):]
+        if suffix and cleaned.endswith(suffix):
+            cleaned = cleaned[:-len(suffix)]
+            
+    # Also strip default markdown/plain ASCII bracket types just in case
+    cleaned = cleaned.strip("[]{}()【】»«❖✦ ")
+
     rev = custom_reverse or {}
-    return "".join(_REVERSE_FONT_MAP.get(ch, rev.get(ch, ch)) for ch in name)
+    return "".join(_REVERSE_FONT_MAP.get(ch, rev.get(ch, ch)) for ch in cleaned)
 
 
 def sanitize_channel_base(name: str, custom_reverse: Optional[dict[str, str]] = None) -> str:
@@ -162,6 +199,7 @@ class FontSyncConfig:
     category_ids: list[int] = field(default_factory=list)
     channel_ids: list[int] = field(default_factory=list)
     custom_font: dict[str, str] = field(default_factory=dict)  # plain letter → styled char
+    decoration: str = "none"  # none, brackets, double_brackets, frames, curly, stars, arrows
 
 
 class FontSyncDatabase:
@@ -185,17 +223,24 @@ class FontSyncDatabase:
                     sync_mode   TEXT NOT NULL,
                     category_ids TEXT NOT NULL,
                     channel_ids  TEXT NOT NULL,
-                    custom_font  TEXT NOT NULL DEFAULT '{}'
+                    custom_font  TEXT NOT NULL DEFAULT '{}',
+                    decoration   TEXT NOT NULL DEFAULT 'none'
                 )
                 """
             )
-            # Migration: add custom_font column if upgrading from an older schema version
+            # Migrations for existing schemas
             try:
                 connection.execute(
                     "ALTER TABLE font_sync_configs ADD COLUMN custom_font TEXT NOT NULL DEFAULT '{}'"
                 )
             except Exception:
-                pass  # Column already exists — safe to ignore
+                pass
+            try:
+                connection.execute(
+                    "ALTER TABLE font_sync_configs ADD COLUMN decoration TEXT NOT NULL DEFAULT 'none'"
+                )
+            except Exception:
+                pass
             connection.commit()
 
     def get_config(self, guild_id: int) -> FontSyncConfig:
@@ -210,6 +255,7 @@ class FontSyncDatabase:
 
         col_names = row.keys()
         custom_font_raw = row["custom_font"] if "custom_font" in col_names else "{}"
+        decoration = row["decoration"] if "decoration" in col_names else "none"
         return FontSyncConfig(
             guild_id=guild_id,
             enabled=bool(row["enabled"]),
@@ -218,6 +264,7 @@ class FontSyncDatabase:
             category_ids=json.loads(row["category_ids"]),
             channel_ids=json.loads(row["channel_ids"]),
             custom_font=json.loads(custom_font_raw or "{}"),
+            decoration=decoration,
         )
 
     def save_config(self, config: FontSyncConfig) -> None:
@@ -225,15 +272,16 @@ class FontSyncDatabase:
             connection.execute(
                 """
                 INSERT INTO font_sync_configs (
-                    guild_id, enabled, font_style, sync_mode, category_ids, channel_ids, custom_font
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    guild_id, enabled, font_style, sync_mode, category_ids, channel_ids, custom_font, decoration
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(guild_id) DO UPDATE SET
                     enabled      = excluded.enabled,
                     font_style   = excluded.font_style,
                     sync_mode    = excluded.sync_mode,
                     category_ids = excluded.category_ids,
                     channel_ids  = excluded.channel_ids,
-                    custom_font  = excluded.custom_font
+                    custom_font  = excluded.custom_font,
+                    decoration   = excluded.decoration
                 """,
                 (
                     str(config.guild_id),
@@ -243,6 +291,7 @@ class FontSyncDatabase:
                     json.dumps(config.category_ids),
                     json.dumps(config.channel_ids),
                     json.dumps(config.custom_font),
+                    config.decoration,
                 ),
             )
             connection.commit()
@@ -299,11 +348,18 @@ class FontSyncService:
         if config.sync_mode == "server":
             return True
 
-        if config.sync_mode == "category":
+        if config.sync_mode == "category_only":
+            # Only rename the category headers themselves, not child channels
+            return isinstance(channel, discord.CategoryChannel) and channel.id in config.category_ids
+
+        if config.sync_mode == "category_channels_only":
+            # Only rename channels within the categories, not headers
+            return not isinstance(channel, discord.CategoryChannel) and getattr(channel, "parent_id", None) in config.category_ids
+
+        if config.sync_mode in ("category_combined", "category"):
+            # Rename headers AND child channels
             if isinstance(channel, discord.CategoryChannel):
-                # The category header itself is in scope when it is one of the selected categories
                 return channel.id in config.category_ids
-            # Regular channels whose parent is a selected category
             return getattr(channel, "parent_id", None) in config.category_ids
 
         if config.sync_mode == "channel":
@@ -318,6 +374,7 @@ class FontSyncService:
         Reverses both built-in and custom font chars so switching between font
         styles never double-applies or leaves stale styled characters.
         Emoji and non-font Unicode symbols are always preserved.
+        Also applies name decorations if configured.
         """
         custom_reverse = {v: k for k, v in config.custom_font.items()} if config.custom_font else None
 
@@ -326,7 +383,11 @@ class FontSyncService:
         else:
             base = sanitize_channel_base(channel.name, custom_reverse)
 
-        return apply_font(base, config.font_style, config.custom_font or None)
+        styled = apply_font(base, config.font_style, config.custom_font or None)
+        
+        # Apply name decoration
+        prefix, suffix = DECORATION_STYLES.get(config.decoration, ("", ""))
+        return f"{prefix}{styled}{suffix}"
 
     async def _worker(self) -> None:
         while True:
@@ -408,28 +469,30 @@ class FontSyncService:
 
     async def sync_category(self, category: discord.CategoryChannel, reason: str) -> int:
         config = await self.get_config(category.guild.id)
-        if not config.enabled or config.sync_mode != "category" or category.id not in config.category_ids:
+        if not config.enabled or config.sync_mode not in ("category", "category_only", "category_channels_only", "category_combined") or category.id not in config.category_ids:
             return 0
 
         queued = 0
 
         # Rename the category header itself
-        cat_desired = self._get_desired_name(category, config)
-        if category.name != cat_desired:
-            await self._enqueue_rename(category, cat_desired, reason)
-            queued += 1
+        if config.sync_mode in ("category", "category_only", "category_combined"):
+            cat_desired = self._get_desired_name(category, config)
+            if category.name != cat_desired:
+                await self._enqueue_rename(category, cat_desired, reason)
+                queued += 1
 
         # Rename channels inside the category
-        for channel in category.channels:
-            if not self._is_renameable_channel(channel):
-                continue
+        if config.sync_mode in ("category", "category_channels_only", "category_combined"):
+            for channel in category.channels:
+                if not self._is_renameable_channel(channel):
+                    continue
 
-            desired_name = self._get_desired_name(channel, config)
-            if channel.name == desired_name:
-                continue
+                desired_name = self._get_desired_name(channel, config)
+                if channel.name == desired_name:
+                    continue
 
-            await self._enqueue_rename(channel, desired_name, reason)
-            queued += 1
+                await self._enqueue_rename(channel, desired_name, reason)
+                queued += 1
 
         return queued
 
@@ -446,7 +509,7 @@ class FontSyncService:
             if self.matches_scope(config, after):
                 await self._maybe_queue_channel(after, "Font Sync category update")
             # Also resync all child channels when in category mode
-            if config.sync_mode == "category" and after.id in config.category_ids:
+            if config.sync_mode in ("category", "category_only", "category_channels_only", "category_combined") and after.id in config.category_ids:
                 await self.sync_category(after, "Font Sync category update")
             return
 
@@ -454,7 +517,7 @@ class FontSyncService:
             await self._maybe_queue_channel(after, "Font Sync channel update")
 
         # Handle a channel moving between categories
-        if config.sync_mode == "category" and before.parent_id != after.parent_id:
+        if config.sync_mode in ("category", "category_channels_only", "category_combined") and before.parent_id != after.parent_id:
             parent_ids = {pid for pid in (before.parent_id, after.parent_id) if pid is not None}
             if parent_ids.intersection(config.category_ids):
                 for parent_id in parent_ids.intersection(config.category_ids):
@@ -510,6 +573,16 @@ class FontSyncService:
         await self.save_config(config)
         return config
 
+    async def set_decoration(self, guild_id: int, decoration: str) -> FontSyncConfig:
+        if decoration not in DECORATION_STYLES:
+            raise ValueError("Unknown decoration style")
+
+        config = await self.get_config(guild_id)
+        config.decoration = decoration
+        config.enabled = True
+        await self.save_config(config)
+        return config
+
     async def set_scope(
         self,
         guild_id: int,
@@ -517,7 +590,7 @@ class FontSyncService:
         category_ids: Optional[list[int]] = None,
         channel_ids: Optional[list[int]] = None,
     ) -> FontSyncConfig:
-        if sync_mode not in {"server", "category", "channel"}:
+        if sync_mode not in {"server", "category", "category_only", "category_channels_only", "category_combined", "channel"}:
             raise ValueError("Unknown sync mode")
 
         config = await self.get_config(guild_id)
@@ -543,11 +616,13 @@ def build_status_embed(guild: discord.Guild, config: FontSyncConfig) -> discord.
 
     embed.add_field(name="Enabled", value="Yes" if config.enabled else "No", inline=True)
     embed.add_field(name="Font", value=FONT_STYLE_LABELS.get(config.font_style, config.font_style), inline=True)
-    embed.add_field(name="Scope", value=config.sync_mode.title(), inline=True)
+    
+    sync_mode_label = config.sync_mode.replace("_", " ").title()
+    embed.add_field(name="Scope", value=sync_mode_label, inline=True)
 
     if config.sync_mode == "server":
         scope_details = "All channels & categories in the guild"
-    elif config.sync_mode == "category":
+    elif config.sync_mode in ("category", "category_only", "category_channels_only", "category_combined"):
         if config.category_ids:
             category_names = []
             for category_id in config.category_ids:
@@ -570,7 +645,12 @@ def build_status_embed(guild: discord.Guild, config: FontSyncConfig) -> discord.
 
     embed.add_field(name="Scope Details", value=scope_details[:1024], inline=False)
 
-    preview = apply_font("gkr-channel", config.font_style, config.custom_font or None)
+    # Preview computation with both font styling and decoration applied
+    plain_preview = apply_font("gkr-channel", config.font_style, config.custom_font or None)
+    prefix, suffix = DECORATION_STYLES.get(config.decoration, ("", ""))
+    preview = f"{prefix}{plain_preview}{suffix}"
+    
+    embed.add_field(name="Decoration", value=DECORATION_LABELS.get(config.decoration, config.decoration), inline=True)
     embed.add_field(name="Preview", value=preview, inline=False)
 
     if config.font_style == "custom":
@@ -665,9 +745,17 @@ class FontStyleView(discord.ui.View):
         queued = await self.service.sync_guild(self.guild, "Font Sync font update")
         await interaction.response.edit_message(
             embed=build_status_embed(self.guild, config),
-            view=FontSyncPanelView(self.service, self.guild, self.owner_id),
+            view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
         )
         await interaction.followup.send(f"Queued {queued} rename(s) for the new font.", ephemeral=True)
+
+    @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
+    async def go_back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        config = await self.service.get_config(self.guild.id)
+        await interaction.response.edit_message(
+            embed=build_status_embed(self.guild, config),
+            view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
+        )
 
 
 class ScopeModeSelect(discord.ui.Select):
@@ -684,15 +772,33 @@ class ScopeModeSelect(discord.ui.Select):
                     default=current_mode == "server",
                 ),
                 discord.SelectOption(
-                    label="Category Based",
-                    value="category",
-                    description="Sync selected categories AND their channels",
-                    default=current_mode == "category",
+                    label="Category Headers Only (All)",
+                    value="category_only",
+                    description="Sync ALL category names/headers (no channels inside)",
+                    default=current_mode == "category_only",
+                ),
+                discord.SelectOption(
+                    label="Category Channels Only (All)",
+                    value="category_channels_only",
+                    description="Sync channels within ALL categories (headers untouched)",
+                    default=current_mode == "category_channels_only",
+                ),
+                discord.SelectOption(
+                    label="Category + Channels Combined (All)",
+                    value="category_combined",
+                    description="Sync category headers AND channels inside all categories",
+                    default=current_mode in ("category_combined", "category"),
+                ),
+                discord.SelectOption(
+                    label="Individual Categories",
+                    value="category_individual",
+                    description="Sync only selected categories & their channels",
+                    default=current_mode == "category_individual",
                 ),
                 discord.SelectOption(
                     label="Individual Channels",
                     value="channel",
-                    description="Sync only selected channels",
+                    description="Sync only selected individual channels",
                     default=current_mode == "channel",
                 ),
             ],
@@ -700,8 +806,23 @@ class ScopeModeSelect(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         view: ScopeModeView = self.view  # type: ignore[assignment]
-        view.draft.sync_mode = self.values[0]
-        await interaction.response.edit_message(embed=view.build_embed(), view=view)
+        mode = self.values[0]
+        view.draft.sync_mode = mode
+
+        # If it's an automatic mode that doesn't need channel/category picker, save & sync immediately!
+        if mode in ("server", "category_only", "category_channels_only", "category_combined"):
+            config = await view.service.set_scope(view.guild.id, mode)
+            queued = await view.service.sync_guild(view.guild, "Font Sync scope update")
+            await interaction.response.edit_message(
+                embed=build_status_embed(view.guild, config),
+                view=FontSyncPanelView(view.service, view.guild, view.owner_id, config),
+            )
+            await interaction.followup.send(
+                f"Scope updated to **{mode.replace('_', ' ').title()}**. Queued {queued} rename(s).",
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.edit_message(embed=view.build_embed(), view=view)
 
 
 @dataclass
@@ -717,12 +838,16 @@ class ScopeModeView(discord.ui.View):
         self.service = service
         self.guild = guild
         self.owner_id = owner_id
+        # Normalize legacy mode "category" to "category_combined"
+        sync_mode = config.sync_mode
+        if sync_mode == "category":
+            sync_mode = "category_combined"
         self.draft = ScopeDraft(
-            sync_mode=config.sync_mode,
+            sync_mode=sync_mode,
             category_ids=list(config.category_ids),
             channel_ids=list(config.channel_ids),
         )
-        self.add_item(ScopeModeSelect(config.sync_mode))
+        self.add_item(ScopeModeSelect(sync_mode))
 
     def build_embed(self) -> discord.Embed:
         embed = discord.Embed(
@@ -730,23 +855,29 @@ class ScopeModeView(discord.ui.View):
             description="Select where Font Sync should apply.",
             color=0x00AAFF,
         )
-        embed.add_field(name="Mode", value=self.draft.sync_mode.title(), inline=False)
+        embed.add_field(name="Mode", value=self.draft.sync_mode.replace("_", " ").title(), inline=False)
         if self.draft.sync_mode == "server":
             embed.add_field(name="Selection", value="All channels & categories in the guild", inline=False)
-        elif self.draft.sync_mode == "category":
+        elif self.draft.sync_mode == "category_only":
+            embed.add_field(name="Selection", value="All category headers in the guild", inline=False)
+        elif self.draft.sync_mode == "category_channels_only":
+            embed.add_field(name="Selection", value="All channels within any category", inline=False)
+        elif self.draft.sync_mode in ("category_combined", "category"):
+            embed.add_field(name="Selection", value="All category headers and channels inside them", inline=False)
+        elif self.draft.sync_mode == "category_individual":
             if self.draft.category_ids:
                 selected = [self.guild.get_channel(cid) for cid in self.draft.category_ids]
                 names = [c.name for c in selected if isinstance(c, discord.CategoryChannel)]
                 embed.add_field(name="Categories", value=", ".join(names) if names else "None", inline=False)
             else:
-                embed.add_field(name="Categories", value="None", inline=False)
+                embed.add_field(name="Categories", value="None selected (Click Configure Selection below)", inline=False)
         else:
             if self.draft.channel_ids:
                 selected = [self.guild.get_channel(cid) for cid in self.draft.channel_ids]
                 names = [c.name for c in selected if c is not None and not isinstance(c, discord.CategoryChannel)]
                 embed.add_field(name="Channels", value=", ".join(names) if names else "None", inline=False)
             else:
-                embed.add_field(name="Channels", value="None", inline=False)
+                embed.add_field(name="Channels", value="None selected (Click Configure Selection below)", inline=False)
         return embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -757,26 +888,26 @@ class ScopeModeView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Configure Selection", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Configure Selection", style=discord.ButtonStyle.primary)
     async def configure_selection(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        if self.draft.sync_mode == "server":
-            config = await self.service.set_scope(self.guild.id, "server")
+        if self.draft.sync_mode in ("server", "category_only", "category_channels_only", "category_combined"):
+            config = await self.service.set_scope(self.guild.id, self.draft.sync_mode)
             queued = await self.service.sync_guild(self.guild, "Font Sync scope update")
             await interaction.response.edit_message(
                 embed=build_status_embed(self.guild, config),
-                view=FontSyncPanelView(self.service, self.guild, self.owner_id),
+                view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
             )
-            await interaction.followup.send(f"Queued {queued} rename(s) for the entire server.", ephemeral=True)
+            await interaction.followup.send(
+                f"Scope updated to **{self.draft.sync_mode.replace('_', ' ').title()}**. Queued {queued} rename(s).",
+                ephemeral=True,
+            )
             return
 
-        if self.draft.sync_mode == "category":
+        if self.draft.sync_mode == "category_individual":
             await interaction.response.edit_message(
                 embed=discord.Embed(
                     title="Pick Categories",
-                    description=(
-                        "Select one or more categories to synchronize.\n"
-                        "Both the **category name** and all **channels inside** will be synced."
-                    ),
+                    description="Select the categories you want to keep synchronized.",
                     color=0x00AAFF,
                 ),
                 view=CategorySelectionView(self.service, self.guild, self.owner_id, self.draft),
@@ -792,16 +923,24 @@ class ScopeModeView(discord.ui.View):
             view=ChannelSelectionView(self.service, self.guild, self.owner_id, self.draft),
         )
 
+    @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
+    async def go_back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        config = await self.service.get_config(self.guild.id)
+        await interaction.response.edit_message(
+            embed=build_status_embed(self.guild, config),
+            view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
+        )
+
 
 class CategorySelect(discord.ui.ChannelSelect):
     def __init__(self, values: list[int]):
         super().__init__(
             placeholder="Select categories",
-            min_values=1,
+            min_values=0,
             max_values=25,
             channel_types=[discord.ChannelType.category],
         )
-        self.default_values = values
+        self.default_values = [discord.Object(id=v) for v in values]
 
     async def callback(self, interaction: discord.Interaction) -> None:
         view: CategorySelectionView = self.view  # type: ignore[assignment]
@@ -842,20 +981,26 @@ class CategorySelectionView(discord.ui.View):
 
     @discord.ui.button(label="Save Categories", style=discord.ButtonStyle.primary)
     async def save_categories(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        config = await self.service.set_scope(self.guild.id, "category", category_ids=self.draft.category_ids)
+        config = await self.service.set_scope(self.guild.id, "category_individual", category_ids=self.draft.category_ids)
         queued = await self.service.sync_guild(self.guild, "Font Sync category update")
         await interaction.response.edit_message(
             embed=build_status_embed(self.guild, config),
-            view=FontSyncPanelView(self.service, self.guild, self.owner_id),
+            view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
         )
         await interaction.followup.send(f"Queued {queued} rename(s) for the selected categories.", ephemeral=True)
+
+    @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
+    async def go_back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        config = await self.service.get_config(self.guild.id)
+        view = ScopeModeView(self.service, self.guild, self.owner_id, config)
+        await interaction.response.edit_message(embed=view.build_embed(), view=view)
 
 
 class ChannelSelect(discord.ui.ChannelSelect):
     def __init__(self, values: list[int]):
         super().__init__(
             placeholder="Select channels",
-            min_values=1,
+            min_values=0,
             max_values=25,
             channel_types=[
                 discord.ChannelType.text,
@@ -865,7 +1010,7 @@ class ChannelSelect(discord.ui.ChannelSelect):
                 discord.ChannelType.forum,
             ],
         )
-        self.default_values = values
+        self.default_values = [discord.Object(id=v) for v in values]
 
     async def callback(self, interaction: discord.Interaction) -> None:
         view: ChannelSelectionView = self.view  # type: ignore[assignment]
@@ -910,9 +1055,15 @@ class ChannelSelectionView(discord.ui.View):
         queued = await self.service.sync_guild(self.guild, "Font Sync channel update")
         await interaction.response.edit_message(
             embed=build_status_embed(self.guild, config),
-            view=FontSyncPanelView(self.service, self.guild, self.owner_id),
+            view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
         )
         await interaction.followup.send(f"Queued {queued} rename(s) for the selected channels.", ephemeral=True)
+
+    @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
+    async def go_back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        config = await self.service.get_config(self.guild.id)
+        view = ScopeModeView(self.service, self.guild, self.owner_id, config)
+        await interaction.response.edit_message(embed=view.build_embed(), view=view)
 
 
 class CustomFontModal(discord.ui.Modal, title="Set Custom Font"):
@@ -920,7 +1071,7 @@ class CustomFontModal(discord.ui.Modal, title="Set Custom Font"):
     Discord modal that lets an admin define a custom Unicode font by pasting
     26 styled characters corresponding to a–z (and optionally A–Z).
 
-    Example input for lowercase: 𝒶𝒷𝒸𝒹ℯ𝒻ℊ𝒽𝒾𝒿𝓀𝓁𝓂𝓃ℴ𝓅𝓆𝓇𝓈𝓉𝓊𝓋𝓌𝓍𝓎𝓏
+    Example input for lowercase: 𝒶𝒿𝒸𝒹ℯ𝒻ℊ𝒽𝒾𝒿𝓀𝓁𝓂𝓃ℴ𝓅𝓆𝓇𝓈𝓉𝓊𝓋𝓌𝓍𝓎𝓏
     """
 
     lowercase = discord.ui.TextInput(
@@ -972,11 +1123,22 @@ class CustomFontModal(discord.ui.Modal, title="Set Custom Font"):
 
 
 class FontSyncPanelView(discord.ui.View):
-    def __init__(self, service: FontSyncService, guild: discord.Guild, owner_id: int):
+    def __init__(self, service: FontSyncService, guild: discord.Guild, owner_id: int, config: Optional[FontSyncConfig] = None):
         super().__init__(timeout=180)
         self.service = service
         self.guild = guild
         self.owner_id = owner_id
+
+        # Dynamically set styling for enable/disable button
+        enabled = config.enabled if config is not None else True
+        for child in self.children:
+            if isinstance(child, discord.ui.Button) and child.label in ("Disable", "Enable"):
+                if enabled:
+                    child.label = "Disable"
+                    child.style = discord.ButtonStyle.danger
+                else:
+                    child.label = "Enable"
+                    child.style = discord.ButtonStyle.success
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -1004,15 +1166,100 @@ class FontSyncPanelView(discord.ui.View):
         modal = CustomFontModal(self.service, self.guild)
         await interaction.response.send_modal(modal)
 
+    @discord.ui.button(label="Decorate 🎨", style=discord.ButtonStyle.primary, row=1)
+    async def open_decoration(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        config = await self.service.get_config(self.guild.id)
+        view = DecorationStyleView(self.service, self.guild, self.owner_id, config.decoration)
+        await interaction.response.edit_message(embed=view.build_embed(), view=view)
+
     @discord.ui.button(label="Resync", style=discord.ButtonStyle.success, row=1)
     async def resync(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         queued = await self.service.sync_guild(self.guild, "Font Sync manual resync")
         await interaction.response.send_message(f"Queued {queued} rename(s) for resync.", ephemeral=True)
 
     @discord.ui.button(label="Disable", style=discord.ButtonStyle.danger, row=1)
-    async def disable(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        config = await self.service.set_enabled(self.guild.id, False)
-        await interaction.response.edit_message(embed=build_status_embed(self.guild, config), view=self)
+    async def toggle_enabled(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        config = await self.service.get_config(self.guild.id)
+        new_state = not config.enabled
+        config = await self.service.set_enabled(self.guild.id, new_state)
+        
+        view = FontSyncPanelView(self.service, self.guild, self.owner_id, config)
+        await interaction.response.edit_message(embed=build_status_embed(self.guild, config), view=view)
+        
+        if new_state:
+            queued = await self.service.sync_guild(self.guild, "Font Sync enabled")
+            await interaction.followup.send(f"Font Sync enabled! Queued {queued} rename(s).", ephemeral=True)
+        else:
+            await interaction.followup.send("Font Sync disabled.", ephemeral=True)
+
+
+class DecorationSelect(discord.ui.Select):
+    def __init__(self, current_decoration: str):
+        options = []
+        for name, label in DECORATION_LABELS.items():
+            prefix, suffix = DECORATION_STYLES[name]
+            sample = f"{prefix}example-channel{suffix}"
+            options.append(
+                discord.SelectOption(
+                    label=label,
+                    value=name,
+                    description=sample[:100],
+                    default=name == current_decoration,
+                )
+            )
+        super().__init__(placeholder="Choose a decoration style", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view: DecorationStyleView = self.view  # type: ignore[assignment]
+        view.selected_decoration = self.values[0]
+        await interaction.response.edit_message(embed=view.build_embed(), view=view)
+
+
+class DecorationStyleView(discord.ui.View):
+    def __init__(self, service: FontSyncService, guild: discord.Guild, owner_id: int, current_decoration: str):
+        super().__init__(timeout=180)
+        self.service = service
+        self.guild = guild
+        self.owner_id = owner_id
+        self.selected_decoration = current_decoration
+        self.add_item(DecorationSelect(current_decoration))
+
+    def build_embed(self) -> discord.Embed:
+        embed = discord.Embed(
+            title="Choose Channel/Category Decoration",
+            description="Pick a text framing decoration to make your channels stand out.",
+            color=0x8A2BE2,
+        )
+        embed.add_field(name="Selected", value=DECORATION_LABELS.get(self.selected_decoration, self.selected_decoration), inline=False)
+        prefix, suffix = DECORATION_STYLES.get(self.selected_decoration, ("", ""))
+        embed.add_field(name="Preview", value=f"{prefix}example-channel{suffix}", inline=False)
+        return embed
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "Only the invoking administrator can use this panel.", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Save Decoration", style=discord.ButtonStyle.primary)
+    async def save_decoration(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        config = await self.service.set_decoration(self.guild.id, self.selected_decoration)
+        queued = await self.service.sync_guild(self.guild, "Font Sync decoration update")
+        await interaction.response.edit_message(
+            embed=build_status_embed(self.guild, config),
+            view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
+        )
+        await interaction.followup.send(f"Queued {queued} rename(s) for the new decoration.", ephemeral=True)
+
+    @discord.ui.button(label="← Back", style=discord.ButtonStyle.secondary)
+    async def go_back(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        config = await self.service.get_config(self.guild.id)
+        await interaction.response.edit_message(
+            embed=build_status_embed(self.guild, config),
+            view=FontSyncPanelView(self.service, self.guild, self.owner_id, config),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1028,7 +1275,7 @@ def setup_font_sync(bot: discord.Client, guild: Optional[discord.abc.Snowflake] 
 
     async def send_panel(interaction: discord.Interaction) -> None:
         config = await service.get_config(interaction.guild.id)  # type: ignore[union-attr]
-        view = FontSyncPanelView(service, interaction.guild, interaction.user.id)  # type: ignore[arg-type]
+        view = FontSyncPanelView(service, interaction.guild, interaction.user.id, config)  # type: ignore[arg-type]
         await interaction.response.send_message(
             embed=build_status_embed(interaction.guild, config),  # type: ignore[arg-type]
             view=view,
@@ -1046,7 +1293,7 @@ def setup_font_sync(bot: discord.Client, guild: Optional[discord.abc.Snowflake] 
         config = await service.set_enabled(interaction.guild.id, True)  # type: ignore[union-attr]
         await interaction.response.send_message(
             embed=build_status_embed(interaction.guild, config),  # type: ignore[arg-type]
-            view=FontSyncPanelView(service, interaction.guild, interaction.user.id),  # type: ignore[arg-type]
+            view=FontSyncPanelView(service, interaction.guild, interaction.user.id, config),  # type: ignore[arg-type]
             ephemeral=True,
         )
 
@@ -1085,6 +1332,13 @@ def setup_font_sync(bot: discord.Client, guild: Optional[discord.abc.Snowflake] 
     async def resync(interaction: discord.Interaction) -> None:
         queued = await service.sync_guild(interaction.guild, "Font Sync manual resync")  # type: ignore[union-attr]
         await interaction.response.send_message(f"Queued {queued} rename(s) for resync.", ephemeral=True)
+
+    @font_sync_group.command(name="decorate", description="Choose a channel/category text framing decoration style")
+    @app_commands.checks.has_permissions(manage_channels=True)
+    async def decorate(interaction: discord.Interaction) -> None:
+        config = await service.get_config(interaction.guild.id)  # type: ignore[union-attr]
+        view = DecorationStyleView(service, interaction.guild, interaction.user.id, config.decoration)  # type: ignore[arg-type]
+        await interaction.response.send_message(embed=view.build_embed(), view=view, ephemeral=True)
 
     bot.tree.add_command(font_sync_group, guild=guild)
     return service
