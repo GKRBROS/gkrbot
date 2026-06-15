@@ -22,6 +22,7 @@ if sys.platform.startswith('win'):
 
 from font_sync import setup_font_sync
 from welcome import setup_welcome
+from server_logs import setup_server_logs
 
 # Load environment variables
 load_dotenv()
@@ -192,6 +193,9 @@ setup_font_sync(bot)
 
 # Welcome message & card system
 setup_welcome(bot, GUILD_ID)
+
+# Server event logging system (A-Z events, all guilds)
+setup_server_logs(bot)
 
 # Add app_commands tree for slash commands
 tree = bot.tree
