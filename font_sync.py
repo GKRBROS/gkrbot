@@ -350,14 +350,18 @@ class FontSyncService:
 
         if config.sync_mode == "category_only":
             # Only rename the category headers themselves, not child channels
-            return isinstance(channel, discord.CategoryChannel) and channel.id in config.category_ids
+            return isinstance(channel, discord.CategoryChannel)
 
         if config.sync_mode == "category_channels_only":
             # Only rename channels within the categories, not headers
-            return not isinstance(channel, discord.CategoryChannel) and getattr(channel, "parent_id", None) in config.category_ids
+            return not isinstance(channel, discord.CategoryChannel) and getattr(channel, "parent_id", None) is not None
 
-        if config.sync_mode in ("category_combined", "category"):
-            # Rename headers AND child channels
+        if config.sync_mode in ("category_combined", "category") and not config.category_ids:
+            # Rename headers AND child channels for all categories
+            return isinstance(channel, discord.CategoryChannel) or getattr(channel, "parent_id", None) is not None
+
+        if config.sync_mode == "category_individual" or (config.sync_mode in ("category_combined", "category") and config.category_ids):
+            # Rename selected headers AND/OR their child channels
             if isinstance(channel, discord.CategoryChannel):
                 return channel.id in config.category_ids
             return getattr(channel, "parent_id", None) in config.category_ids
@@ -469,20 +473,25 @@ class FontSyncService:
 
     async def sync_category(self, category: discord.CategoryChannel, reason: str) -> int:
         config = await self.get_config(category.guild.id)
-        if not config.enabled or config.sync_mode not in ("category", "category_only", "category_channels_only", "category_combined") or category.id not in config.category_ids:
+        valid_modes = {"category", "category_only", "category_channels_only", "category_combined", "category_individual"}
+        if not config.enabled or config.sync_mode not in valid_modes:
+            return 0
+
+        # For legacy category or category_individual mode, restrict to selected category IDs
+        if config.sync_mode in ("category", "category_individual") and category.id not in config.category_ids:
             return 0
 
         queued = 0
 
         # Rename the category header itself
-        if config.sync_mode in ("category", "category_only", "category_combined"):
+        if config.sync_mode in ("category", "category_only", "category_combined", "category_individual"):
             cat_desired = self._get_desired_name(category, config)
             if category.name != cat_desired:
                 await self._enqueue_rename(category, cat_desired, reason)
                 queued += 1
 
         # Rename channels inside the category
-        if config.sync_mode in ("category", "category_channels_only", "category_combined"):
+        if config.sync_mode in ("category", "category_channels_only", "category_combined", "category_individual"):
             for channel in category.channels:
                 if not self._is_renameable_channel(channel):
                     continue
@@ -509,21 +518,25 @@ class FontSyncService:
             if self.matches_scope(config, after):
                 await self._maybe_queue_channel(after, "Font Sync category update")
             # Also resync all child channels when in category mode
-            if config.sync_mode in ("category", "category_only", "category_channels_only", "category_combined") and after.id in config.category_ids:
-                await self.sync_category(after, "Font Sync category update")
+            if config.sync_mode in ("category", "category_only", "category_channels_only", "category_combined", "category_individual"):
+                if config.sync_mode in ("category", "category_individual") and after.id not in config.category_ids:
+                    pass
+                else:
+                    await self.sync_category(after, "Font Sync category update")
             return
 
         if self.matches_scope(config, after):
             await self._maybe_queue_channel(after, "Font Sync channel update")
 
         # Handle a channel moving between categories
-        if config.sync_mode in ("category", "category_channels_only", "category_combined") and before.parent_id != after.parent_id:
+        if config.sync_mode in ("category", "category_channels_only", "category_combined", "category_individual") and before.parent_id != after.parent_id:
             parent_ids = {pid for pid in (before.parent_id, after.parent_id) if pid is not None}
-            if parent_ids.intersection(config.category_ids):
-                for parent_id in parent_ids.intersection(config.category_ids):
-                    category = after.guild.get_channel(parent_id)
-                    if isinstance(category, discord.CategoryChannel):
-                        await self.sync_category(category, "Font Sync category move update")
+            for parent_id in parent_ids:
+                if config.sync_mode in ("category", "category_individual") and parent_id not in config.category_ids:
+                    continue
+                category = after.guild.get_channel(parent_id)
+                if isinstance(category, discord.CategoryChannel):
+                    await self.sync_category(category, "Font Sync category move update")
 
     async def set_enabled(self, guild_id: int, enabled: bool) -> FontSyncConfig:
         config = await self.get_config(guild_id)
@@ -590,7 +603,7 @@ class FontSyncService:
         category_ids: Optional[list[int]] = None,
         channel_ids: Optional[list[int]] = None,
     ) -> FontSyncConfig:
-        if sync_mode not in {"server", "category", "category_only", "category_channels_only", "category_combined", "channel"}:
+        if sync_mode not in {"server", "category", "category_only", "category_channels_only", "category_combined", "category_individual", "channel"}:
             raise ValueError("Unknown sync mode")
 
         config = await self.get_config(guild_id)
@@ -622,7 +635,13 @@ def build_status_embed(guild: discord.Guild, config: FontSyncConfig) -> discord.
 
     if config.sync_mode == "server":
         scope_details = "All channels & categories in the guild"
-    elif config.sync_mode in ("category", "category_only", "category_channels_only", "category_combined"):
+    elif config.sync_mode == "category_only":
+        scope_details = "All category headers in the guild"
+    elif config.sync_mode == "category_channels_only":
+        scope_details = "All channels within any category"
+    elif config.sync_mode in ("category_combined", "category") and not config.category_ids:
+        scope_details = "All category headers and channels inside them"
+    elif config.sync_mode in ("category_individual", "category") or (config.sync_mode in ("category_combined", "category") and config.category_ids):
         if config.category_ids:
             category_names = []
             for category_id in config.category_ids:

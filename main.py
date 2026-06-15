@@ -301,6 +301,155 @@ async def botdiagnostics(interaction: discord.Interaction):
     except Exception as e:
         await interaction.followup.send(f"❌ Error compiling diagnostics: {e}", ephemeral=True)
 
+
+# --- UTILITY SLASH COMMANDS ---
+
+@tree.command(name="say", description="Make GKR Bot send a message in a channel")
+@app_commands.checks.has_permissions(manage_messages=True)
+@app_commands.describe(
+    message="The message to send",
+    channel="The channel to send the message in (optional)"
+)
+async def say(interaction: discord.Interaction, message: str, channel: discord.TextChannel | None = None) -> None:
+    """Make the bot speak in the specified channel."""
+    target_channel = channel or interaction.channel
+    if not isinstance(target_channel, discord.TextChannel):
+        await interaction.response.send_message("❌ Target channel must be a text channel.", ephemeral=True)
+        return
+
+    try:
+        await target_channel.send(message)
+        await interaction.response.send_message(f"✅ Sent message to {target_channel.mention}.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to send message: {e}", ephemeral=True)
+
+
+@tree.command(name="dm", description="Send a direct message (DM) to a specific user or everyone with a role")
+@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.describe(
+    message="The message to send",
+    user="The specific user to DM (optional)",
+    role="All members with this role to DM (optional)"
+)
+async def dm(
+    interaction: discord.Interaction,
+    message: str,
+    user: discord.Member | None = None,
+    role: discord.Role | None = None
+) -> None:
+    """Send a DM to a specific user or all members with a role."""
+    if not user and not role:
+        await interaction.response.send_message("❌ You must specify either a user or a role to DM.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    if user:
+        try:
+            await user.send(message)
+            await interaction.followup.send(f"✅ Successfully sent DM to {user.mention}.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send(f"❌ Failed to DM {user.mention}. (User has DMs closed or has blocked the bot)", ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error sending DM to {user.mention}: {e}", ephemeral=True)
+        return
+
+    if role:
+        members = role.members
+        if not members:
+            await interaction.followup.send(f"⚠️ No members found with the role {role.mention}.", ephemeral=True)
+            return
+
+        await interaction.followup.send(f"⏳ Sending DMs to {len(members)} members with role {role.name}...", ephemeral=True)
+
+        success = 0
+        failed = 0
+        for member in members:
+            if member.bot:
+                continue
+            try:
+                await member.send(message)
+                success += 1
+                await asyncio.sleep(0.5)  # rate limit safety
+            except Exception:
+                failed += 1
+
+        await interaction.followup.send(f"🎯 DM Role campaign complete: {success} sent successfully, {failed} failed.", ephemeral=True)
+
+
+@tree.command(name="announcement", description="Create a beautiful, formatted Embed announcement")
+@app_commands.checks.has_permissions(manage_messages=True)
+@app_commands.describe(
+    title="The title of the announcement",
+    message="The announcement message content",
+    channel="The channel to send the announcement in (optional)",
+    ping="Who to ping with the announcement: None | Everyone | Here | Role (optional)",
+    role="Role to ping if ping is set to Role (optional)"
+)
+@app_commands.choices(
+    ping=[
+        app_commands.Choice(name="None", value="none"),
+        app_commands.Choice(name="Everyone", value="everyone"),
+        app_commands.Choice(name="Here", value="here"),
+        app_commands.Choice(name="Role", value="role")
+    ]
+)
+async def announcement(
+    interaction: discord.Interaction,
+    title: str,
+    message: str,
+    channel: discord.TextChannel | None = None,
+    ping: str = "none",
+    role: discord.Role | None = None
+) -> None:
+    """Create and send a beautiful Embed announcement."""
+    target_channel = channel or interaction.channel
+    if not isinstance(target_channel, discord.TextChannel):
+        await interaction.response.send_message("❌ Target channel must be a text channel.", ephemeral=True)
+        return
+
+    if ping == "role" and not role:
+        await interaction.response.send_message("❌ You selected role ping but did not specify which role to ping.", ephemeral=True)
+        return
+
+    ping_prefix = ""
+    if ping == "everyone":
+        ping_prefix = "@everyone"
+    elif ping == "here":
+        ping_prefix = "@here"
+    elif ping == "role" and role:
+        ping_prefix = role.mention
+
+    embed = discord.Embed(
+        title=f"📢  {title}",
+        description=message,
+        color=0x8A2BE2,  # Premium GKR Purple
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
+    )
+    embed.set_footer(text=f"Announcement by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+
+    try:
+        await target_channel.send(content=ping_prefix if ping_prefix else None, embed=embed)
+        await interaction.response.send_message(f"✅ Announcement sent to {target_channel.mention}.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Failed to send announcement: {e}", ephemeral=True)
+
+
+@tree.command(name="valo", description="Invite players to join Valorant (Malayalam gaming call)")
+async def valo(interaction: discord.Interaction) -> None:
+    """Send a fun Valorant ping invitation."""
+    role_id = int(os.getenv('VALORANT_ROLE_ID', '0'))
+    role = interaction.guild.get_role(role_id) if (interaction.guild and role_id != 0) else None
+
+    call_msg = "vada makale valo kalikam"
+    if role:
+        content = f"{role.mention} {call_msg}"
+    else:
+        content = call_msg
+
+    await interaction.response.send_message(content)
+
+
 # Activity rotation list - Simple and focused activities
 base_activities = [
     # Only two core activities
