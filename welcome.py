@@ -431,5 +431,5 @@ def setup_welcome(bot: commands.Bot, guild_id: int) -> None:
         except Exception as exc:
             await interaction.followup.send(f"❌ Failed to run welcome test: {exc}", ephemeral=True)
 
-    # Register command group
-    bot.tree.add_command(welcome_group, guild=discord.Object(id=guild_id))
+    # Register command group GLOBALLY so /welcome works in every server the bot is in
+    bot.tree.add_command(welcome_group)

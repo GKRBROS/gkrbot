@@ -579,48 +579,40 @@ async def on_ready():
 
 @bot.event
 async def on_member_join(member):
-    """Handle when a member joins the server"""
+    """Handle when a member joins any server the bot is in"""
     guild = member.guild
-    
-    # Check if this is the correct guild
-    if guild.id != GUILD_ID:
-        return
-    
-    print(f"👋 New member joined: {member.display_name}")
-    
-    # Send welcome card and message
+
+    print(f"👋 New member joined: {member.display_name} in {guild.name}")
+
+    # ── Welcome card: fires for EVERY guild ──────────────────────────────────
     try:
         from welcome import WelcomeDatabase, send_welcome
-        db = WelcomeDatabase()
-        config = db.get_config(guild.id)
-        await send_welcome(member, config)
+        _db = WelcomeDatabase()
+        _config = _db.get_config(guild.id)
+        await send_welcome(member, _config)
     except Exception as e:
-        print(f"❌ Failed to send welcome card: {e}")
-    
+        print(f"❌ Failed to send welcome card in {guild.name}: {e}")
+
+    # ── GKR-specific nickname logic: home guild only ─────────────────────────
+    if guild.id != GUILD_ID:
+        return
+
     # Small delay to allow role assignment bots to work
     await asyncio.sleep(2)
-    
+
     # Refresh member data to get updated roles
     try:
         member = await guild.fetch_member(member.id)
-    except:
+    except Exception:
         pass
-    
+
     try:
-        # Check if the member has the specified role
         role = guild.get_role(BOT_ROLE_ID)
         if role and role in member.roles:
-            # Change nickname to GKR
             await member.edit(nick="GKR")
             print(f"🎉 Welcome! Changed {member.display_name}'s nickname to GKR ✨")
-            
-            # Optional: Send a welcome message (you can uncomment if you want)
-            # channel = discord.utils.get(guild.channels, name='general')
-            # if channel:
-            #     await channel.send(f"🔥 Welcome {member.mention}! You're now officially **GKR**! 👑")
         else:
             print(f"ℹ️  {member.display_name} doesn't have the required role yet")
-            
     except discord.Forbidden:
         print(f"❌ No permission to change nickname for {member.display_name}")
     except discord.HTTPException as e:
