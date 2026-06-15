@@ -34,7 +34,7 @@ ALL_EVENTS: list[str] = [
     "member_kick", "member_timeout", "member_role_add", "member_role_remove",
     "member_nickname",
     # Messages
-    "message_delete", "message_edit", "message_bulk_delete",
+    "message_delete", "message_edit", "message_bulk_delete", "message_send", "message_mention",
     # Channels
     "channel_create", "channel_delete", "channel_update",
     # Roles
@@ -62,6 +62,8 @@ C = {
     "msg_del":       0xFF6B6B,
     "msg_edit":      0xF1C40F,
     "bulk_del":      0xFF4444,
+    "msg_send":      0x3498DB,
+    "msg_mention":   0xE67E22,
     "ch_create":     0x2ECC71,
     "ch_delete":     0xE74C3C,
     "ch_update":     0xF1C40F,
@@ -568,12 +570,44 @@ class ServerLogger:
             await self._send(message.guild, "bot_message", embed)
             return
 
-        # Detect prefix-style commands from human users
-        PREFIXES = ("!", "/", "?", ".", "$", "-", "~", "=", ">>", ";;")
         if message.author.bot:
             return
+
+        # 1. Check if the message contains any mentions
+        has_mention = bool(message.mentions or message.role_mentions or message.mention_everyone)
+        if has_mention:
+            embed = _base_embed("📣  Mention Detected", C["msg_mention"])
+            embed.set_thumbnail(url=message.author.display_avatar.url)
+            embed.add_field(name="Author", value=_fmt_user(message.author), inline=True)
+            embed.add_field(name="Channel", value=_fmt_channel(message.channel), inline=True)
+
+            mentions_str = []
+            if message.mentions:
+                mentions_str.append(f"**Users:** " + " ".join(u.mention for u in message.mentions[:10]))
+            if message.role_mentions:
+                mentions_str.append(f"**Roles:** " + " ".join(r.mention for r in message.role_mentions[:10]))
+            if message.mention_everyone:
+                mentions_str.append("**Everyone/Here:** Yes")
+
+            embed.add_field(name="Mentions", value="\n".join(mentions_str), inline=False)
+            content_preview = _trunc(message.content or "*[embed / file only]*", 512)
+            embed.add_field(name="Content", value=content_preview, inline=False)
+            if message.attachments:
+                embed.add_field(
+                    name="Attachments",
+                    value="\n".join(a.filename for a in message.attachments),
+                    inline=False
+                )
+            if message.jump_url:
+                embed.add_field(name="Jump", value=f"[View Message]({message.jump_url})", inline=True)
+            await self._send(message.guild, "message_mention", embed)
+
+        # 2. Check prefix-style commands from human users
+        is_command = False
+        PREFIXES = ("!", "/", "?", ".", "$", "-", "~", "=", ">>", ";;")
         content = message.content.strip()
         if content and any(content.startswith(p) for p in PREFIXES):
+            is_command = True
             cmd_text = content.split()[0]
             embed = _base_embed("⌨️  Command Used", C["command"])
             embed.set_thumbnail(url=message.author.display_avatar.url)
@@ -584,6 +618,25 @@ class ServerLogger:
             if message.jump_url:
                 embed.add_field(name="Jump", value=f"[View]({message.jump_url})", inline=True)
             await self._send(message.guild, "command_used", embed)
+
+        # 3. Log normal message send (if it's not a command)
+        if not is_command:
+            embed = _base_embed("💬  Message Sent", C["msg_send"])
+            embed.set_thumbnail(url=message.author.display_avatar.url)
+            embed.add_field(name="Author",  value=_fmt_user(message.author), inline=True)
+            embed.add_field(name="Channel", value=_fmt_channel(message.channel), inline=True)
+            
+            content_preview = _trunc(message.content or "*[embed / file only]*", 512)
+            embed.add_field(name="Content", value=content_preview, inline=False)
+            if message.attachments:
+                embed.add_field(
+                    name="Attachments",
+                    value="\n".join(a.filename for a in message.attachments),
+                    inline=False
+                )
+            if message.jump_url:
+                embed.add_field(name="Jump", value=f"[View Message]({message.jump_url})", inline=True)
+            await self._send(message.guild, "message_send", embed)
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         """Log slash command / application command usage."""
@@ -643,6 +696,8 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "message_delete":      "Message is deleted",
     "message_edit":        "Message is edited",
     "message_bulk_delete": "Bulk message deletion",
+    "message_send":        "A message is sent (created)",
+    "message_mention":     "A message containing mentions is sent",
     "channel_create":      "Channel created",
     "channel_delete":      "Channel deleted",
     "channel_update":      "Channel settings changed",
@@ -666,7 +721,7 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
 EVENT_CATEGORIES: dict[str, list[str]] = {
     "members":  ["member_join", "member_leave", "member_ban", "member_unban",
                  "member_kick", "member_timeout", "member_role_add", "member_role_remove", "member_nickname"],
-    "messages": ["message_delete", "message_edit", "message_bulk_delete"],
+    "messages": ["message_delete", "message_edit", "message_bulk_delete", "message_send", "message_mention"],
     "channels": ["channel_create", "channel_delete", "channel_update"],
     "roles":    ["role_create", "role_delete", "role_update"],
     "voice":    ["voice_join", "voice_leave", "voice_move", "voice_mute"],
