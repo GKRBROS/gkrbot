@@ -1,3 +1,82 @@
+import sys
+import subprocess
+import traceback
+import os
+import shutil
+
+# Self-healing dependency check (e.g. for PyNaCl, yt-dlp, spotipy)
+required_packages = {
+    "yt_dlp": "yt-dlp",
+    "spotipy": "spotipy",
+    "ytnoti": "ytnoti"
+}
+for check_module, pip_name in required_packages.items():
+    try:
+        __import__(check_module)
+    except ImportError:
+        print(f"⚙️ Auto-installing missing dependency: {pip_name}...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
+            print(f"✅ Successfully installed {pip_name}!")
+        except Exception as e:
+            print(f"❌ Failed to auto-install {pip_name}: {e}")
+
+# Force-upgrade yt-dlp on startup to bypass YouTube datacenter blocks
+print("⚙️ Force-upgrading yt-dlp to latest version for anti-bot patches...")
+try:
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-U", "yt-dlp"], stdout=subprocess.DEVNULL)
+    print("✅ yt-dlp is up to date!")
+except Exception as e:
+    print(f"⚠️ Failed to upgrade yt-dlp: {e}")
+
+# Check PyNaCl specifically since it requires voice extras
+try:
+    import nacl.secret
+    import nacl.signing
+except ImportError:
+    print("⚙️ PyNaCl voice components are missing or failed to import. Auto-installing discord.py[voice]...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-U", "discord.py[voice]"])
+        import nacl.secret
+        import nacl.signing
+        print("✅ Successfully installed and verified PyNaCl submodules!")
+    except Exception as e:
+        print(f"❌ Failed to resolve PyNaCl voice components: {e}")
+
+# Detailed voice diagnostic checks
+print("=== GKR Voice Diagnostics ===")
+print(f"Python version: {sys.version}")
+print(f"Platform: {sys.platform}")
+
+try:
+    import ctypes
+    print("✅ Standard library 'ctypes' imported successfully!")
+    try:
+        import ctypes.util
+        print("✅ 'ctypes.util' imported successfully!")
+        opus_path = ctypes.util.find_library('opus')
+        print(f"ℹ️ libopus library search path: {opus_path}")
+    except Exception as e:
+        print(f"⚠️ ctypes.util check failed: {e}")
+except ImportError as e:
+    print(f"❌ ctypes import failed! This is why voice fails: {e}")
+    traceback.print_exc()
+
+try:
+    import nacl
+    print("✅ PyNaCl ('nacl') imported successfully!")
+    try:
+        import nacl.secret
+        import nacl.signing
+        print("✅ nacl.secret and nacl.signing imported successfully!")
+    except Exception as e:
+        print(f"❌ PyNaCl submodules import failed! This is why voice fails: {e}")
+        traceback.print_exc()
+except ImportError as e:
+    print(f"❌ PyNaCl import failed! This is why voice fails: {e}")
+    traceback.print_exc()
+print("=============================")
+
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -5,11 +84,12 @@ import os
 import datetime
 import asyncio
 import random
+from discord.app_commands import Choice
 from dotenv import load_dotenv
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
+# import wavelink  # Music disabled
 import json
-import sys
 import io
 
 # Force standard streams to use UTF-8 encoding on Windows to prevent emoji printing crashes
@@ -20,12 +100,11 @@ if sys.platform.startswith('win'):
     except AttributeError:
         pass
 
-from font_sync import setup_font_sync
-from welcome import setup_welcome
-from server_logs import setup_server_logs
-
-# Load environment variables
+# Load environment variables early so modules can access them
 load_dotenv()
+
+# All modules are loaded as discord.py extensions (Cogs) in setup_hook below.
+# No direct imports needed — load_extension handles everything.
 
 # Run environment validation checks first
 def validate_environment():
@@ -120,6 +199,14 @@ BOT_ROLE_ID = int(os.getenv('BOT_ROLE_ID'))  # Role for bot nickname management
 MEMBER_ROLE_ID = int(os.getenv('MEMBER_ROLE_ID') or os.getenv('memeber_role_id'))  # Role for member count watching
 PORT = int(os.getenv('PORT', 8080)) 
 
+# ── Music / Wavelink disabled ──
+# Uncomment below to re-enable music once a working Lavalink node is found
+# LAVALINK_URI      = os.getenv('LAVALINK_URI', '')
+# LAVALINK_PASSWORD = os.getenv('LAVALINK_PASSWORD', '')
+# _LAVALINK_FALLBACKS = [ ... ]
+# async def _get_lavalink_nodes(): ...
+
+
 # Reaction roles configuration
 REACTION_CHANNEL_ID = int(os.getenv('REACTION_CHANNEL_ID', '0'))  # Default to 0 if not set
 REACTION_MESSAGE_ID = None  # Will be set when message is created
@@ -188,18 +275,58 @@ if APPLICATION_ID:
 
 bot = commands.Bot(**bot_kwargs)
 
-# Font Sync system
-setup_font_sync(bot)
-
-# Welcome message & card system
-setup_welcome(bot, GUILD_ID)
-
-# Server event logging system (A-Z events, all guilds)
-setup_server_logs(bot)
-
 # Add app_commands tree for slash commands
 tree = bot.tree
 
+
+async def setup_hook():
+    print("🔄 Running setup_hook...")
+
+    # ── Load all Cog extensions ───────────────────────────────────────────────
+    extensions = [
+        "font_sync",
+        "welcome",
+        "server_logs",
+        "birthdays",
+        "bot_status",
+        "stream_alerts",
+        "tickets",
+        "protection",
+        "temp_vc",
+        "server_template",
+        "server_backup",
+        "dashboard_api",
+        "notifications",
+        "webhook_messages",
+        "server_stats",
+        "invite_tracker",
+        "role_sync",
+        "dev_global_logs",
+        "music",
+        "self_roles",
+        "role_restore",
+        "sticky_messages",
+        "auto_reactions",
+        "anti_hacked",
+        "honeypot",
+    ]
+    for ext in extensions:
+        try:
+            await bot.load_extension(ext)
+        except Exception as e:
+            print(f"❌ Failed to load extension '{ext}': {e}")
+
+    # Global sync inside setup hook
+    try:
+        global_synced = await bot.tree.sync()
+        print(f"🌍 Global sync: {len(global_synced)} command(s) → {[c.name for c in global_synced]}")
+        bot.tree.copy_global_to(guild=GUILD_OBJECT)
+        guild_synced = await bot.tree.sync(guild=GUILD_OBJECT)
+        print(f"🏠 Guild sync:  {len(guild_synced)} command(s) → {[c.name for c in guild_synced]}")
+    except Exception as e:
+        print(f"⚠️ Command sync warning: {e}")
+
+bot.setup_hook = setup_hook
 
 @tree.command(name="sync-commands", description="Sync the bot's slash commands to this server")
 async def sync_commands(interaction: discord.Interaction):
@@ -302,6 +429,45 @@ async def botdiagnostics(interaction: discord.Interaction):
         await interaction.followup.send(f"❌ Error compiling diagnostics: {e}", ephemeral=True)
 
 
+# --- PING COMMANDS ---
+ping_group = app_commands.Group(name="ping", description="Ping commands for the bot and roles")
+bot.tree.add_command(ping_group)
+
+@ping_group.command(name="bot", description="Show the bot's current websocket latency")
+async def ping_bot(interaction: discord.Interaction):
+    latency_ms = round(bot.latency * 1000)
+    embed = discord.Embed(
+        title="🏓 Pong!",
+        description=f"Bot Latency: `{latency_ms}ms`",
+        color=0x2ECC71 if latency_ms < 150 else (0xF1C40F if latency_ms < 300 else 0xE74C3C)
+    )
+    await interaction.response.send_message(embed=embed)
+
+@ping_group.command(name="role", description="Mention a specific role (pinging only)")
+@app_commands.default_permissions(manage_messages=True)
+async def ping_role(interaction: discord.Interaction, role: discord.Role, message: str = None):
+    # Temporarily make the role mentionable if it isn't
+    was_mentionable = role.mentionable
+    try:
+        if not was_mentionable:
+            await role.edit(mentionable=True)
+        
+        content = f"{role.mention}"
+        if message:
+            content += f"\n{message}"
+            
+        await interaction.response.send_message(content, allowed_mentions=discord.AllowedMentions(roles=True))
+    except discord.Forbidden:
+        await interaction.response.send_message("❌ I do not have permission to mention that role or edit its status.", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
+    finally:
+        if not was_mentionable:
+            try:
+                await role.edit(mentionable=False)
+            except:
+                pass
+
 # --- UTILITY SLASH COMMANDS ---
 
 def format_text(text: str, style: str) -> str:
@@ -319,6 +485,50 @@ def format_text(text: str, style: str) -> str:
     return text
 
 
+async def send_with_role_ping(
+    interaction: discord.Interaction,
+    target: discord.TextChannel | discord.Interaction,
+    content: str | None,
+    role: discord.Role | None,
+    embed: discord.Embed | None = None,
+    ephemeral: bool = False
+) -> None:
+    """Sends a message to either a TextChannel or an Interaction response, ensuring the role ping is active/notified."""
+    guild = role.guild if role else (interaction.guild if interaction else None)
+    me = guild.me if guild else None
+    
+    # Check if we need to temporarily enable role mentionability
+    was_mentionable = False
+    should_toggle = False
+    if role and not role.mentionable and me:
+        bot_has_manage_roles = me.guild_permissions.manage_roles
+        bot_higher_than_role = me.top_role > role
+        if bot_has_manage_roles and bot_higher_than_role:
+            was_mentionable = role.mentionable
+            should_toggle = True
+            try:
+                await role.edit(mentionable=True)
+            except Exception:
+                should_toggle = False
+
+    try:
+        allowed = discord.AllowedMentions(roles=True, everyone=True, users=True)
+        if isinstance(target, discord.Interaction):
+            if target.response.is_done():
+                await target.followup.send(content=content, embed=embed, allowed_mentions=allowed, ephemeral=ephemeral)
+            else:
+                await target.response.send_message(content=content, embed=embed, allowed_mentions=allowed, ephemeral=ephemeral)
+        else:
+            # target is a TextChannel
+            await target.send(content=content, embed=embed, allowed_mentions=allowed)
+    finally:
+        if should_toggle and role:
+            try:
+                await role.edit(mentionable=was_mentionable)
+            except Exception:
+                pass
+
+
 FORMAT_CHOICES = [
     app_commands.Choice(name="Normal", value="normal"),
     app_commands.Choice(name="Bold", value="bold"),
@@ -329,10 +539,282 @@ FORMAT_CHOICES = [
 ]
 
 
-@tree.command(name="say", description="Make GKR Bot send a message in a channel")
-@app_commands.checks.has_permissions(manage_messages=True)
+# ── Modals for multi-line / formatted text input ───────────────────────────
+
+class SayModal(discord.ui.Modal, title="✉️ Send a Message"):
+    """Popup dialog capturing multi-line message body for /say."""
+    message_text = discord.ui.TextInput(
+        label="Message",
+        style=discord.TextStyle.paragraph,
+        placeholder="Type or paste your message here.\nNewlines and spacing are fully preserved.",
+        required=True,
+        max_length=2000,
+    )
+
+    def __init__(self, target_channel: discord.TextChannel, ping_role: discord.Role | None, format_style: str):
+        super().__init__()
+        self.target_channel = target_channel
+        self.ping_role = ping_role
+        self.format_style = format_style
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        formatted_msg = format_text(str(self.message_text), self.format_style)
+        
+        if self.ping_role:
+            # Discord passes the @everyone role as a normal role object, but its mention string
+            # resolves to <@&guild_id> which doesn't actually ping everyone. We must use the literal string.
+            mention_str = "@everyone" if self.ping_role.name == "@everyone" else self.ping_role.mention
+            content = f"{mention_str} {formatted_msg}"
+        else:
+            content = formatted_msg
+            
+        try:
+            await send_with_role_ping(interaction, self.target_channel, content, self.ping_role)
+            await interaction.response.send_message(f"✅ Sent message to {self.target_channel.mention}.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Failed to send message: {e}", ephemeral=True)
+
+
+class DmModal(discord.ui.Modal, title="📨 Direct Message"):
+    """Popup dialog capturing multi-line DM body for /dm."""
+    message_text = discord.ui.TextInput(
+        label="Message",
+        style=discord.TextStyle.paragraph,
+        placeholder="Type or paste your DM here.\nNewlines and spacing are fully preserved.",
+        required=True,
+        max_length=2000,
+    )
+
+    def __init__(self, user: discord.Member | None, role: discord.Role | None):
+        super().__init__()
+        self._user = user
+        self._role = role
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        message = str(self.message_text)
+        await interaction.response.defer(ephemeral=True)
+
+        if self._user:
+            try:
+                await self._user.send(message)
+                await interaction.followup.send(f"✅ Successfully sent DM to {self._user.mention}.", ephemeral=True)
+            except discord.Forbidden:
+                await interaction.followup.send(f"❌ Failed to DM {self._user.mention}. (User has DMs closed or has blocked the bot)", ephemeral=True)
+            except Exception as e:
+                await interaction.followup.send(f"❌ Error sending DM to {self._user.mention}: {e}", ephemeral=True)
+            return
+
+        if self._role:
+            members = self._role.members
+            if not members:
+                await interaction.followup.send(f"⚠️ No members found with the role {self._role.mention}.", ephemeral=True)
+                return
+            await interaction.followup.send(f"⏳ Sending DMs to {len(members)} members with role {self._role.name}...", ephemeral=True)
+            success = 0
+            failed = 0
+            for member in members:
+                if member.bot:
+                    continue
+                try:
+                    await member.send(message)
+                    success += 1
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    failed += 1
+            await interaction.followup.send(f"🎯 DM campaign complete: {success} sent, {failed} failed.", ephemeral=True)
+
+
+class AnnouncementModal(discord.ui.Modal, title="📢 Create Announcement"):
+    """Popup dialog capturing title + multi-line body for /announcement."""
+    ann_title = discord.ui.TextInput(
+        label="Announcement Title",
+        style=discord.TextStyle.short,
+        placeholder="e.g. Server Update — June 2026",
+        required=True,
+        max_length=256,
+    )
+    message_text = discord.ui.TextInput(
+        label="Message",
+        style=discord.TextStyle.paragraph,
+        placeholder="Type or paste your announcement here.\nNewlines and spacing are fully preserved.",
+        required=True,
+        max_length=4000,
+    )
+
+    def __init__(
+        self,
+        target_channel: discord.TextChannel,
+        ping: str,
+        ping_role: discord.Role | None,
+        format_style: str,
+        invoker: discord.Member,
+    ):
+        super().__init__()
+        self.target_channel = target_channel
+        self.ping = ping
+        self.ping_role = ping_role
+        self.format_style = format_style
+        self.invoker = invoker
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        ping_prefix = ""
+        role_obj = None
+        if self.ping == "everyone":
+            ping_prefix = "@everyone"
+        elif self.ping == "here":
+            ping_prefix = "@here"
+        elif self.ping == "role" and self.ping_role:
+            ping_prefix = self.ping_role.mention
+            role_obj = self.ping_role
+
+        formatted_msg = format_text(str(self.message_text), self.format_style)
+
+        embed = discord.Embed(
+            title=f"📢  {str(self.ann_title)}",
+            description=formatted_msg,
+            color=0x8A2BE2,
+            timestamp=datetime.datetime.now(datetime.timezone.utc)
+        )
+        embed.set_footer(
+            text=f"Announcement by {self.invoker.display_name}",
+            icon_url=self.invoker.display_avatar.url
+        )
+
+        try:
+            await send_with_role_ping(interaction, self.target_channel, ping_prefix if ping_prefix else None, role_obj, embed=embed)
+            await interaction.response.send_message(f"✅ Announcement sent to {self.target_channel.mention}.", ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Failed to send announcement: {e}", ephemeral=True)
+
+
+class RulesModal(discord.ui.Modal, title="📋 Post Server Rules"):
+    """Popup dialog for composing and posting the server rules embed."""
+    rule_title = discord.ui.TextInput(
+        label="Rules Title",
+        style=discord.TextStyle.short,
+        default="Server Rules",
+        placeholder="e.g. Server Rules",
+        required=True,
+        max_length=256,
+    )
+    rules_text = discord.ui.TextInput(
+        label="Rules Content",
+        style=discord.TextStyle.paragraph,
+        placeholder="Paste your full rules here. Newlines & spacing are preserved exactly as written.",
+        required=True,
+        max_length=4000,
+    )
+    image_url = discord.ui.TextInput(
+        label="Image / GIF URL (optional)",
+        style=discord.TextStyle.short,
+        placeholder="https://... image or GIF link (leave blank for none)",
+        required=False,
+        max_length=1024,
+    )
+
+    def __init__(
+        self,
+        target_channel: discord.TextChannel,
+        ping: str,
+        ping_role: discord.Role | None,
+    ):
+        super().__init__()
+        self.target_channel = target_channel
+        self.ping = ping
+        self.ping_role = ping_role
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        guild = interaction.guild
+
+        # Build ping content & role object
+        ping_content = ""
+        role_obj = None
+        if self.ping == "everyone":
+            ping_content = "@everyone"
+        elif self.ping == "here":
+            ping_content = "@here"
+        elif self.ping == "role" and self.ping_role:
+            ping_content = self.ping_role.mention
+            role_obj = self.ping_role
+
+        # Build embed — mirroring the style shown in the screenshot
+        embed = discord.Embed(
+            title=str(self.rule_title),
+            description=str(self.rules_text),
+            color=0x8A2BE2,  # GKR Purple
+        )
+
+        # Server name + icon as the embed author (top-left)
+        embed.set_author(
+            name=guild.name,
+            icon_url=guild.icon.url if guild.icon else None,
+        )
+
+        # Server icon as the thumbnail (top-right of embed)
+        if guild.icon:
+            embed.set_thumbnail(url=guild.icon.url)
+
+        # Optional image or GIF at the bottom of the embed
+        url = str(self.image_url).strip()
+        if url:
+            embed.set_image(url=url)
+
+        embed.set_footer(
+            text=f"{guild.name} • Server Rules",
+            icon_url=guild.icon.url if guild.icon else None,
+        )
+
+        try:
+            await send_with_role_ping(
+                interaction, self.target_channel,
+                ping_content if ping_content else None,
+                role_obj, embed=embed
+            )
+            await interaction.response.send_message(
+                f"✅ Rules posted to {self.target_channel.mention}.", ephemeral=True
+            )
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Failed to post rules: {e}", ephemeral=True)
+
+
+@tree.command(name="rules", description="Post the server rules as a beautiful formatted embed")
+@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(
-    message="The message to send",
+    channel="The channel to post rules in (optional, defaults to current channel)",
+    ping="Who to ping alongside the rules post (optional)",
+    role="Role to ping if ping is set to Role (optional)",
+)
+@app_commands.choices(
+    ping=[
+        app_commands.Choice(name="None", value="none"),
+        app_commands.Choice(name="Everyone", value="everyone"),
+        app_commands.Choice(name="Here", value="here"),
+        app_commands.Choice(name="Role", value="role"),
+    ]
+)
+async def rules_cmd(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel | None = None,
+    ping: str = "none",
+    role: discord.Role | None = None,
+) -> None:
+    """Open a multi-line rules modal — paste your rules, add an optional image/GIF URL."""
+    target_channel = channel or interaction.channel
+    if not isinstance(target_channel, discord.TextChannel):
+        await interaction.response.send_message("❌ Target channel must be a text channel.", ephemeral=True)
+        return
+
+    if ping == "role" and not role:
+        await interaction.response.send_message("❌ You selected role ping but did not specify a role.", ephemeral=True)
+        return
+
+    ping_role = role if ping == "role" else None
+    await interaction.response.send_modal(RulesModal(target_channel, ping, ping_role))
+
+
+@tree.command(name="say", description="Make GKR Bot send a message in a channel")
+@app_commands.default_permissions(manage_messages=True)
+@app_commands.describe(
     channel="The channel to send the message in (optional)",
     ping_role="Role to ping alongside the message (optional)",
     format="Text formatting style (optional)"
@@ -340,87 +822,39 @@ FORMAT_CHOICES = [
 @app_commands.choices(format=FORMAT_CHOICES)
 async def say(
     interaction: discord.Interaction,
-    message: str,
     channel: discord.TextChannel | None = None,
     ping_role: discord.Role | None = None,
     format: str = "normal"
 ) -> None:
-    """Make the bot speak in the specified channel with optional formatting and role ping."""
+    """Open a multi-line message modal — newlines and spacing are fully preserved."""
     target_channel = channel or interaction.channel
     if not isinstance(target_channel, discord.TextChannel):
         await interaction.response.send_message("❌ Target channel must be a text channel.", ephemeral=True)
         return
-
-    formatted_msg = format_text(message, format)
-    
-    # If a role ping is specified, send it together so it alerts correctly
-    content = f"{ping_role.mention} {formatted_msg}" if ping_role else formatted_msg
-
-    try:
-        await target_channel.send(content)
-        await interaction.response.send_message(f"✅ Sent message to {target_channel.mention}.", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Failed to send message: {e}", ephemeral=True)
+    await interaction.response.send_modal(SayModal(target_channel, ping_role, format))
 
 
 @tree.command(name="dm", description="Send a direct message (DM) to a specific user or everyone with a role")
-@app_commands.checks.has_permissions(manage_guild=True)
+@app_commands.default_permissions(manage_guild=True)
 @app_commands.describe(
-    message="The message to send",
     user="The specific user to DM (optional)",
     role="All members with this role to DM (optional)"
 )
 async def dm(
     interaction: discord.Interaction,
-    message: str,
     user: discord.Member | None = None,
     role: discord.Role | None = None
 ) -> None:
-    """Send a DM to a specific user or all members with a role."""
+    """Open a multi-line DM modal — newlines and spacing are fully preserved."""
     if not user and not role:
         await interaction.response.send_message("❌ You must specify either a user or a role to DM.", ephemeral=True)
         return
-
-    await interaction.response.defer(ephemeral=True)
-
-    if user:
-        try:
-            await user.send(message)
-            await interaction.followup.send(f"✅ Successfully sent DM to {user.mention}.", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.followup.send(f"❌ Failed to DM {user.mention}. (User has DMs closed or has blocked the bot)", ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error sending DM to {user.mention}: {e}", ephemeral=True)
-        return
-
-    if role:
-        members = role.members
-        if not members:
-            await interaction.followup.send(f"⚠️ No members found with the role {role.mention}.", ephemeral=True)
-            return
-
-        await interaction.followup.send(f"⏳ Sending DMs to {len(members)} members with role {role.name}...", ephemeral=True)
-
-        success = 0
-        failed = 0
-        for member in members:
-            if member.bot:
-                continue
-            try:
-                await member.send(message)
-                success += 1
-                await asyncio.sleep(0.5)  # rate limit safety
-            except Exception:
-                failed += 1
-
-        await interaction.followup.send(f"🎯 DM Role campaign complete: {success} sent successfully, {failed} failed.", ephemeral=True)
+    await interaction.response.send_modal(DmModal(user, role))
 
 
 @tree.command(name="announcement", description="Create a beautiful, formatted Embed announcement")
-@app_commands.checks.has_permissions(manage_messages=True)
+@app_commands.default_permissions(manage_messages=True)
 @app_commands.describe(
-    title="The title of the announcement",
-    message="The announcement message content",
     channel="The channel to send the announcement in (optional)",
     ping="Who to ping with the announcement: None | Everyone | Here | Role (optional)",
     role="Role to ping if ping is set to Role (optional)",
@@ -437,14 +871,12 @@ async def dm(
 )
 async def announcement(
     interaction: discord.Interaction,
-    title: str,
-    message: str,
     channel: discord.TextChannel | None = None,
     ping: str = "none",
     role: discord.Role | None = None,
     format: str = "normal"
 ) -> None:
-    """Create and send a beautiful Embed announcement with formatting and pings."""
+    """Open a multi-line announcement modal (title + body) — newlines and spacing are fully preserved."""
     target_channel = channel or interaction.channel
     if not isinstance(target_channel, discord.TextChannel):
         await interaction.response.send_message("❌ Target channel must be a text channel.", ephemeral=True)
@@ -454,62 +886,58 @@ async def announcement(
         await interaction.response.send_message("❌ You selected role ping but did not specify which role to ping.", ephemeral=True)
         return
 
-    ping_prefix = ""
-    if ping == "everyone":
-        ping_prefix = "@everyone"
-    elif ping == "here":
-        ping_prefix = "@here"
-    elif ping == "role" and role:
-        ping_prefix = role.mention
-
-    formatted_msg = format_text(message, format)
-
-    embed = discord.Embed(
-        title=f"📢  {title}",
-        description=formatted_msg,
-        color=0x8A2BE2,  # Premium GKR Purple
-        timestamp=datetime.datetime.now(datetime.timezone.utc)
+    ping_role = role if ping == "role" else None
+    await interaction.response.send_modal(
+        AnnouncementModal(target_channel, ping, ping_role, format, interaction.user)
     )
-    embed.set_footer(text=f"Announcement by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
-
-    try:
-        await target_channel.send(content=ping_prefix if ping_prefix else None, embed=embed)
-        await interaction.response.send_message(f"✅ Announcement sent to {target_channel.mention}.", ephemeral=True)
-    except Exception as e:
-        await interaction.response.send_message(f"❌ Failed to send announcement: {e}", ephemeral=True)
 
 
 @tree.command(name="valo", description="Invite players to join Valorant (Malayalam gaming call)")
 @app_commands.describe(
-    role="Specific game/gaming role to ping (optional)",
+    role="Specific game/gaming role to ping",
     format="Text formatting style (optional)",
     extra_text="Additional note or message details to add (optional)"
 )
 @app_commands.choices(format=FORMAT_CHOICES)
 async def valo(
     interaction: discord.Interaction,
-    role: discord.Role | None = None,
+    role: discord.Role,
     format: str = "normal",
     extra_text: str | None = None
 ) -> None:
-    """Send a fun Valorant ping invitation with custom formatting and optional role ping."""
-    role_to_ping = role
-    if role_to_ping is None:
-        role_id = int(os.getenv('VALORANT_ROLE_ID', '0'))
-        role_to_ping = interaction.guild.get_role(role_id) if (interaction.guild and role_id != 0) else None
-
+    """Send a fun Valorant ping invitation with custom formatting and role ping."""
     call_msg = "vada makale valo kalikam"
     if extra_text:
         call_msg = f"{call_msg} — {extra_text}"
 
     formatted_msg = format_text(call_msg, format)
+    content = f"{role.mention} {formatted_msg}"
 
-    if role_to_ping:
-        content = f"{role_to_ping.mention} {formatted_msg}"
-    else:
-        content = formatted_msg
+    await send_with_role_ping(interaction, interaction, content, role)
 
-    await interaction.response.send_message(content)
+
+@tree.command(name="pubg", description="Invite players to join PUBG (Malayalam gaming call)")
+@app_commands.describe(
+    role="Specific game/gaming role to ping",
+    format="Text formatting style (optional)",
+    extra_text="Additional note or message details to add (optional)"
+)
+@app_commands.choices(format=FORMAT_CHOICES)
+async def pubg(
+    interaction: discord.Interaction,
+    role: discord.Role,
+    format: str = "normal",
+    extra_text: str | None = None
+) -> None:
+    """Send a fun PUBG ping invitation with custom formatting and role ping."""
+    call_msg = "vada makale pubg kalikam"
+    if extra_text:
+        call_msg = f"{call_msg} — {extra_text}"
+
+    formatted_msg = format_text(call_msg, format)
+    content = f"{role.mention} {formatted_msg}"
+
+    await send_with_role_ping(interaction, interaction, content, role)
 
 
 # Activity rotation list - Simple and focused activities
@@ -662,10 +1090,9 @@ def has_gkr_role(member: discord.Member) -> bool:
     return False
 
 
-async def sync_existing_nicknames():
-    """Sync nicknames for GKR role members across all guilds the bot is in."""
-    print("🔄 Starting global nickname sync...")
-    
+@tasks.loop(minutes=10)
+async def nickname_sync_task():
+    """Background task to sync nicknames for GKR role members across all guilds."""
     total_changed = 0
     total_failed = 0
     
@@ -682,14 +1109,13 @@ async def sync_existing_nicknames():
         if not roles:
             continue
             
-        print(f"🔄 Syncing nicknames in server: {guild.name}...")
         changed = 0
         failed = 0
         synced_members = set()
         
         for role in roles:
             for member in role.members:
-                if member.id in synced_members or member.bot:
+                if member.id in synced_members:
                     continue
                 synced_members.add(member.id)
                 if member.nick != "GKR":
@@ -701,13 +1127,14 @@ async def sync_existing_nicknames():
                     except discord.HTTPException:
                         failed += 1
                         
-        if changed > 0 or failed > 0:
+        if changed > 0:
             print(f"🎯 Server {guild.name} sync complete: {changed} changed, {failed} failed")
         total_changed += changed
         total_failed += failed
         
-    print(f"🎯 Global Nickname sync complete: {total_changed} changed, {total_failed} failed")
-    print('='*50)
+    if total_changed > 0:
+        print(f"🎯 Global Nickname sync complete: {total_changed} changed, {total_failed} failed")
+        print('='*50)
 
 
 @bot.event
@@ -722,26 +1149,6 @@ async def on_ready():
         return
 
     # Count registered top-level slash commands
-    global_cmds = bot.tree.get_commands()
-    total_cmds = len(global_cmds)
-
-    # 2. Sync slash commands GLOBALLY (all servers) AND to home guild for instant appearance
-    synced_count = 0
-    sync_errors = None
-    try:
-        # Global sync — propagates to ALL servers the bot is in (takes up to 1 hour on new servers)
-        global_synced = await bot.tree.sync()
-        synced_count = len(global_synced)
-
-        # Also copy global commands to home guild and sync instantly — bypasses Discord's propagation delay
-        bot.tree.copy_global_to(guild=GUILD_OBJECT)
-        await bot.tree.sync(guild=GUILD_OBJECT)
-
-        command_sync_succeeded = True
-    except Exception as e:
-        sync_errors = e
-        command_sync_succeeded = False
-
     # Get actual Application ID
     actual_app_id = bot.application_id or bot.user.id
 
@@ -750,12 +1157,6 @@ async def on_ready():
     print(f"🤖 Logged in as: {bot.user}")
     print(f"🆔 Application ID: {actual_app_id}")
     print(f"🏠 Home Guild ID: {GUILD_ID}")
-    print(f"📋 Found {total_cmds} slash command(s)")
-    if command_sync_succeeded:
-        print(f"✅ Synced {synced_count} command(s) globally (all servers)")
-        print(f"⚡ Also copied to home guild {GUILD_ID} for instant appearance")
-    else:
-        print(f"❌ Command sync failed: {sync_errors}")
     print('='*50)
 
     # Application ID configuration check
@@ -811,16 +1212,16 @@ async def on_ready():
     print('✅ Bot is ready to manage GKR nicknames!')
     print('='*50)
 
-    # Sync nicknames for existing members with the role
-    await sync_existing_nicknames()
+    # Start the nickname sync loop (runs every 10 mins)
+    if not nickname_sync_task.is_running():
+        nickname_sync_task.start()
+        print('🔄 Global nickname sync background task started!')
 
     # Auto-setup reaction roles in the specified channel
     await auto_setup_reaction_roles()
 
-    # Start the Font Sync system after the bot is ready
-    if getattr(bot, "font_sync_service", None):
-        await bot.font_sync_service.start()
-        print('🎨 Font Sync system started!')
+    # Font Sync system starts automatically via cog_load() inside FontSyncCog
+
 
 @bot.event
 async def on_member_join(member):
@@ -828,15 +1229,6 @@ async def on_member_join(member):
     guild = member.guild
 
     print(f"👋 New member joined: {member.display_name} in {guild.name}")
-
-    # ── Welcome card: fires for EVERY guild ──────────────────────────────────
-    try:
-        from welcome import WelcomeDatabase, send_welcome
-        _db = WelcomeDatabase()
-        _config = _db.get_config(guild.id)
-        await send_welcome(member, _config)
-    except Exception as e:
-        print(f"❌ Failed to send welcome card in {guild.name}: {e}")
 
     # ── GKR-specific nickname logic ──────────────────────────────────────────
     # Small delay to allow role assignment bots to work
@@ -906,7 +1298,7 @@ async def on_guild_channel_update(before, after):
     except Exception as e:
         print(f"❌ Font Sync channel update handler failed: {e}")
 
-@tasks.loop(seconds=5)  # Changed to 5 seconds for continuous automatic rotation
+@tasks.loop(minutes=1)  # Changed from 5 seconds to 1 minute to respect Discord rate limits
 async def rotate_activity():
     """Rotate bot activities with simple descriptions"""
     

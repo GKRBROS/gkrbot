@@ -11,6 +11,7 @@ Comprehensive A-Z Discord server event logging.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sqlite3
@@ -50,6 +51,18 @@ ALL_EVENTS: list[str] = [
     # Emoji / Sticker
     "emoji_update",
 ]
+
+EVENT_CATEGORIES: dict[str, list[str]] = {
+    "members":  ["member_join", "member_leave", "member_ban", "member_unban",
+                 "member_kick", "member_timeout", "member_nickname"],
+    "messages": ["message_delete", "message_edit", "message_bulk_delete", "message_send", "message_mention"],
+    "channels": ["channel_create", "channel_delete", "channel_update"],
+    "roles":    ["role_create", "role_delete", "role_update", "member_role_add", "member_role_remove"],
+    "voice":    ["voice_join", "voice_leave", "voice_move", "voice_mute"],
+    "server":   ["server_update", "invite_create", "invite_delete", "emoji_update"],
+    "threads":  ["thread_create", "thread_delete"],
+    "commands": ["command_used", "bot_message"],
+}
 
 # ─── Color palette ────────────────────────────────────────────────────────────
 C = {
@@ -143,6 +156,10 @@ class LogsDB:
                 )
                 """
             )
+            try:
+                c.execute("ALTER TABLE server_logs ADD COLUMN category_channels TEXT NOT NULL DEFAULT '{}'")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
             c.commit()
 
     def get(self, guild_id: int) -> dict:
@@ -156,31 +173,37 @@ class LogsDB:
                 "log_channel_id": None,
                 "enabled": True,
                 "enabled_events": list(ALL_EVENTS),   # all on by default
+                "category_channels": {},
             }
         raw_events = json.loads(row["enabled_events"] or "[]")
+        cat_data = row["category_channels"] if "category_channels" in row.keys() else "{}"
+        raw_cats = json.loads(cat_data or "{}")
         return {
             "guild_id": guild_id,
             "log_channel_id": int(row["log_channel_id"]) if row["log_channel_id"] else None,
             "enabled": bool(row["enabled"]),
             "enabled_events": raw_events if raw_events else list(ALL_EVENTS),
+            "category_channels": raw_cats,
         }
 
     def save(self, cfg: dict) -> None:
         with self._conn() as c:
             c.execute(
                 """
-                INSERT INTO server_logs (guild_id, log_channel_id, enabled, enabled_events)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO server_logs (guild_id, log_channel_id, enabled, enabled_events, category_channels)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(guild_id) DO UPDATE SET
-                    log_channel_id  = excluded.log_channel_id,
-                    enabled         = excluded.enabled,
-                    enabled_events  = excluded.enabled_events
+                    log_channel_id    = excluded.log_channel_id,
+                    enabled           = excluded.enabled,
+                    enabled_events    = excluded.enabled_events,
+                    category_channels = excluded.category_channels
                 """,
                 (
                     str(cfg["guild_id"]),
                     str(cfg["log_channel_id"]) if cfg["log_channel_id"] else None,
                     1 if cfg["enabled"] else 0,
                     json.dumps(cfg["enabled_events"]),
+                    json.dumps(cfg.get("category_channels", {})),
                 ),
             )
             c.commit()
@@ -194,6 +217,34 @@ class ServerLogger:
     def __init__(self, bot: commands.Bot, db: LogsDB) -> None:
         self.bot = bot
         self.db = db
+        self._queue: dict[int, list[discord.Embed]] = {}
+        self._flush_task: asyncio.Task | None = None
+
+    def start(self):
+        """Start the background flush loop. Must be called after the event loop is running."""
+        if self._flush_task is None or self._flush_task.done():
+            self._flush_task = asyncio.get_event_loop().create_task(self._flush_loop())
+
+    def stop(self):
+        if self._flush_task:
+            self._flush_task.cancel()
+
+    async def _flush_loop(self):
+        await self.bot.wait_until_ready()
+        while True:
+            await asyncio.sleep(3)
+            for channel_id in list(self._queue.keys()):
+                embeds = self._queue.get(channel_id, [])
+                if not embeds:
+                    continue
+                to_send = embeds[:10]
+                self._queue[channel_id] = embeds[10:]
+                channel = self.bot.get_channel(channel_id)
+                if channel:
+                    try:
+                        await channel.send(embeds=to_send)
+                    except Exception:
+                        pass
 
     async def _send(self, guild: discord.Guild, event: str, embed: discord.Embed) -> None:
         cfg = self.db.get(guild.id)
@@ -201,15 +252,37 @@ class ServerLogger:
             return
         if event not in cfg["enabled_events"]:
             return
-        if not cfg["log_channel_id"]:
+
+        # Determine target channel — start with master log channel
+        target_channel_id = cfg["log_channel_id"]
+
+        # Check if the event's category has a specific override channel
+        category_channels: dict = cfg.get("category_channels") or {}
+        for category, events in EVENT_CATEGORIES.items():
+            if event in events:
+                override = category_channels.get(category)
+                if override:
+                    target_channel_id = int(override)
+                break
+
+        if not target_channel_id:
             return
-        channel = guild.get_channel(cfg["log_channel_id"])
+
+        channel = guild.get_channel(int(target_channel_id))
         if not isinstance(channel, discord.TextChannel):
             return
-        try:
-            await channel.send(embed=embed)
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+
+        # Ignore logs for temporary voice channels to prevent spam
+        for field in embed.fields:
+            if "🎮 Temp Voice Channels" in field.value or "➕ Join to Create" in field.value:
+                return
+        if embed.title and "Temp Voice Channels" in embed.title:
+            return
+
+        if channel.id not in self._queue:
+            self._queue[channel.id] = []
+        self._queue[channel.id].append(embed)
+
 
     # ── Member events ─────────────────────────────────────────────────────────
 
@@ -281,7 +354,8 @@ class ServerLogger:
             embed.add_field(name="Roles Added", value=" ".join(r.mention for r in added), inline=False)
             # Try audit log for who did it
             try:
-                async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.member_role_update):
+                await asyncio.sleep(0.5)  # small delay so Discord audit log catches up
+                async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.member_role_update):
                     if entry.target.id == after.id:
                         embed.add_field(name="By", value=_fmt_user(entry.user), inline=True)
                         break
@@ -294,6 +368,15 @@ class ServerLogger:
             embed.set_thumbnail(url=after.display_avatar.url)
             embed.add_field(name="User",  value=_fmt_user(after), inline=False)
             embed.add_field(name="Roles Removed", value=" ".join(r.mention for r in removed), inline=False)
+            # Try audit log for who did it
+            try:
+                await asyncio.sleep(0.5)  # small delay so Discord audit log catches up
+                async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.member_role_update):
+                    if entry.target.id == after.id:
+                        embed.add_field(name="By", value=_fmt_user(entry.user), inline=True)
+                        break
+            except discord.Forbidden:
+                pass
             await self._send(guild, "member_role_remove", embed)
 
         # Timeout
@@ -718,48 +801,135 @@ EVENT_DESCRIPTIONS: dict[str, str] = {
     "emoji_update":        "Emoji added or removed",
 }
 
-EVENT_CATEGORIES: dict[str, list[str]] = {
-    "members":  ["member_join", "member_leave", "member_ban", "member_unban",
-                 "member_kick", "member_timeout", "member_role_add", "member_role_remove", "member_nickname"],
-    "messages": ["message_delete", "message_edit", "message_bulk_delete", "message_send", "message_mention"],
-    "channels": ["channel_create", "channel_delete", "channel_update"],
-    "roles":    ["role_create", "role_delete", "role_update"],
-    "voice":    ["voice_join", "voice_leave", "voice_move", "voice_mute"],
-    "server":   ["server_update", "invite_create", "invite_delete", "emoji_update"],
-    "threads":  ["thread_create", "thread_delete"],
-    "commands": ["command_used", "bot_message"],
-}
+# EVENT_CATEGORIES is defined at the top of this file (line 55)
 
 
-def setup_server_logs(bot: commands.Bot) -> None:
-    db = LogsDB()
-    db.initialize()
-    logger = ServerLogger(bot, db)
+class LogEventSelect(discord.ui.Select):
+    def __init__(self, db: LogsDB, guild_id: int, category: str, events: list[str]):
+        self.db = db
+        self.guild_id = guild_id
+        self.category = category
+        self.events = events
+        
+        cfg = db.get(guild_id)
+        enabled_events = set(cfg["enabled_events"])
+        
+        options = []
+        for ev in events:
+            desc = EVENT_DESCRIPTIONS.get(ev, "")
+            options.append(
+                discord.SelectOption(
+                    label=ev,
+                    description=desc[:100],
+                    value=ev,
+                    default=(ev in enabled_events)
+                )
+            )
+        super().__init__(
+            placeholder=f"Select {category.title()} events...",
+            min_values=0,
+            max_values=len(options),
+            options=options
+        )
+        
+    async def callback(self, interaction: discord.Interaction):
+        cfg = self.db.get(self.guild_id)
+        enabled_set = set(cfg["enabled_events"])
+        
+        # Remove all events of this category from the enabled list
+        for ev in self.events:
+            if ev in enabled_set:
+                enabled_set.remove(ev)
+                
+        # Re-add only the selected ones
+        for val in self.values:
+            enabled_set.add(val)
+            
+        cfg["enabled_events"] = list(enabled_set)
+        self.db.save(cfg)
+        
+        await interaction.response.send_message(f"✅ Successfully updated **{self.category.title()}** specific log events!", ephemeral=True)
 
-    # Wire up all listeners
-    bot.add_listener(logger.on_member_join,           "on_member_join")
-    bot.add_listener(logger.on_member_remove,         "on_member_remove")
-    bot.add_listener(logger.on_member_ban,            "on_member_ban")
-    bot.add_listener(logger.on_member_unban,          "on_member_unban")
-    bot.add_listener(logger.on_member_update,         "on_member_update")
-    bot.add_listener(logger.on_message_delete,        "on_message_delete")
-    bot.add_listener(logger.on_message_edit,          "on_message_edit")
-    bot.add_listener(logger.on_bulk_message_delete,   "on_bulk_message_delete")
-    bot.add_listener(logger.on_guild_channel_create,  "on_guild_channel_create")
-    bot.add_listener(logger.on_guild_channel_delete,  "on_guild_channel_delete")
-    bot.add_listener(logger.on_guild_channel_update,  "on_guild_channel_update")
-    bot.add_listener(logger.on_guild_role_create,     "on_guild_role_create")
-    bot.add_listener(logger.on_guild_role_delete,     "on_guild_role_delete")
-    bot.add_listener(logger.on_guild_role_update,     "on_guild_role_update")
-    bot.add_listener(logger.on_voice_state_update,    "on_voice_state_update")
-    bot.add_listener(logger.on_guild_update,          "on_guild_update")
-    bot.add_listener(logger.on_invite_create,         "on_invite_create")
-    bot.add_listener(logger.on_invite_delete,         "on_invite_delete")
-    bot.add_listener(logger.on_thread_create,         "on_thread_create")
-    bot.add_listener(logger.on_thread_delete,         "on_thread_delete")
-    bot.add_listener(logger.on_message,               "on_message")
-    bot.add_listener(logger.on_interaction,           "on_interaction")
-    bot.add_listener(logger.on_guild_emojis_update,   "on_guild_emojis_update")
+class LogCategorySelect(discord.ui.Select):
+    def __init__(self, db: LogsDB, guild_id: int):
+        self.db = db
+        self.guild_id = guild_id
+        options = [
+            discord.SelectOption(label=cat.title(), value=cat, description=f"Configure specific {cat} events")
+            for cat in EVENT_CATEGORIES.keys()
+        ]
+        super().__init__(placeholder="Choose a log category to configure...", min_values=1, max_values=1, options=options)
+        
+    async def callback(self, interaction: discord.Interaction):
+        category = self.values[0]
+        events = EVENT_CATEGORIES[category]
+        
+        view = discord.ui.View()
+        view.add_item(LogCategorySelect(self.db, self.guild_id))
+        view.add_item(LogEventSelect(self.db, self.guild_id, category, events))
+        
+        await interaction.response.edit_message(content=f"⚙️ **Configuring specific {category.title()} events:**\\nSelect the exact events you want to log below.", view=view)
+
+
+class ServerLogsCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.db = LogsDB()
+        self.db.initialize()
+        self.logger = ServerLogger(bot, self.db)
+        
+    def cog_load(self):
+        self.logger.start()
+        # Wire up listeners
+        self.bot.add_listener(self.logger.on_member_join,           "on_member_join")
+        self.bot.add_listener(self.logger.on_member_remove,         "on_member_remove")
+        self.bot.add_listener(self.logger.on_member_ban,            "on_member_ban")
+        self.bot.add_listener(self.logger.on_member_unban,          "on_member_unban")
+        self.bot.add_listener(self.logger.on_member_update,         "on_member_update")
+        self.bot.add_listener(self.logger.on_message_delete,        "on_message_delete")
+        self.bot.add_listener(self.logger.on_message_edit,          "on_message_edit")
+        self.bot.add_listener(self.logger.on_bulk_message_delete,   "on_bulk_message_delete")
+        self.bot.add_listener(self.logger.on_guild_channel_create,  "on_guild_channel_create")
+        self.bot.add_listener(self.logger.on_guild_channel_delete,  "on_guild_channel_delete")
+        self.bot.add_listener(self.logger.on_guild_channel_update,  "on_guild_channel_update")
+        self.bot.add_listener(self.logger.on_guild_role_create,     "on_guild_role_create")
+        self.bot.add_listener(self.logger.on_guild_role_delete,     "on_guild_role_delete")
+        self.bot.add_listener(self.logger.on_guild_role_update,     "on_guild_role_update")
+        self.bot.add_listener(self.logger.on_voice_state_update,    "on_voice_state_update")
+        self.bot.add_listener(self.logger.on_guild_update,          "on_guild_update")
+        self.bot.add_listener(self.logger.on_invite_create,         "on_invite_create")
+        self.bot.add_listener(self.logger.on_invite_delete,         "on_invite_delete")
+        self.bot.add_listener(self.logger.on_thread_create,         "on_thread_create")
+        self.bot.add_listener(self.logger.on_thread_delete,         "on_thread_delete")
+        self.bot.add_listener(self.logger.on_message,               "on_message")
+        self.bot.add_listener(self.logger.on_interaction,           "on_interaction")
+        self.bot.add_listener(self.logger.on_guild_emojis_update,   "on_guild_emojis_update")
+
+    def cog_unload(self):
+        self.logger.stop()
+        self.bot.remove_listener(self.logger.on_member_join,           "on_member_join")
+        self.bot.remove_listener(self.logger.on_member_remove,         "on_member_remove")
+        self.bot.remove_listener(self.logger.on_member_ban,            "on_member_ban")
+        self.bot.remove_listener(self.logger.on_member_unban,          "on_member_unban")
+        self.bot.remove_listener(self.logger.on_member_update,         "on_member_update")
+        self.bot.remove_listener(self.logger.on_message_delete,        "on_message_delete")
+        self.bot.remove_listener(self.logger.on_message_edit,          "on_message_edit")
+        self.bot.remove_listener(self.logger.on_bulk_message_delete,   "on_bulk_message_delete")
+        self.bot.remove_listener(self.logger.on_guild_channel_create,  "on_guild_channel_create")
+        self.bot.remove_listener(self.logger.on_guild_channel_delete,  "on_guild_channel_delete")
+        self.bot.remove_listener(self.logger.on_guild_channel_update,  "on_guild_channel_update")
+        self.bot.remove_listener(self.logger.on_guild_role_create,     "on_guild_role_create")
+        self.bot.remove_listener(self.logger.on_guild_role_delete,     "on_guild_role_delete")
+        self.bot.remove_listener(self.logger.on_guild_role_update,     "on_guild_role_update")
+        self.bot.remove_listener(self.logger.on_voice_state_update,    "on_voice_state_update")
+        self.bot.remove_listener(self.logger.on_guild_update,          "on_guild_update")
+        self.bot.remove_listener(self.logger.on_invite_create,         "on_invite_create")
+        self.bot.remove_listener(self.logger.on_invite_delete,         "on_invite_delete")
+        self.bot.remove_listener(self.logger.on_thread_create,         "on_thread_create")
+        self.bot.remove_listener(self.logger.on_thread_delete,         "on_thread_delete")
+        self.bot.remove_listener(self.logger.on_message,               "on_message")
+        self.bot.remove_listener(self.logger.on_interaction,           "on_interaction")
+        self.bot.remove_listener(self.logger.on_guild_emojis_update,   "on_guild_emojis_update")
 
     # ── /logs command group ───────────────────────────────────────────────────
     logs_group = app_commands.Group(
@@ -768,12 +938,12 @@ def setup_server_logs(bot: commands.Bot) -> None:
     )
 
     @logs_group.command(name="channel", description="Set the channel where all server logs will be sent")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def set_channel(interaction: discord.Interaction, channel: discord.TextChannel) -> None:
-        cfg = db.get(interaction.guild.id)
+    @app_commands.default_permissions(manage_guild=True)
+    async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
+        cfg = self.db.get(interaction.guild.id)
         cfg["log_channel_id"] = channel.id
         cfg["enabled"] = True
-        db.save(cfg)
+        self.db.save(cfg)
         embed = discord.Embed(
             title="✅  Logs Channel Set",
             description=f"All server events will now be logged to {channel.mention}.",
@@ -784,20 +954,20 @@ def setup_server_logs(bot: commands.Bot) -> None:
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @logs_group.command(name="toggle", description="Enable or disable the entire logging system for this server")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def toggle(interaction: discord.Interaction) -> None:
-        cfg = db.get(interaction.guild.id)
+    @app_commands.default_permissions(manage_guild=True)
+    async def toggle(self, interaction: discord.Interaction) -> None:
+        cfg = self.db.get(interaction.guild.id)
         cfg["enabled"] = not cfg["enabled"]
-        db.save(cfg)
+        self.db.save(cfg)
         status = "**ENABLED** ✅" if cfg["enabled"] else "**DISABLED** ❌"
         await interaction.response.send_message(
             f"🔔 Server logging is now {status}.", ephemeral=True
         )
 
     @logs_group.command(name="status", description="Show the current logging configuration for this server")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def status(interaction: discord.Interaction) -> None:
-        cfg = db.get(interaction.guild.id)
+    @app_commands.default_permissions(manage_guild=True)
+    async def status(self, interaction: discord.Interaction) -> None:
+        cfg = self.db.get(interaction.guild.id)
         ch = interaction.guild.get_channel(cfg["log_channel_id"]) if cfg["log_channel_id"] else None
         embed = discord.Embed(
             title="📋  Server Logging Status",
@@ -812,13 +982,54 @@ def setup_server_logs(bot: commands.Bot) -> None:
         for cat, events in EVENT_CATEGORIES.items():
             active = sum(1 for e in events if e in cfg["enabled_events"])
             icon = "🟢" if active == len(events) else ("🟡" if active > 0 else "🔴")
-            lines.append(f"{icon} **{cat.title()}** — `{active}/{len(events)}`")
-        embed.add_field(name="Category Breakdown", value="\n".join(lines), inline=False)
-        embed.set_footer(text="Use /logs events <category> to toggle categories.")
+            
+            override_id = cfg["category_channels"].get(cat)
+            route_str = f" ➔ <#{override_id}>" if override_id else ""
+            
+            lines.append(f"{icon} **{cat.title()}** — `{active}/{len(events)}`{route_str}")
+        embed.add_field(name="Category Breakdown & Routing", value="\n".join(lines), inline=False)
+        embed.set_footer(text="Use /logs config to toggle specific individual events.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @logs_group.command(name="events", description="Enable or disable a logging category (or 'all')")
-    @app_commands.checks.has_permissions(manage_guild=True)
+    @logs_group.command(name="route", description="Route a specific category of logs to a different channel")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.choices(category=[app_commands.Choice(name=c.title(), value=c) for c in EVENT_CATEGORIES.keys()])
+    async def route(self, interaction: discord.Interaction, category: str, channel: discord.TextChannel) -> None:
+        cfg = self.db.get(interaction.guild.id)
+        if "category_channels" not in cfg:
+            cfg["category_channels"] = {}
+        
+        cfg["category_channels"][category] = channel.id
+        self.db.save(cfg)
+        
+        embed = discord.Embed(
+            title="🔀 Log Routing Updated",
+            description=f"All **{category.title()}** logs will now be sent specifically to {channel.mention}.",
+            color=0x3498DB
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @logs_group.command(name="unroute", description="Remove a custom channel route for a category")
+    @app_commands.default_permissions(manage_guild=True)
+    @app_commands.choices(category=[app_commands.Choice(name=c.title(), value=c) for c in EVENT_CATEGORIES.keys()])
+    async def unroute(self, interaction: discord.Interaction, category: str) -> None:
+        cfg = self.db.get(interaction.guild.id)
+        if "category_channels" in cfg and category in cfg["category_channels"]:
+            del cfg["category_channels"][category]
+            self.db.save(cfg)
+            
+            master_ch = interaction.guild.get_channel(cfg["log_channel_id"]) if cfg["log_channel_id"] else None
+            dest = master_ch.mention if master_ch else "the master log channel"
+            
+            await interaction.response.send_message(
+                f"✅ Removed custom route. **{category.title()}** logs will now fall back to {dest}.", 
+                ephemeral=True
+            )
+        else:
+            await interaction.response.send_message(f"⚠️ **{category.title()}** is not currently routed anywhere.", ephemeral=True)
+
+    @logs_group.command(name="events", description="Enable or disable an entire logging category (or 'all')")
+    @app_commands.default_permissions(manage_guild=True)
     @app_commands.describe(
         category="Category to toggle: members | messages | channels | roles | voice | server | threads | commands | all",
         action="enable or disable",
@@ -831,11 +1042,12 @@ def setup_server_logs(bot: commands.Bot) -> None:
         ],
     )
     async def events(
+        self,
         interaction: discord.Interaction,
         category: str,
         action: str,
     ) -> None:
-        cfg = db.get(interaction.guild.id)
+        cfg = self.db.get(interaction.guild.id)
         enabled: set[str] = set(cfg["enabled_events"])
 
         if category == "all":
@@ -851,7 +1063,7 @@ def setup_server_logs(bot: commands.Bot) -> None:
             verb = "disabled"
 
         cfg["enabled_events"] = list(enabled)
-        db.save(cfg)
+        self.db.save(cfg)
 
         ev_list = "\n".join(
             f"{'✅' if e in enabled else '❌'} `{e}` — {EVENT_DESCRIPTIONS.get(e, '')}"
@@ -865,9 +1077,9 @@ def setup_server_logs(bot: commands.Bot) -> None:
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @logs_group.command(name="list", description="List all available log events and their current status")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def list_events(interaction: discord.Interaction) -> None:
-        cfg = db.get(interaction.guild.id)
+    @app_commands.default_permissions(manage_guild=True)
+    async def list_events(self, interaction: discord.Interaction) -> None:
+        cfg = self.db.get(interaction.guild.id)
         enabled: set[str] = set(cfg["enabled_events"])
         embed = discord.Embed(
             title="📑  All Log Events",
@@ -882,5 +1094,17 @@ def setup_server_logs(bot: commands.Bot) -> None:
             embed.add_field(name=f"📂 {cat.title()}", value="\n".join(lines), inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    # Register globally
-    bot.tree.add_command(logs_group)
+    @logs_group.command(name="config", description="Interactive dropdown menu to toggle specific individual log events")
+    @app_commands.default_permissions(manage_guild=True)
+    async def config(self, interaction: discord.Interaction) -> None:
+        view = discord.ui.View()
+        view.add_item(LogCategorySelect(self.db, interaction.guild.id))
+        await interaction.response.send_message(
+            "⚙️ **Specific Event Configuration**\nSelect a category from the dropdown below to choose exactly which events you want logged:", 
+            view=view, 
+            ephemeral=True
+        )
+
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(ServerLogsCog(bot))
+    print("📋 Server Logs system loaded!")

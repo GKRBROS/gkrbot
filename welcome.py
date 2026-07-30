@@ -29,6 +29,42 @@ class WelcomeConfig:
     channel_id: Optional[int] = None
     welcome_message: str = "**Welcome to FAMILY** 🎉\n\nWelcome to **{server}** – Where Friends Become Family! 🎉\n\nHey besties! 👋 This is your ultimate hangout spot for memes, gaming, late-night talks, and everything in between.\n\nWhether we're roasting each other, sharing life updates, or just vibing — this server is our digital home."
     background_path: Optional[str] = None
+    show_avatar: bool = True       # Embed thumbnail toggle
+    show_guild_icon: bool = False   # Server icon drawing toggle
+    draw_avatar: bool = True        # User avatar drawing toggle
+    draw_text: bool = True          # Text overlay drawing toggle
+    welcome_role_id: Optional[int] = None # Auto-assign role on join
+    bot_role_id: Optional[int] = None # Auto-assign role for bots on join
+    
+    # Leave settings
+    leave_enabled: bool = False
+    leave_channel_id: Optional[int] = None
+    leave_message: str = "**{user}** left the server."
+    leave_image_url: Optional[str] = None
+
+
+def load_font(font_path: str, size: int) -> ImageFont.ImageFont:
+    try:
+        return ImageFont.truetype(font_path, size)
+    except Exception:
+        # Fallback list of common system fonts on Windows and Linux
+        fallbacks = [
+            "arial.ttf",
+            "DejaVuSans-Bold.ttf" if "Bold" in font_path else "DejaVuSans.ttf",
+            "LiberationSans-Bold.ttf" if "Bold" in font_path else "LiberationSans.ttf",
+            "Helvetica.ttf",
+            "Tahoma.ttf"
+        ]
+        for f in fallbacks:
+            try:
+                return ImageFont.truetype(f, size)
+            except Exception:
+                continue
+        # If all else fails, use load_default
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:
+            return ImageFont.load_default()
 
 
 class WelcomeDatabase:
@@ -49,10 +85,40 @@ class WelcomeDatabase:
                     enabled         INTEGER NOT NULL DEFAULT 1,
                     channel_id      TEXT,
                     welcome_message TEXT NOT NULL DEFAULT 'Welcome {member} to {server}! 🎉',
-                    background_path TEXT
+                    background_path TEXT,
+                    show_avatar     INTEGER NOT NULL DEFAULT 1,
+                    show_guild_icon INTEGER NOT NULL DEFAULT 0,
+                    draw_avatar     INTEGER NOT NULL DEFAULT 1,
+                    draw_text       INTEGER NOT NULL DEFAULT 1
                 )
                 """
             )
+            conn.commit()
+
+        # Schema migrations for existing databases
+        with self._connect() as conn:
+            cursor = conn.execute("PRAGMA table_info(welcome_configs)")
+            columns = [row["name"] for row in cursor.fetchall()]
+            if "show_avatar" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN show_avatar INTEGER NOT NULL DEFAULT 1")
+            if "show_guild_icon" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN show_guild_icon INTEGER NOT NULL DEFAULT 0")
+            if "draw_avatar" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN draw_avatar INTEGER NOT NULL DEFAULT 1")
+            if "draw_text" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN draw_text INTEGER NOT NULL DEFAULT 1")
+            if "welcome_role_id" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN welcome_role_id TEXT")
+            if "bot_role_id" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN bot_role_id TEXT")
+            if "leave_enabled" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN leave_enabled INTEGER NOT NULL DEFAULT 0")
+            if "leave_channel_id" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN leave_channel_id TEXT")
+            if "leave_message" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN leave_message TEXT NOT NULL DEFAULT '**{user}** left the server.'")
+            if "leave_image_url" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN leave_image_url TEXT")
             conn.commit()
 
         # One-time migration: replace any literal \n in stored messages
@@ -82,12 +148,38 @@ class WelcomeDatabase:
         raw_msg = row["welcome_message"]
         decoded_msg = raw_msg.replace("\\n", "\n")
 
+        show_avatar = True
+        show_guild_icon = False
+        draw_avatar = True
+        draw_text = True
+        try:
+            if "show_avatar" in row.keys():
+                show_avatar = bool(row["show_avatar"])
+            if "show_guild_icon" in row.keys():
+                show_guild_icon = bool(row["show_guild_icon"])
+            if "draw_avatar" in row.keys():
+                draw_avatar = bool(row["draw_avatar"])
+            if "draw_text" in row.keys():
+                draw_text = bool(row["draw_text"])
+        except Exception:
+            pass
+
         return WelcomeConfig(
             guild_id=guild_id,
             enabled=bool(row["enabled"]),
             channel_id=int(row["channel_id"]) if row["channel_id"] else None,
             welcome_message=decoded_msg,
             background_path=row["background_path"],
+            show_avatar=show_avatar,
+            show_guild_icon=show_guild_icon,
+            draw_avatar=draw_avatar,
+            draw_text=draw_text,
+            welcome_role_id=int(row["welcome_role_id"]) if "welcome_role_id" in row.keys() and row["welcome_role_id"] else None,
+            bot_role_id=int(row["bot_role_id"]) if "bot_role_id" in row.keys() and row["bot_role_id"] else None,
+            leave_enabled=bool(row["leave_enabled"]) if "leave_enabled" in row.keys() else False,
+            leave_channel_id=int(row["leave_channel_id"]) if "leave_channel_id" in row.keys() and row["leave_channel_id"] else None,
+            leave_message=row["leave_message"].replace("\\n", "\n") if "leave_message" in row.keys() else "**{user}** left the server.",
+            leave_image_url=row["leave_image_url"] if "leave_image_url" in row.keys() else None,
         )
 
     def save_config(self, config: WelcomeConfig) -> None:
@@ -95,13 +187,24 @@ class WelcomeDatabase:
             conn.execute(
                 """
                 INSERT INTO welcome_configs (
-                    guild_id, enabled, channel_id, welcome_message, background_path
-                ) VALUES (?, ?, ?, ?, ?)
+                    guild_id, enabled, channel_id, welcome_message, background_path, show_avatar, show_guild_icon, draw_avatar, draw_text, welcome_role_id, bot_role_id,
+                    leave_enabled, leave_channel_id, leave_message, leave_image_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(guild_id) DO UPDATE SET
                     enabled         = excluded.enabled,
                     channel_id      = excluded.channel_id,
                     welcome_message = excluded.welcome_message,
-                    background_path = excluded.background_path
+                    background_path = excluded.background_path,
+                    show_avatar     = excluded.show_avatar,
+                    show_guild_icon = excluded.show_guild_icon,
+                    draw_avatar     = excluded.draw_avatar,
+                    draw_text       = excluded.draw_text,
+                    welcome_role_id = excluded.welcome_role_id,
+                    bot_role_id     = excluded.bot_role_id,
+                    leave_enabled    = excluded.leave_enabled,
+                    leave_channel_id = excluded.leave_channel_id,
+                    leave_message    = excluded.leave_message,
+                    leave_image_url  = excluded.leave_image_url
                 """,
                 (
                     str(config.guild_id),
@@ -109,6 +212,16 @@ class WelcomeDatabase:
                     str(config.channel_id) if config.channel_id else None,
                     config.welcome_message,
                     config.background_path,
+                    1 if config.show_avatar else 0,
+                    1 if config.show_guild_icon else 0,
+                    1 if config.draw_avatar else 0,
+                    1 if config.draw_text else 0,
+                    str(config.welcome_role_id) if config.welcome_role_id else None,
+                    str(config.bot_role_id) if config.bot_role_id else None,
+                    1 if config.leave_enabled else 0,
+                    str(config.leave_channel_id) if config.leave_channel_id else None,
+                    config.leave_message,
+                    config.leave_image_url,
                 ),
             )
             conn.commit()
@@ -171,9 +284,13 @@ def make_circle_avatar(avatar_image: Image.Image, size: int = 220, border_color:
 
 def render_welcome_card(
     avatar_bytes: bytes,
+    guild_icon_bytes: bytes,
     username: str,
     member_count: int,
-    background_path: Optional[str] = None
+    background_path: Optional[str] = None,
+    draw_avatar: bool = True,
+    show_guild_icon: bool = False,
+    draw_text: bool = True
 ) -> io.BytesIO:
     W, H = 1024, 500
 
@@ -193,79 +310,110 @@ def render_welcome_card(
 
     draw = ImageDraw.Draw(bg)
 
-    # --- Avatar ---
-    try:
-        avatar_img = Image.open(io.BytesIO(avatar_bytes))
-    except Exception:
-        avatar_img = Image.new("RGBA", (220, 220), (120, 120, 120, 255))
+    # --- Avatar & Server Icon Layout ---
+    avatar_img = None
+    if draw_avatar and avatar_bytes:
+        try:
+            avatar_img = Image.open(io.BytesIO(avatar_bytes))
+        except Exception:
+            avatar_img = Image.new("RGBA", (220, 220), (120, 120, 120, 255))
 
-    circle_avatar = make_circle_avatar(avatar_img)  # 220 + 7*2 = 234px
-    avatar_w, avatar_h = circle_avatar.size
-    avatar_x = (W - avatar_w) // 2
+    guild_icon_img = None
+    if show_guild_icon and guild_icon_bytes:
+        try:
+            guild_icon_img = Image.open(io.BytesIO(guild_icon_bytes))
+        except Exception:
+            guild_icon_img = Image.new("RGBA", (220, 220), (120, 120, 120, 255))
+
+    # Prepare circular items
+    avatar_w, avatar_h = 0, 0
+    circle_avatar = None
+    if avatar_img:
+        circle_avatar = make_circle_avatar(avatar_img)
+        avatar_w, avatar_h = circle_avatar.size
+
+    icon_w, icon_h = 0, 0
+    circle_icon = None
+    if guild_icon_img:
+        circle_icon = make_circle_avatar(guild_icon_img, border_color=(255, 255, 255)) # White border for server icon
+        icon_w, icon_h = circle_icon.size
+
     avatar_y = 30
-    bg.paste(circle_avatar, (avatar_x, avatar_y), mask=circle_avatar)
+    icon_y = 30
+    
+    if circle_avatar and circle_icon:
+        # Both shown side-by-side
+        gap = 40
+        total_width = avatar_w + icon_w + gap
+        start_x = (W - total_width) // 2
+        
+        avatar_x = start_x
+        icon_x = start_x + avatar_w + gap
+        
+        bg.paste(circle_avatar, (avatar_x, avatar_y), mask=circle_avatar)
+        bg.paste(circle_icon, (icon_x, icon_y), mask=circle_icon)
+        text_start_y = avatar_y + max(avatar_h, icon_h) + 18
+    elif circle_avatar:
+        # Only avatar
+        avatar_x = (W - avatar_w) // 2
+        bg.paste(circle_avatar, (avatar_x, avatar_y), mask=circle_avatar)
+        text_start_y = avatar_y + avatar_h + 18
+    elif circle_icon:
+        # Only server icon
+        icon_x = (W - icon_w) // 2
+        bg.paste(circle_icon, (icon_x, icon_y), mask=circle_icon)
+        text_start_y = icon_y + icon_h + 18
+    else:
+        # Neither
+        text_start_y = 80
 
-    # --- Fonts ---
-    try:
-        # Large: username (bold, big)
-        font_username = ImageFont.truetype(FONT_BOLD_PATH, 72)
-        # Medium: WELCOME label
-        font_welcome = ImageFont.truetype(FONT_BOLD_PATH, 52)
-        # Small: member count
-        font_count = ImageFont.truetype(FONT_REGULAR_PATH, 34)
-    except Exception:
-        font_username = ImageFont.load_default()
-        font_welcome = ImageFont.load_default()
-        font_count = ImageFont.load_default()
+    if draw_text:
+        # --- Fonts ---
+        font_username = load_font(FONT_BOLD_PATH, 72)
+        font_welcome = load_font(FONT_BOLD_PATH, 52)
+        font_count = load_font(FONT_REGULAR_PATH, 34)
 
-    # --- Layout: text starts below avatar ---
-    # Avatar bottom edge = avatar_y + avatar_h  (approx 30 + 234 = 264)
-    text_start_y = avatar_y + avatar_h + 18  # a little breathing room
+        # Draw WELCOME Title
+        draw.text(
+            (W // 2, text_start_y),
+            "WELCOME",
+            font=font_welcome,
+            fill=(255, 255, 255, 255),
+            anchor="mt",
+            stroke_width=3,
+            stroke_fill=(0, 0, 0, 255),
+        )
 
-    # Draw WELCOME Title first (above username)
-    draw.text(
-        (W // 2, text_start_y),
-        "WELCOME",
-        font=font_welcome,
-        fill=(255, 255, 255, 255),
-        anchor="mt",
-        stroke_width=3,
-        stroke_fill=(0, 0, 0, 255),
-    )
+        welcome_bbox = draw.textbbox((0, 0), "WELCOME", font=font_welcome)
+        welcome_h = welcome_bbox[3] - welcome_bbox[1]
 
-    # Measure WELCOME height to position username below it
-    welcome_bbox = draw.textbbox((0, 0), "WELCOME", font=font_welcome)
-    welcome_h = welcome_bbox[3] - welcome_bbox[1]
+        username_y = text_start_y + welcome_h + 8
+        username_clean = username.upper()
+        draw.text(
+            (W // 2, username_y),
+            username_clean,
+            font=font_username,
+            fill=(255, 40, 40, 255),
+            anchor="mt",
+            stroke_width=4,
+            stroke_fill=(0, 0, 0, 255),
+        )
 
-    username_y = text_start_y + welcome_h + 8
-    username_clean = username.upper()
-    draw.text(
-        (W // 2, username_y),
-        username_clean,
-        font=font_username,
-        fill=(255, 40, 40, 255),
-        anchor="mt",
-        stroke_width=4,
-        stroke_fill=(0, 0, 0, 255),
-    )
+        user_bbox = draw.textbbox((0, 0), username_clean, font=font_username)
+        user_h = user_bbox[3] - user_bbox[1]
 
-    # Measure username height to position member count below it
-    user_bbox = draw.textbbox((0, 0), username_clean, font=font_username)
-    user_h = user_bbox[3] - user_bbox[1]
-
-    count_y = username_y + user_h + 10
-    count_text = f"YOU ARE OUR {member_count}{'th' if 11 <= (member_count % 100) <= 13 else ['th','st','nd','rd','th'][min(member_count % 10, 4)]} MEMBER!"
-    # Clamp count_y so it doesn't go below the card
-    count_y = min(count_y, H - 50)
-    draw.text(
-        (W // 2, count_y),
-        count_text,
-        font=font_count,
-        fill=(200, 200, 200, 255),
-        anchor="mt",
-        stroke_width=2,
-        stroke_fill=(0, 0, 0, 255),
-    )
+        count_y = username_y + user_h + 10
+        count_text = f"YOU ARE OUR {member_count}{'th' if 11 <= (member_count % 100) <= 13 else ['th','st','nd','rd','th'][min(member_count % 10, 4)]} MEMBER!"
+        count_y = min(count_y, H - 50)
+        draw.text(
+            (W // 2, count_y),
+            count_text,
+            font=font_count,
+            fill=(200, 200, 200, 255),
+            anchor="mt",
+            stroke_width=2,
+            stroke_fill=(0, 0, 0, 255),
+        )
 
     # Export to BytesIO
     output = io.BytesIO()
@@ -282,39 +430,69 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
     if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.ForumChannel)):
         return
 
-    # Fetch avatar
-    try:
-        avatar_bytes = await member.display_avatar.read()
-    except Exception:
-        avatar_bytes = b""
-
     member_count = member.guild.member_count
 
-    # Render card
-    card_file_bytes = render_welcome_card(
-        avatar_bytes=avatar_bytes,
-        username=member.name,
-        member_count=member_count,
-        background_path=config.background_path
-    )
+    is_gif = config.background_path and config.background_path.lower().endswith(".gif")
+    
+    # If it's a GIF or all overlays are disabled, send the raw file directly
+    if (is_gif or (not config.draw_avatar and not config.show_guild_icon and not config.draw_text)) and config.background_path and os.path.exists(config.background_path):
+        filename = "welcome.gif" if is_gif else "welcome.png"
+        discord_file = discord.File(config.background_path, filename=filename)
+        image_url = f"attachment://{filename}"
+    else:
+        # Fetch avatar if either embed thumbnail or card drawing is enabled
+        avatar_bytes = b""
+        if config.show_avatar or config.draw_avatar:
+            try:
+                avatar_bytes = await member.display_avatar.read()
+            except Exception:
+                pass
+
+        # Fetch guild icon if enabled
+        guild_icon_bytes = b""
+        if config.show_guild_icon and member.guild.icon:
+            try:
+                guild_icon_bytes = await member.guild.icon.read()
+            except Exception:
+                pass
+
+        # Render card
+        card_file_bytes = render_welcome_card(
+            avatar_bytes=avatar_bytes,
+            guild_icon_bytes=guild_icon_bytes,
+            username=member.name,
+            member_count=member_count,
+            background_path=config.background_path,
+            draw_avatar=config.draw_avatar,
+            show_guild_icon=config.show_guild_icon,
+            draw_text=config.draw_text
+        )
+        discord_file = discord.File(card_file_bytes, filename=f"welcome_{member.id}.jpg")
+        image_url = f"attachment://welcome_{member.id}.jpg"
 
     # Format custom message inside the embed box description
-    description_text = config.welcome_message.format(
-        member=member.mention,
-        server=member.guild.name,
-        member_count=member_count
+    import string
+    class SafeDict(dict):
+        def __missing__(self, key):
+            return "{" + key + "}"
+            
+    description_text = string.Formatter().vformat(
+        config.welcome_message, (), SafeDict(
+            member=member.mention,
+            server=member.guild.name,
+            member_count=member_count
+        )
     )
 
-    discord_file = discord.File(card_file_bytes, filename=f"welcome_{member.id}.jpg")
-    
-    # Construct premium Embed matching the screenshot
+    # Construct premium Embed
     embed = discord.Embed(
         title="WELCOME",
         description=description_text,
-        color=0xFF2828  # Red matching the sidebar
+        color=0xFF2828  # Red
     )
-    embed.set_thumbnail(url=member.display_avatar.url)
-    embed.set_image(url=f"attachment://welcome_{member.id}.jpg")
+    if config.show_avatar:
+        embed.set_thumbnail(url=member.display_avatar.url)
+    embed.set_image(url=image_url)
     embed.set_footer(text=f"© {member.guild.name} • {discord.utils.utcnow().strftime('%m-%d-%Y %I:%M %p')}", icon_url=member.guild.icon.url if member.guild.icon else None)
 
     # Short mention text outside the embed
@@ -322,22 +500,166 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
     await channel.send(content=content, embed=embed, file=discord_file)
 
 
-# Slash command setup
-def setup_welcome(bot: commands.Bot, guild_id: int) -> None:
-    db = WelcomeDatabase()
-    db.initialize()
+async def send_leave(member: discord.Member, config: WelcomeConfig) -> None:
+    if not config.leave_enabled or not config.leave_channel_id:
+        return
 
-    # Pre-download fonts when the bot is ready and the loop is running
-    @bot.listen("on_ready")
-    async def on_welcome_ready():
+    channel = member.guild.get_channel(config.leave_channel_id)
+    if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.ForumChannel)):
+        return
+
+    import string
+    class SafeDict(dict):
+        def __missing__(self, key):
+            return "{" + key + "}"
+            
+    description_text = string.Formatter().vformat(
+        config.leave_message, (), SafeDict(
+            user=member.name,
+            member=member.mention,
+            server=member.guild.name,
+            member_count=member.guild.member_count
+        )
+    )
+
+    embed = discord.Embed(
+        title="MEMBER LEFT",
+        description=description_text,
+        color=0x2b2d31  # Dark theme color
+    )
+    embed.set_thumbnail(url=member.display_avatar.url)
+    if config.leave_image_url:
+        embed.set_image(url=config.leave_image_url)
+    embed.set_footer(text=f"© {member.guild.name} • {discord.utils.utcnow().strftime('%m-%d-%Y %I:%M %p')}", icon_url=member.guild.icon.url if member.guild.icon else None)
+
+    try:
+        await channel.send(embed=embed)
+    except discord.Forbidden:
+        print(f"[Welcome] ❌ Missing permissions to send leave message in #{channel.name}")
+    except Exception as e:
+        print(f"[Welcome] ❌ Error sending leave message: {e}")
+
+
+class WelcomeMessageModal(discord.ui.Modal, title="👋 Set Welcome Message"):
+    """Popup dialog capturing multi-line welcome message — newlines and spacing are fully preserved."""
+    message_text = discord.ui.TextInput(
+        label="Welcome Message",
+        style=discord.TextStyle.paragraph,
+        placeholder="Use {member}, {server}, {member_count}. Newlines & spacing preserved exactly.",
+        required=True,
+        max_length=4000,
+    )
+
+    def __init__(self, db: "WelcomeDatabase", guild_id: int):
+        super().__init__()
+        self._db = db
+        self._guild_id = guild_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        config = self._db.get_config(self._guild_id)
+        config.welcome_message = str(self.message_text)
+        self._db.save_config(config)
+        preview = config.welcome_message[:200] + "..." if len(config.welcome_message) > 200 else config.welcome_message
+        await interaction.response.send_message(f"✅ Welcome message set:\n>>> {preview}", ephemeral=True)
+
+
+class LeaveMessageModal(discord.ui.Modal, title="👋 Set Leave Message"):
+    """Popup dialog capturing multi-line leave message — newlines and spacing are fully preserved."""
+    message_text = discord.ui.TextInput(
+        label="Leave Message",
+        style=discord.TextStyle.paragraph,
+        placeholder="Use {user}, {member}, {server}, {member_count}. Newlines & spacing preserved exactly.",
+        required=True,
+        max_length=4000,
+    )
+
+    def __init__(self, db: "WelcomeDatabase", guild_id: int):
+        super().__init__()
+        self._db = db
+        self._guild_id = guild_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        config = self._db.get_config(self._guild_id)
+        config.leave_message = str(self.message_text)
+        self._db.save_config(config)
+        preview = config.leave_message[:200] + "..." if len(config.leave_message) > 200 else config.leave_message
+        await interaction.response.send_message(f"✅ Leave message set:\n>>> {preview}", ephemeral=True)
+
+
+class WelcomeCog(commands.Cog):
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+        self.db = WelcomeDatabase()
+        self.db.initialize()
+        
+        self.welcome_group = app_commands.Group(name="welcome", description="Manage Server Welcome messages & cards")
+        self.leave_group = app_commands.Group(name="leave", description="Manage Server Leave messages")
+        
+        # We assign the commands to the group
+        self.welcome_group.add_command(app_commands.Command(name="status", description="Show the current welcome settings configuration", callback=self.status))
+        self.welcome_group.add_command(app_commands.Command(name="toggle", description="Toggle the welcome greeting system on or off", callback=self.toggle))
+        self.welcome_group.add_command(app_commands.Command(name="channel", description="Set the channel where welcome greetings will be posted", callback=self.set_channel))
+        self.welcome_group.add_command(app_commands.Command(name="message", description="Set a custom message text to send alongside the welcome card", callback=self.set_message))
+        self.welcome_group.add_command(app_commands.Command(name="showavatar", description="Choose whether to show the joining user's avatar as the Embed thumbnail on the card", callback=self.toggle_show_avatar))
+        self.welcome_group.add_command(app_commands.Command(name="drawavatar", description="Choose whether to draw the user avatar circle on the welcome card image", callback=self.toggle_draw_avatar))
+        self.welcome_group.add_command(app_commands.Command(name="showservericon", description="Choose whether to display the server icon on the welcome card", callback=self.toggle_server_icon))
+        self.welcome_group.add_command(app_commands.Command(name="drawtext", description="Choose whether to draw text overlay (WELCOME, username, etc.) on the welcome card image", callback=self.toggle_draw_text))
+        self.welcome_group.add_command(app_commands.Command(name="role", description="Set a role to automatically give to new and existing members", callback=self.set_role))
+        self.welcome_group.add_command(app_commands.Command(name="botrole", description="Set a role to automatically give specifically to newly added BOTS", callback=self.set_bot_role))
+        self.welcome_group.add_command(app_commands.Command(name="setbg", description="Upload a custom background image or GIF (Recommended 1024x500)", callback=self.set_bg))
+        self.welcome_group.add_command(app_commands.Command(name="setbgurl", description="Set a custom background image or GIF from a direct URL", callback=self.set_bg_url))
+        self.welcome_group.add_command(app_commands.Command(name="test", description="Simulate a welcome card message inside the setup channel", callback=self.test_welcome))
+        
+        
+        self.bot.tree.add_command(self.welcome_group)
+        
+        # We assign the commands to the leave group
+        self.leave_group.add_command(app_commands.Command(name="toggle", description="Toggle the leave message system on or off", callback=self.leave_toggle))
+        self.leave_group.add_command(app_commands.Command(name="channel", description="Set the channel where leave messages will be posted", callback=self.leave_set_channel))
+        self.leave_group.add_command(app_commands.Command(name="message", description="Set a custom message text to send on leave", callback=self.leave_set_message))
+        self.leave_group.add_command(app_commands.Command(name="image", description="Set a custom image/GIF URL for the leave embed", callback=self.leave_set_image))
+        self.leave_group.add_command(app_commands.Command(name="test", description="Simulate a leave message in the setup channel", callback=self.test_leave))
+        
+        self.bot.tree.add_command(self.leave_group)
+
+    async def cog_unload(self):
+        self.bot.tree.remove_command(self.welcome_group.name)
+        self.bot.tree.remove_command(self.leave_group.name)
+
+    @commands.Cog.listener()
+    async def on_ready(self):
         await download_fonts()
 
-    welcome_group = app_commands.Group(name="welcome", description="Manage Server Welcome messages & cards")
+    @commands.Cog.listener()
+    async def on_member_join(self, member: discord.Member):
+        config = self.db.get_config(member.guild.id)
+        if config.enabled:
+            await send_welcome(member, config)
+            
+        if member.bot and config.bot_role_id:
+            role = member.guild.get_role(config.bot_role_id)
+            if role:
+                try:
+                    await member.add_roles(role, reason="Bot auto-role on join")
+                except Exception as e:
+                    print(f"[Welcome] Failed to add bot role on join: {e}")
+        elif not member.bot and config.welcome_role_id:
+            role = member.guild.get_role(config.welcome_role_id)
+            if role:
+                try:
+                    await member.add_roles(role, reason="Member auto-role on join")
+                except Exception as e:
+                    print(f"[Welcome] Failed to add member role on join: {e}")
 
-    @welcome_group.command(name="status", description="Show the current welcome settings configuration")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def status(interaction: discord.Interaction) -> None:
-        config = db.get_config(interaction.guild.id)
+    @commands.Cog.listener()
+    async def on_member_remove(self, member: discord.Member):
+        config = self.db.get_config(member.guild.id)
+        if config.leave_enabled:
+            await send_leave(member, config)
+
+    @app_commands.default_permissions(manage_guild=True)
+    async def status(self, interaction: discord.Interaction) -> None:
+        config = self.db.get_config(interaction.guild.id)
         embed = discord.Embed(
             title="👋 Welcome System Settings",
             description="Displaying config for member join welcome greetings.",
@@ -351,46 +673,169 @@ def setup_welcome(bot: commands.Bot, guild_id: int) -> None:
             if chan:
                 channel_val = chan.mention
         embed.add_field(name="Welcome Channel", value=channel_val, inline=True)
-        embed.add_field(name="Message Text", value=f"`{config.welcome_message}`", inline=False)
         
         bg_status = "Default Dark Theme"
         if config.background_path and os.path.exists(config.background_path):
             bg_status = "Custom Background Image"
         embed.add_field(name="Card Background", value=bg_status, inline=True)
+        
+        embed.add_field(name="Show Embed Thumbnail", value="Yes" if config.show_avatar else "No", inline=True)
+        embed.add_field(name="Draw Avatar on Card", value="Yes" if config.draw_avatar else "No", inline=True)
+        embed.add_field(name="Draw Server Icon on Card", value="Yes" if config.show_guild_icon else "No", inline=True)
+        embed.add_field(name="Draw Text on Card", value="Yes" if config.draw_text else "No", inline=True)
+        
+        role_val = "Not Set"
+        if config.welcome_role_id:
+            r = interaction.guild.get_role(config.welcome_role_id)
+            if r:
+                role_val = r.mention
+        embed.add_field(name="Auto-Role (Members)", value=role_val, inline=True)
+
+        bot_role_val = "Not Set"
+        if config.bot_role_id:
+            br = interaction.guild.get_role(config.bot_role_id)
+            if br:
+                bot_role_val = br.mention
+        embed.add_field(name="Auto-Role (Bots)", value=bot_role_val, inline=True)
+        
+        embed.add_field(name="Message Text", value=f"`{config.welcome_message}`", inline=False)
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @welcome_group.command(name="toggle", description="Toggle the welcome greeting system on or off")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def toggle(interaction: discord.Interaction) -> None:
-        config = db.get_config(interaction.guild.id)
+    @app_commands.default_permissions(manage_guild=True)
+    async def toggle(self, interaction: discord.Interaction) -> None:
+        config = self.db.get_config(interaction.guild.id)
         config.enabled = not config.enabled
-        db.save_config(config)
+        self.db.save_config(config)
         status_str = "ENABLED" if config.enabled else "DISABLED"
         await interaction.response.send_message(f"✅ Welcome system is now **{status_str}**.", ephemeral=True)
 
-    @welcome_group.command(name="channel", description="Set the channel where welcome greetings will be posted")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def set_channel(interaction: discord.Interaction, channel: discord.TextChannel) -> None:
-        config = db.get_config(interaction.guild.id)
+    @app_commands.default_permissions(manage_guild=True)
+    async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
+        config = self.db.get_config(interaction.guild.id)
         config.channel_id = channel.id
-        db.save_config(config)
+        self.db.save_config(config)
         await interaction.response.send_message(f"✅ Welcome channel successfully set to {channel.mention}.", ephemeral=True)
 
-    @welcome_group.command(name="message", description="Set a custom message text to send alongside the welcome card")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def set_message(interaction: discord.Interaction, message: str) -> None:
-        config = db.get_config(interaction.guild.id)
-        # Decode any \n the user typed so they become real newlines in the embed
-        decoded = message.replace("\\n", "\n")
-        config.welcome_message = decoded
-        db.save_config(config)
-        preview = decoded[:200] + "..." if len(decoded) > 200 else decoded
-        await interaction.response.send_message(f"✅ Welcome message set:\n>>> {preview}", ephemeral=True)
+    @app_commands.default_permissions(manage_guild=True)
+    async def set_message(self, interaction: discord.Interaction) -> None:
+        """Open a multi-line welcome message modal — newlines and spacing are fully preserved."""
+        await interaction.response.send_modal(WelcomeMessageModal(self.db, interaction.guild.id))
 
-    @welcome_group.command(name="setbg", description="Upload a custom background image (Recommended 1024x500)")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def set_bg(interaction: discord.Interaction, image: discord.Attachment) -> None:
+    @app_commands.describe(show="Select True/False")
+    @app_commands.default_permissions(manage_guild=True)
+    async def toggle_show_avatar(self, interaction: discord.Interaction, show: bool) -> None:
+        config = self.db.get_config(interaction.guild.id)
+        config.show_avatar = show
+        self.db.save_config(config)
+        status_str = "will now" if show else "will no longer"
+        await interaction.response.send_message(f"✅ User avatar {status_str} be displayed as the Discord Embed thumbnail.", ephemeral=True)
+
+    @app_commands.describe(show="Select True/False")
+    @app_commands.default_permissions(manage_guild=True)
+    async def toggle_draw_avatar(self, interaction: discord.Interaction, show: bool) -> None:
+        config = self.db.get_config(interaction.guild.id)
+        config.draw_avatar = show
+        self.db.save_config(config)
+        status_str = "will now" if show else "will no longer"
+        await interaction.response.send_message(f"✅ User avatar drawing {status_str} be enabled on the welcome card image.", ephemeral=True)
+
+    @app_commands.describe(show="Select True/False")
+    @app_commands.default_permissions(manage_guild=True)
+    async def toggle_server_icon(self, interaction: discord.Interaction, show: bool) -> None:
+        config = self.db.get_config(interaction.guild.id)
+        config.show_guild_icon = show
+        self.db.save_config(config)
+        status_str = "will now" if show else "will no longer"
+        await interaction.response.send_message(f"✅ Server icon {status_str} be displayed on the welcome card.", ephemeral=True)
+
+    @app_commands.describe(show="Select True/False")
+    @app_commands.default_permissions(manage_guild=True)
+    async def toggle_draw_text(self, interaction: discord.Interaction, show: bool) -> None:
+        config = self.db.get_config(interaction.guild.id)
+        config.draw_text = show
+        self.db.save_config(config)
+        status_str = "will now" if show else "will no longer"
+        await interaction.response.send_message(f"✅ Card text overlay {status_str} be drawn on the welcome card image.", ephemeral=True)
+
+    @app_commands.describe(role="The role to assign")
+    @app_commands.default_permissions(manage_guild=True)
+    async def set_role(self, interaction: discord.Interaction, role: discord.Role) -> None:
+        config = self.db.get_config(interaction.guild.id)
+        config.welcome_role_id = role.id
+        self.db.save_config(config)
+        
+        await interaction.response.send_message(
+            f"✅ Welcome auto-role set to {role.mention}! I will automatically give this to new members when they join.\\n"
+            f"🔄 Background sync started: I am now assigning this role to all existing members...",
+            ephemeral=True
+        )
+
+        async def sync_role_task(guild: discord.Guild, target_role: discord.Role):
+            added = 0
+            try:
+                print(f"[Welcome] Fetching all members for {guild.name}...")
+                members = [m async for m in guild.fetch_members(limit=None)]
+                print(f"[Welcome] Found {len(members)} members. Starting role assignment for '{target_role.name}'...")
+                
+                for member in members:
+                    if member.bot: continue
+                    if any(r.id == target_role.id for r in member.roles):
+                        continue
+                        
+                    try:
+                        await member.add_roles(target_role, reason="Welcome auto-role background sync")
+                        added += 1
+                        import asyncio
+                        await asyncio.sleep(1)
+                    except discord.Forbidden:
+                        print(f"[Welcome] ❌ Missing permissions to add role to {member.display_name}. Ensure my bot role is HIGHER in the server list than '{target_role.name}'.")
+                    except Exception as e:
+                        print(f"[Welcome] ⚠️ Failed to add role to {member.display_name}: {e}")
+            except Exception as e:
+                print(f"[Welcome] ❌ Critical error in role sync task: {e}")
+                
+            print(f"[Welcome] ✅ Finished background role sync. Added '{target_role.name}' to {added} members in {guild.name}.")
+
+        self.bot.loop.create_task(sync_role_task(interaction.guild, role))
+
+    @app_commands.describe(role="The role to assign to bots")
+    @app_commands.default_permissions(manage_guild=True)
+    async def set_bot_role(self, interaction: discord.Interaction, role: discord.Role) -> None:
+        config = self.db.get_config(interaction.guild.id)
+        config.bot_role_id = role.id
+        self.db.save_config(config)
+        
+        await interaction.response.send_message(
+            f"✅ Bot auto-role set to {role.mention}! I will automatically give this ONLY to bots when they join.\n"
+            f"🔄 Background sync started: I am now assigning this role to all existing bots...",
+            ephemeral=True
+        )
+
+        async def sync_bot_role_task(guild: discord.Guild, target_role: discord.Role):
+            added = 0
+            try:
+                members = [m async for m in guild.fetch_members(limit=None)]
+                import asyncio
+                for member in members:
+                    if not member.bot: continue
+                    if any(r.id == target_role.id for r in member.roles): continue
+                    try:
+                        await member.add_roles(target_role, reason="Bot auto-role background sync")
+                        added += 1
+                        await asyncio.sleep(1)
+                    except discord.Forbidden:
+                        print(f"[Welcome] ❌ Missing permissions to add bot role to {member.display_name}.")
+                    except Exception as e:
+                        pass
+            except Exception:
+                pass
+            print(f"[Welcome] ✅ Added '{target_role.name}' to {added} bots in {guild.name}.")
+
+        self.bot.loop.create_task(sync_bot_role_task(interaction.guild, role))
+
+    @app_commands.default_permissions(manage_guild=True)
+    async def set_bg(self, interaction: discord.Interaction, image: discord.Attachment) -> None:
         if not image.content_type or not image.content_type.startswith("image/"):
             await interaction.response.send_message("❌ Uploaded file must be an image.", ephemeral=True)
             return
@@ -398,28 +843,66 @@ def setup_welcome(bot: commands.Bot, guild_id: int) -> None:
         await interaction.response.defer(ephemeral=True)
         try:
             bg_data = await image.read()
-            # Test loading image to verify it's valid
-            img = Image.open(io.BytesIO(bg_data))
-            img.verify()
+            is_gif = image.filename.lower().endswith(".gif") or image.content_type == "image/gif"
+            
+            if is_gif:
+                filename = f"bg_{interaction.guild.id}.gif"
+            else:
+                img = Image.open(io.BytesIO(bg_data))
+                img.verify()
+                filename = f"bg_{interaction.guild.id}.png"
 
-            # Save locally
-            filename = f"bg_{interaction.guild.id}.png"
             dest_path = os.path.join(ASSETS_DIR, filename)
             with open(dest_path, "wb") as f:
                 f.write(bg_data)
 
-            config = db.get_config(interaction.guild.id)
+            config = self.db.get_config(interaction.guild.id)
             config.background_path = dest_path
-            db.save_config(config)
+            self.db.save_config(config)
 
             await interaction.followup.send("✅ Custom background image successfully updated!", ephemeral=True)
         except Exception as exc:
             await interaction.followup.send(f"❌ Failed to process uploaded image: {exc}", ephemeral=True)
 
-    @welcome_group.command(name="test", description="Simulate a welcome card message inside the setup channel")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def test_welcome(interaction: discord.Interaction) -> None:
-        config = db.get_config(interaction.guild.id)
+    @app_commands.describe(url="Direct URL to a GIF or image (must end in .gif, .png, .jpg)")
+    @app_commands.default_permissions(manage_guild=True)
+    async def set_bg_url(self, interaction: discord.Interaction, url: str) -> None:
+        await interaction.response.defer(ephemeral=True)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        await interaction.followup.send("❌ Failed to download image from URL.", ephemeral=True)
+                        return
+                    bg_data = await resp.read()
+                    
+            is_gif = url.lower().split("?")[0].endswith(".gif")
+            if is_gif:
+                filename = f"bg_{interaction.guild.id}.gif"
+            else:
+                try:
+                    img = Image.open(io.BytesIO(bg_data))
+                    img.verify()
+                except:
+                    await interaction.followup.send("❌ The URL provided does not seem to contain a valid image.", ephemeral=True)
+                    return
+                filename = f"bg_{interaction.guild.id}.png"
+
+            dest_path = os.path.join(ASSETS_DIR, filename)
+            with open(dest_path, "wb") as f:
+                f.write(bg_data)
+
+            config = self.db.get_config(interaction.guild.id)
+            config.background_path = dest_path
+            self.db.save_config(config)
+
+            await interaction.followup.send("✅ Custom background image URL successfully downloaded and set!", ephemeral=True)
+        except Exception as exc:
+            await interaction.followup.send(f"❌ Failed to process URL: {exc}", ephemeral=True)
+
+    @app_commands.default_permissions(manage_guild=True)
+    async def test_welcome(self, interaction: discord.Interaction) -> None:
+        config = self.db.get_config(interaction.guild.id)
         if not config.channel_id:
             await interaction.response.send_message("❌ Please set a welcome channel first using `/welcome channel`.", ephemeral=True)
             return
@@ -431,5 +914,59 @@ def setup_welcome(bot: commands.Bot, guild_id: int) -> None:
         except Exception as exc:
             await interaction.followup.send(f"❌ Failed to run welcome test: {exc}", ephemeral=True)
 
-    # Register command group GLOBALLY so /welcome works in every server the bot is in
-    bot.tree.add_command(welcome_group)
+    @app_commands.default_permissions(manage_guild=True)
+    async def leave_toggle(self, interaction: discord.Interaction) -> None:
+        config = self.db.get_config(interaction.guild.id)
+        config.leave_enabled = not config.leave_enabled
+        self.db.save_config(config)
+        status = "enabled" if config.leave_enabled else "disabled"
+        await interaction.response.send_message(f"✅ Leave message system is now **{status}**.", ephemeral=True)
+
+    @app_commands.default_permissions(manage_guild=True)
+    async def leave_set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
+        config = self.db.get_config(interaction.guild.id)
+        config.leave_channel_id = channel.id
+        self.db.save_config(config)
+        await interaction.response.send_message(f"✅ Leave messages will now be sent in {channel.mention}.", ephemeral=True)
+
+    @app_commands.default_permissions(manage_guild=True)
+    async def leave_set_message(self, interaction: discord.Interaction) -> None:
+        modal = LeaveMessageModal(self.db, interaction.guild.id)
+        config = self.db.get_config(interaction.guild.id)
+        modal.message_text.default = config.leave_message
+        await interaction.response.send_modal(modal)
+
+    @app_commands.describe(url="Direct URL to a GIF or image (must end in .gif, .png, .jpg) or 'none' to clear")
+    @app_commands.default_permissions(manage_guild=True)
+    async def leave_set_image(self, interaction: discord.Interaction, url: str) -> None:
+        config = self.db.get_config(interaction.guild.id)
+        if url.lower() == "none":
+            config.leave_image_url = None
+            self.db.save_config(config)
+            await interaction.response.send_message("✅ Leave image cleared.", ephemeral=True)
+            return
+
+        config.leave_image_url = url
+        self.db.save_config(config)
+        await interaction.response.send_message("✅ Custom leave image URL successfully set!", ephemeral=True)
+
+    @app_commands.default_permissions(manage_guild=True)
+    async def test_leave(self, interaction: discord.Interaction) -> None:
+        config = self.db.get_config(interaction.guild.id)
+        if not config.leave_channel_id:
+            await interaction.response.send_message("❌ Please set a leave channel first using `/leave channel`.", ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            # We override the setting temporarily to True just to ensure it sends during the test
+            old_enabled = config.leave_enabled
+            config.leave_enabled = True
+            await send_leave(interaction.user, config)
+            config.leave_enabled = old_enabled
+            await interaction.followup.send("✅ Test leave message dispatched successfully!", ephemeral=True)
+        except Exception as exc:
+            await interaction.followup.send(f"❌ Failed to run leave test: {exc}", ephemeral=True)
+
+async def setup(bot: commands.Bot) -> None:
+    await bot.add_cog(WelcomeCog(bot))

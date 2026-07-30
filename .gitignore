@@ -21,6 +21,7 @@ pip-delete-this-directory.txt
 # Log files
 *.log
 reaction_message_id.txt
+cookies.txt
 
 # VS Code / IDE
 .vscode/
