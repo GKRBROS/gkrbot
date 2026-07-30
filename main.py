@@ -304,21 +304,60 @@ async def botdiagnostics(interaction: discord.Interaction):
 
 # --- UTILITY SLASH COMMANDS ---
 
+def format_text(text: str, style: str) -> str:
+    """Helper to apply Markdown formatting to a text string."""
+    if style == "bold":
+        return f"**{text}**"
+    elif style == "italic":
+        return f"*{text}*"
+    elif style == "underline":
+        return f"_/__{text}__" if text.startswith("_") else f"__{text}__"  # prevent escaping conflicts
+    elif style == "code":
+        return f"`{text}`"
+    elif style == "code_block":
+        return f"```\n{text}\n```"
+    return text
+
+
+FORMAT_CHOICES = [
+    app_commands.Choice(name="Normal", value="normal"),
+    app_commands.Choice(name="Bold", value="bold"),
+    app_commands.Choice(name="Italic", value="italic"),
+    app_commands.Choice(name="Underline", value="underline"),
+    app_commands.Choice(name="Inline Code", value="code"),
+    app_commands.Choice(name="Code Block", value="code_block")
+]
+
+
 @tree.command(name="say", description="Make GKR Bot send a message in a channel")
 @app_commands.checks.has_permissions(manage_messages=True)
 @app_commands.describe(
     message="The message to send",
-    channel="The channel to send the message in (optional)"
+    channel="The channel to send the message in (optional)",
+    ping_role="Role to ping alongside the message (optional)",
+    format="Text formatting style (optional)"
 )
-async def say(interaction: discord.Interaction, message: str, channel: discord.TextChannel | None = None) -> None:
-    """Make the bot speak in the specified channel."""
+@app_commands.choices(format=FORMAT_CHOICES)
+async def say(
+    interaction: discord.Interaction,
+    message: str,
+    channel: discord.TextChannel | None = None,
+    ping_role: discord.Role | None = None,
+    format: str = "normal"
+) -> None:
+    """Make the bot speak in the specified channel with optional formatting and role ping."""
     target_channel = channel or interaction.channel
     if not isinstance(target_channel, discord.TextChannel):
         await interaction.response.send_message("❌ Target channel must be a text channel.", ephemeral=True)
         return
 
+    formatted_msg = format_text(message, format)
+    
+    # If a role ping is specified, send it together so it alerts correctly
+    content = f"{ping_role.mention} {formatted_msg}" if ping_role else formatted_msg
+
     try:
-        await target_channel.send(message)
+        await target_channel.send(content)
         await interaction.response.send_message(f"✅ Sent message to {target_channel.mention}.", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"❌ Failed to send message: {e}", ephemeral=True)
@@ -384,7 +423,8 @@ async def dm(
     message="The announcement message content",
     channel="The channel to send the announcement in (optional)",
     ping="Who to ping with the announcement: None | Everyone | Here | Role (optional)",
-    role="Role to ping if ping is set to Role (optional)"
+    role="Role to ping if ping is set to Role (optional)",
+    format="Embed text formatting style (optional)"
 )
 @app_commands.choices(
     ping=[
@@ -392,7 +432,8 @@ async def dm(
         app_commands.Choice(name="Everyone", value="everyone"),
         app_commands.Choice(name="Here", value="here"),
         app_commands.Choice(name="Role", value="role")
-    ]
+    ],
+    format=FORMAT_CHOICES
 )
 async def announcement(
     interaction: discord.Interaction,
@@ -400,9 +441,10 @@ async def announcement(
     message: str,
     channel: discord.TextChannel | None = None,
     ping: str = "none",
-    role: discord.Role | None = None
+    role: discord.Role | None = None,
+    format: str = "normal"
 ) -> None:
-    """Create and send a beautiful Embed announcement."""
+    """Create and send a beautiful Embed announcement with formatting and pings."""
     target_channel = channel or interaction.channel
     if not isinstance(target_channel, discord.TextChannel):
         await interaction.response.send_message("❌ Target channel must be a text channel.", ephemeral=True)
@@ -420,9 +462,11 @@ async def announcement(
     elif ping == "role" and role:
         ping_prefix = role.mention
 
+    formatted_msg = format_text(message, format)
+
     embed = discord.Embed(
         title=f"📢  {title}",
-        description=message,
+        description=formatted_msg,
         color=0x8A2BE2,  # Premium GKR Purple
         timestamp=datetime.datetime.now(datetime.timezone.utc)
     )
@@ -436,16 +480,34 @@ async def announcement(
 
 
 @tree.command(name="valo", description="Invite players to join Valorant (Malayalam gaming call)")
-async def valo(interaction: discord.Interaction) -> None:
-    """Send a fun Valorant ping invitation."""
-    role_id = int(os.getenv('VALORANT_ROLE_ID', '0'))
-    role = interaction.guild.get_role(role_id) if (interaction.guild and role_id != 0) else None
+@app_commands.describe(
+    role="Specific game/gaming role to ping (optional)",
+    format="Text formatting style (optional)",
+    extra_text="Additional note or message details to add (optional)"
+)
+@app_commands.choices(format=FORMAT_CHOICES)
+async def valo(
+    interaction: discord.Interaction,
+    role: discord.Role | None = None,
+    format: str = "normal",
+    extra_text: str | None = None
+) -> None:
+    """Send a fun Valorant ping invitation with custom formatting and optional role ping."""
+    role_to_ping = role
+    if role_to_ping is None:
+        role_id = int(os.getenv('VALORANT_ROLE_ID', '0'))
+        role_to_ping = interaction.guild.get_role(role_id) if (interaction.guild and role_id != 0) else None
 
     call_msg = "vada makale valo kalikam"
-    if role:
-        content = f"{role.mention} {call_msg}"
+    if extra_text:
+        call_msg = f"{call_msg} — {extra_text}"
+
+    formatted_msg = format_text(call_msg, format)
+
+    if role_to_ping:
+        content = f"{role_to_ping.mention} {formatted_msg}"
     else:
-        content = call_msg
+        content = formatted_msg
 
     await interaction.response.send_message(content)
 
@@ -584,37 +646,67 @@ async def auto_setup_reaction_roles():
     except Exception as e:
         print(f"❌ Error setting up auto reaction roles: {e}")
 
+def has_gkr_role(member: discord.Member) -> bool:
+    """Check if a member has a GKR role by ID or by role name GKR."""
+    # 1. Home guild check
+    if member.guild.id == GUILD_ID:
+        role = member.guild.get_role(BOT_ROLE_ID)
+        if role and role in member.roles:
+            return True
+            
+    # 2. Case-insensitive role name check for any guild
+    for r in member.roles:
+        if r.name.upper() == "GKR":
+            return True
+            
+    return False
+
+
 async def sync_existing_nicknames():
-    """Sync nicknames for all existing members with the specified role"""
-    guild = bot.get_guild(GUILD_ID)
-    if not guild:
-        print("❌ Guild not found for nickname sync")
-        return
+    """Sync nicknames for GKR role members across all guilds the bot is in."""
+    print("🔄 Starting global nickname sync...")
     
-    bot_role = guild.get_role(BOT_ROLE_ID)
-    if not bot_role:
-        print("❌ Bot role not found for nickname sync")
-        return
+    total_changed = 0
+    total_failed = 0
     
-    print(f"🔄 Starting nickname sync for {bot_role.name} role members...")
-    
-    changed = 0
-    failed = 0
-    
-    for member in bot_role.members:
-        if member.nick != "GKR":
-            try:
-                await member.edit(nick="GKR")
-                changed += 1
-                print(f"✅ Synced {member.display_name} → GKR")
-            except discord.Forbidden:
-                failed += 1
-                print(f"❌ No permission to change {member.display_name}")
-            except discord.HTTPException as e:
-                failed += 1
-                print(f"⚠️  Failed to change {member.display_name}: {e}")
-    
-    print(f"🎯 Nickname sync complete: {changed} changed, {failed} failed")
+    for guild in bot.guilds:
+        roles = []
+        if guild.id == GUILD_ID:
+            br = guild.get_role(BOT_ROLE_ID)
+            if br:
+                roles.append(br)
+        for r in guild.roles:
+            if r.name.upper() == "GKR" and r not in roles:
+                roles.append(r)
+                
+        if not roles:
+            continue
+            
+        print(f"🔄 Syncing nicknames in server: {guild.name}...")
+        changed = 0
+        failed = 0
+        synced_members = set()
+        
+        for role in roles:
+            for member in role.members:
+                if member.id in synced_members or member.bot:
+                    continue
+                synced_members.add(member.id)
+                if member.nick != "GKR":
+                    try:
+                        await member.edit(nick="GKR")
+                        changed += 1
+                    except discord.Forbidden:
+                        failed += 1
+                    except discord.HTTPException:
+                        failed += 1
+                        
+        if changed > 0 or failed > 0:
+            print(f"🎯 Server {guild.name} sync complete: {changed} changed, {failed} failed")
+        total_changed += changed
+        total_failed += failed
+        
+    print(f"🎯 Global Nickname sync complete: {total_changed} changed, {total_failed} failed")
     print('='*50)
 
 
@@ -746,10 +838,7 @@ async def on_member_join(member):
     except Exception as e:
         print(f"❌ Failed to send welcome card in {guild.name}: {e}")
 
-    # ── GKR-specific nickname logic: home guild only ─────────────────────────
-    if guild.id != GUILD_ID:
-        return
-
+    # ── GKR-specific nickname logic ──────────────────────────────────────────
     # Small delay to allow role assignment bots to work
     await asyncio.sleep(2)
 
@@ -759,38 +848,38 @@ async def on_member_join(member):
     except Exception:
         pass
 
-    try:
-        role = guild.get_role(BOT_ROLE_ID)
-        if role and role in member.roles:
-            await member.edit(nick="GKR")
-            print(f"🎉 Welcome! Changed {member.display_name}'s nickname to GKR ✨")
-        else:
-            print(f"ℹ️  {member.display_name} doesn't have the required role yet")
-    except discord.Forbidden:
-        print(f"❌ No permission to change nickname for {member.display_name}")
-    except discord.HTTPException as e:
-        print(f"⚠️  Failed to change nickname for {member.display_name}: {e}")
+    if has_gkr_role(member):
+        if member.nick != "GKR":
+            try:
+                await member.edit(nick="GKR")
+                print(f"🎉 Welcome! Changed {member.display_name}'s nickname to GKR in {guild.name} ✨")
+            except discord.Forbidden:
+                print(f"❌ No permission to change nickname for {member.display_name} in {guild.name}")
+            except discord.HTTPException as e:
+                print(f"⚠️  Failed to change nickname for {member.display_name} in {guild.name}: {e}")
 
 @bot.event
 async def on_member_update(before, after):
     """Handle when a member's roles are updated"""
-    # Check if this is the correct guild
-    if after.guild.id != GUILD_ID:
-        return
-    
-    # Check if the specified role was added
-    role = after.guild.get_role(BOT_ROLE_ID)
-    if role:
-        # If role was added and nickname isn't already GKR
-        if role not in before.roles and role in after.roles:
-            if after.nick != "GKR":
-                try:
-                    await after.edit(nick="GKR")
-                    print(f"👑 Role upgrade! Changed {after.display_name} to GKR (role added) 🚀")
-                except discord.Forbidden:
-                    print(f"❌ No permission to change nickname for {after.display_name}")
-                except discord.HTTPException as e:
-                    print(f"⚠️  Failed to change nickname for {after.display_name}: {e}")
+    had_gkr = False
+    if before.guild.id == GUILD_ID:
+        br = before.guild.get_role(BOT_ROLE_ID)
+        if br and br in before.roles:
+            had_gkr = True
+    if not had_gkr:
+        had_gkr = any(r.name.upper() == "GKR" for r in before.roles)
+
+    has_gkr = has_gkr_role(after)
+
+    if has_gkr and not had_gkr:
+        if after.nick != "GKR":
+            try:
+                await after.edit(nick="GKR")
+                print(f"👑 Role upgrade! Changed {after.display_name} to GKR in {after.guild.name} (role added) 🚀")
+            except discord.Forbidden:
+                print(f"❌ No permission to change nickname for {after.display_name} in {after.guild.name}")
+            except discord.HTTPException as e:
+                print(f"⚠️  Failed to change nickname for {after.display_name} in {after.guild.name}: {e}")
 
 @bot.event
 async def on_guild_channel_create(channel):
@@ -833,28 +922,39 @@ async def rotate_activity():
 
 @tasks.loop(hours=1)  # Run nickname sync every hour
 async def periodic_nickname_sync():
-    """Periodically sync nicknames to catch any missed changes"""
-    guild = bot.get_guild(GUILD_ID)
-    if not guild:
-        return
-    
-    bot_role = guild.get_role(BOT_ROLE_ID)
-    if not bot_role:
-        return
-    
-    changed = 0
-    
-    for member in bot_role.members:
-        if member.nick != "GKR":
-            try:
-                await member.edit(nick="GKR")
-                changed += 1
-                print(f"🔄 Periodic sync: {member.display_name} → GKR")
-            except (discord.Forbidden, discord.HTTPException):
-                pass
-    
-    if changed > 0:
-        print(f"🎯 Periodic sync complete: {changed} nicknames updated")
+    """Periodically sync nicknames to catch any missed changes across all servers"""
+    for guild in bot.guilds:
+        roles = []
+        if guild.id == GUILD_ID:
+            br = guild.get_role(BOT_ROLE_ID)
+            if br:
+                roles.append(br)
+        for r in guild.roles:
+            if r.name.upper() == "GKR" and r not in roles:
+                roles.append(r)
+                
+        if not roles:
+            continue
+            
+        changed = 0
+        synced_members = set()
+        
+        for role in roles:
+            for member in role.members:
+                if member.id in synced_members or member.bot:
+                    continue
+                synced_members.add(member.id)
+                if member.nick != "GKR":
+                    try:
+                        await member.edit(nick="GKR")
+                        changed += 1
+                        print(f"🔄 Periodic sync: {member.display_name} → GKR in {guild.name}")
+                        await asyncio.sleep(0.5)
+                    except (discord.Forbidden, discord.HTTPException):
+                        pass
+                        
+        if changed > 0:
+            print(f"🎯 Periodic sync complete: {changed} nicknames updated in {guild.name}")
 
 @periodic_nickname_sync.before_loop
 async def before_periodic_sync():
@@ -863,13 +963,11 @@ async def before_periodic_sync():
 @bot.command(name='setnick')
 @commands.has_permissions(manage_nicknames=True)
 async def set_nickname(ctx, member: discord.Member = None):
-    """Command to manually set nickname to GKR for users with the specified role"""
+    """Command to manually set nickname to GKR for users with the GKR role in this server"""
     if member is None:
         member = ctx.author
     
-    # Check if member has the specified role
-    role = ctx.guild.get_role(BOT_ROLE_ID)
-    if role and role in member.roles:
+    if has_gkr_role(member):
         try:
             await member.edit(nick="GKR")
             await ctx.send(f"✅ Changed {member.mention}'s nickname to GKR!")
@@ -878,29 +976,43 @@ async def set_nickname(ctx, member: discord.Member = None):
         except discord.HTTPException as e:
             await ctx.send(f"❌ Failed to change nickname: {e}")
     else:
-        await ctx.send("❌ That member doesn't have the required role.")
+        await ctx.send("❌ That member doesn't have a qualifying GKR role.")
 
 @bot.command(name='setallnicks')
 @commands.has_permissions(manage_nicknames=True)
 async def set_all_nicknames(ctx):
-    """Command to set all members with the specified role to have GKR nickname"""
-    role = ctx.guild.get_role(BOT_ROLE_ID)
-    if not role:
-        await ctx.send("❌ Specified role not found.")
+    """Command to set all members with the GKR role to have GKR nickname in this server"""
+    roles = []
+    if ctx.guild.id == GUILD_ID:
+        br = ctx.guild.get_role(BOT_ROLE_ID)
+        if br:
+            roles.append(br)
+    for r in ctx.guild.roles:
+        if r.name.upper() == "GKR" and r not in roles:
+            roles.append(r)
+
+    if not roles:
+        await ctx.send("❌ GKR role not found on this server.")
         return
     
     changed = 0
     failed = 0
+    synced_members = set()
     
-    await ctx.send(f"🔄 Processing members with {role.name} role...")
+    await ctx.send(f"🔄 Processing members with GKR roles...")
     
-    for member in role.members:
-        if member.nick != "GKR":
-            try:
-                await member.edit(nick="GKR")
-                changed += 1
-            except (discord.Forbidden, discord.HTTPException):
-                failed += 1
+    for role in roles:
+        for member in role.members:
+            if member.id in synced_members or member.bot:
+                continue
+            synced_members.add(member.id)
+            if member.nick != "GKR":
+                try:
+                    await member.edit(nick="GKR")
+                    changed += 1
+                    await asyncio.sleep(0.2)
+                except (discord.Forbidden, discord.HTTPException):
+                    failed += 1
     
     result_msg = f"✅ Changed {changed} nicknames to GKR"
     if failed > 0:
@@ -911,30 +1023,8 @@ async def set_all_nicknames(ctx):
 @bot.command(name='syncnicks')
 @commands.has_permissions(manage_nicknames=True)
 async def sync_nicknames(ctx):
-    """Manually sync all nicknames for members with the specified role"""
-    role = ctx.guild.get_role(BOT_ROLE_ID)
-    if not role:
-        await ctx.send("❌ Specified role not found.")
-        return
-    
-    changed = 0
-    failed = 0
-    
-    await ctx.send(f"🔄 Syncing nicknames for all {role.name} role members...")
-    
-    for member in role.members:
-        if member.nick != "GKR":
-            try:
-                await member.edit(nick="GKR")
-                changed += 1
-            except (discord.Forbidden, discord.HTTPException):
-                failed += 1
-    
-    result_msg = f"✅ Sync complete: {changed} nicknames updated to GKR"
-    if failed > 0:
-        result_msg += f" ({failed} failed due to permissions)"
-    
-    await ctx.send(result_msg)
+    """Manually sync all nicknames for members with the GKR role in this server"""
+    await set_all_nicknames(ctx)
 
 @bot.command(name='checkrole')
 async def check_role(ctx):
