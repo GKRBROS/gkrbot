@@ -4,9 +4,8 @@ import traceback
 import os
 import shutil
 
-# Self-healing dependency check (e.g. for PyNaCl, yt-dlp, spotipy)
+# Self-healing dependency check (e.g. for spotipy, ytnoti)
 required_packages = {
-    "yt_dlp": "yt-dlp",
     "spotipy": "spotipy",
     "ytnoti": "ytnoti"
 }
@@ -21,27 +20,15 @@ for check_module, pip_name in required_packages.items():
         except Exception as e:
             print(f"❌ Failed to auto-install {pip_name}: {e}")
 
-# Force-upgrade yt-dlp on startup to bypass YouTube datacenter blocks
-print("⚙️ Force-upgrading yt-dlp to latest version for anti-bot patches...")
-try:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-U", "yt-dlp"], stdout=subprocess.DEVNULL)
-    print("✅ yt-dlp is up to date!")
-except Exception as e:
-    print(f"⚠️ Failed to upgrade yt-dlp: {e}")
+# Note: yt-dlp auto-upgrade was removed to prevent high CPU usage at startup.
+# Lavalink is now used for all audio processing, so yt-dlp is not needed locally.
 
-# Check PyNaCl specifically since it requires voice extras
+# Check PyNaCl specifically since it requires voice extras (only warn, do not force pip install which spikes CPU)
 try:
     import nacl.secret
     import nacl.signing
 except ImportError:
-    print("⚙️ PyNaCl voice components are missing or failed to import. Auto-installing discord.py[voice]...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-U", "discord.py[voice]"])
-        import nacl.secret
-        import nacl.signing
-        print("✅ Successfully installed and verified PyNaCl submodules!")
-    except Exception as e:
-        print(f"❌ Failed to resolve PyNaCl voice components: {e}")
+    print("⚠️ PyNaCl voice components are missing. (Not required if exclusively using Lavalink)")
 
 # Detailed voice diagnostic checks
 print("=== GKR Voice Diagnostics ===")
