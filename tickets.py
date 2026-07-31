@@ -104,6 +104,16 @@ class TicketDatabase:
                     log_channel_id TEXT
                 )
             """)
+            
+            # Hubs
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS ticket_hubs (
+                    message_id TEXT PRIMARY KEY,
+                    channel_id TEXT NOT NULL,
+                    guild_id TEXT NOT NULL,
+                    category_ids TEXT NOT NULL
+                )
+            """)
             conn.commit()
 
     def add_category(self, guild_id: int, name: str, button_label: str, button_emoji: str, 
@@ -179,6 +189,58 @@ class TicketDatabase:
         with self._conn() as conn:
             return conn.execute("SELECT * FROM ticket_panels WHERE category_id = ?", (category_id,)).fetchall()
 
+    def add_hub(self, message_id: int, channel_id: int, guild_id: int, category_ids: list[int]) -> None:
+        import json
+        with self._conn() as conn:
+            conn.execute("""
+                INSERT INTO ticket_hubs (message_id, channel_id, guild_id, category_ids)
+                VALUES (?, ?, ?, ?)
+            """, (str(message_id), str(channel_id), str(guild_id), json.dumps(category_ids)))
+            conn.commit()
+
+    def get_all_hubs_global(self) -> list:
+        import json
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM ticket_hubs").fetchall()
+        
+        results = []
+        for row in rows:
+            results.append({
+                "message_id": int(row["message_id"]),
+                "channel_id": int(row["channel_id"]),
+                "category_ids": json.loads(row["category_ids"])
+            })
+        return results
+
+    def get_hubs_by_guild(self, guild_id: int) -> list:
+        import json
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM ticket_hubs WHERE guild_id = ?", (str(guild_id),)).fetchall()
+        
+        results = []
+        for row in rows:
+            results.append({
+                "message_id": int(row["message_id"]),
+                "channel_id": int(row["channel_id"]),
+                "guild_id": int(row["guild_id"]),
+                "category_ids": json.loads(row["category_ids"])
+            })
+        return results
+
+    def remove_hub(self, message_id: int):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM ticket_hubs WHERE message_id = ?", (str(message_id),))
+            conn.commit()
+
+    def get_panels_by_guild(self, guild_id: int) -> list:
+        with self._conn() as conn:
+            return conn.execute("SELECT * FROM ticket_panels WHERE guild_id = ?", (str(guild_id),)).fetchall()
+
+    def remove_panel(self, message_id: int):
+        with self._conn() as conn:
+            conn.execute("DELETE FROM ticket_panels WHERE message_id = ?", (str(message_id),))
+            conn.commit()
+
     def add_active_ticket(self, channel_id: int, guild_id: int, owner_id: int, category_id: int, ticket_number: int) -> None:
         with self._conn() as conn:
             conn.execute("""
@@ -238,19 +300,25 @@ class TicketDatabase:
         return None
 
     def _row_to_cat(self, row: sqlite3.Row) -> TicketCategory:
+        keys = row.keys()
         return TicketCategory(
             id=row["id"],
             guild_id=int(row["guild_id"]),
             name=row["name"],
             button_label=row["button_label"],
             button_emoji=row["button_emoji"],
-            ping_roles=row["ping_roles"],
-            admin_roles=row.keys().count("admin_roles") and row["admin_roles"] or "",
-            custom_buttons=row.keys().count("custom_buttons") and row["custom_buttons"] or "{}",
+            ping_roles=row["ping_roles"] if "ping_roles" in keys else "",
+            admin_roles=row["admin_roles"] if "admin_roles" in keys else "",
+            custom_buttons=row["custom_buttons"] if "custom_buttons" in keys else "{}",
             embed_title=row["embed_title"],
-            embed_description=row["embed_description"],
+            embed_description=row["embed_description"] if "embed_description" in keys else "",
             ticket_counter=row["ticket_counter"]
         )
+
+    def get_all_categories_global(self) -> list:
+        with self._conn() as conn:
+            rows = conn.execute("SELECT * FROM ticket_categories").fetchall()
+        return [self._row_to_cat(r) for r in rows]
 
 # ---------------------------------------------------------------------------
 # UI Views (Persistent)
@@ -379,6 +447,25 @@ class TicketPanelView(discord.ui.View):
         await interaction.response.send_modal(TicketCreateModal(self.category_id))
 
 
+class TicketHubView(discord.ui.View):
+    """The persistent view attached to a hub message, with multiple category buttons."""
+    def __init__(self, categories: list[TicketCategory]):
+        super().__init__(timeout=None)
+        self.categories = categories
+        for cat in categories:
+            btn = discord.ui.Button(
+                label=cat.button_label,
+                emoji=cat.button_emoji if cat.button_emoji else None,
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"ticket_open_{cat.id}"
+            )
+            # Use default arg to capture cid at loop time (avoids late-binding closure bug)
+            async def _callback(interaction: discord.Interaction, cid=cat.id):
+                await interaction.response.send_modal(TicketCreateModal(cid))
+            btn.callback = _callback
+            self.add_item(btn)
+
+
 class TicketControlView(discord.ui.View):
     """The persistent view inside a ticket."""
     def __init__(self, category: TicketCategory = None):
@@ -400,18 +487,10 @@ class TicketControlView(discord.ui.View):
         custom_btns = json.loads(self.category.custom_buttons) if self.category.custom_buttons else {}
         for btn_label, response_text in custom_btns.items():
             cbtn = discord.ui.Button(label=btn_label, style=discord.ButtonStyle.secondary, custom_id=f"ticket_custom_{self.category.id}_{btn_label}")
-            async def make_callback(rt=response_text):
-                async def custom_callback(interaction: discord.Interaction):
-                    await interaction.response.send_message(rt, ephemeral=True)
-                return custom_callback
-            
-            # Python loop closure binding trick is needed for async callbacks in loops
-            import asyncio
-            cbtn.callback = asyncio.run_coroutine_threadsafe(make_callback(), asyncio.get_event_loop()).result() if asyncio.get_event_loop().is_running() else None
-            # Actually, standard default param binding works:
-            async def bind(i: discord.Interaction, r=response_text):
+            # Use default arg to capture response_text at loop time — avoids late-binding and asyncio deadlock
+            async def _custom_callback(i: discord.Interaction, r=response_text):
                 await i.response.send_message(r, ephemeral=True)
-            cbtn.callback = bind
+            cbtn.callback = _custom_callback
             self.add_item(cbtn)
 
     async def close_request(self, interaction: discord.Interaction):
@@ -462,18 +541,14 @@ class TicketCloseModal(discord.ui.Modal, title="Close Ticket"):
         db.remove_active_ticket(channel.id)
 
         # Generate HTML transcript using chat_exporter
-        transcript_file = None
+        # Store raw bytes so we can create multiple discord.File objects from it
+        transcript_bytes: bytes | None = None
+        transcript_filename = f"transcript-{channel.name}.html"
         try:
             import chat_exporter
-            import io
-            
-            # Export the channel to HTML string
             transcript = await chat_exporter.export(channel)
             if transcript:
-                transcript_file = discord.File(
-                    io.BytesIO(transcript.encode('utf-8')),
-                    filename=f"transcript-{channel.name}.html"
-                )
+                transcript_bytes = transcript.encode('utf-8')
         except Exception as e:
             print(f"Failed to generate transcript: {e}")
 
@@ -512,26 +587,27 @@ class TicketCloseModal(discord.ui.Modal, title="Close Ticket"):
             
         if log_channel:
             await log_channel.send(embed=embed)
-            if transcript_file:
-                await log_channel.send("📄 **Ticket Transcript Attached:**", file=transcript_file)
+            if transcript_bytes:
+                import io
+                # Create a fresh discord.File each time — do NOT reuse file objects
+                await log_channel.send("📄 **Ticket Transcript Attached:**", file=discord.File(io.BytesIO(transcript_bytes), filename=transcript_filename))
         else:
-            # Fallback to ServerLogsCog
+            # Fallback: try ServerLogsCog's log channel
             cog = interaction.client.get_cog("ServerLogsCog")
             if cog:
                 import asyncio
-                # Recreate file object if it was already read or if we need to pass it
-                if transcript_file:
-                    transcript_file.seek(0)
-                    embed.description = "Transcript attached."
-                    await cog.logger._send(interaction.guild, "channel_delete", embed)
-                    # For safety, ServerLogsCog doesn't take files easily through _send, so just send directly to log channel if it exists
-                    server_log_channel = cog.logger.db.get_channel(interaction.guild.id)
-                    if server_log_channel:
-                        log_ch = interaction.guild.get_channel(server_log_channel)
-                        if log_ch:
-                            await log_ch.send(file=transcript_file)
-                else:
-                    asyncio.create_task(cog.logger._send(interaction.guild, "channel_delete", embed))
+                asyncio.create_task(cog.logger._send(interaction.guild, "channel_delete", embed))
+                if transcript_bytes:
+                    import io
+                    try:
+                        server_log_channel_id = cog.logger.db.get_channel(interaction.guild.id)
+                        if server_log_channel_id:
+                            log_ch = interaction.guild.get_channel(server_log_channel_id)
+                            if log_ch:
+                                await log_ch.send("📄 **Ticket Transcript:**", file=discord.File(io.BytesIO(transcript_bytes), filename=transcript_filename))
+                    except Exception as e:
+                        print(f"[Tickets] Could not send transcript to server log: {e}")
+
 
         await channel.send(f"Ticket is closing in 5 seconds...\n**Reason:** {self.reason.value}")
         import asyncio
@@ -561,7 +637,7 @@ class TicketSetupConfigView(discord.ui.View):
         self.db.update_category(interaction.guild.id, self.category_id, admin_roles=",".join(role_ids))
         await interaction.response.send_message("✅ Admin roles updated.", ephemeral=True)
 
-    @discord.ui.button(label="Spawn Panel Here", style=discord.ButtonStyle.success, row=2)
+    @discord.ui.button(label="Spawn Basic Panel", style=discord.ButtonStyle.green, row=2)
     async def spawn_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
         cat = self.db.get_category(self.category_id)
         if not cat:
@@ -582,41 +658,288 @@ class TicketSetupConfigView(discord.ui.View):
         await interaction.response.send_message("✅ Panel spawned successfully!", ephemeral=True)
 
 
-class TicketSetupModal(discord.ui.Modal, title="Create Ticket Category"):
-    cat_name = discord.ui.TextInput(label="Category Name", placeholder="e.g. Support, Applications", required=True)
-    btn_label = discord.ui.TextInput(label="Button Label", placeholder="e.g. Open Support Ticket", required=True)
-    btn_emoji = discord.ui.TextInput(label="Button Emoji", placeholder="e.g. 🎫", required=False, default="🎫")
-    emb_title = discord.ui.TextInput(label="Embed Title inside Ticket", placeholder="e.g. Welcome to Support", required=True)
-    emb_desc = discord.ui.TextInput(label="Embed Description inside Ticket", style=discord.TextStyle.paragraph, placeholder="Describe your issue below.", required=False)
-
-    def __init__(self, bot: commands.Bot, db: TicketDatabase):
-        super().__init__()
+class TicketSetupModal(discord.ui.Modal):
+    def __init__(self, bot: commands.Bot, db: TicketDatabase, category: TicketCategory = None):
+        super().__init__(title="Edit Category" if category else "Create Ticket Category")
         self.bot = bot
         self.db = db
+        self.category = category
+        
+        self.cat_name = discord.ui.TextInput(label="Category Name", placeholder="e.g. Support", required=True, default=category.name if category else "")
+        self.btn_label = discord.ui.TextInput(label="Button Label", placeholder="e.g. Open Support Ticket", required=True, default=category.button_label if category else "")
+        self.btn_emoji = discord.ui.TextInput(label="Button Emoji", placeholder="e.g. 🎫", required=False, default=category.button_emoji if category else "🎫")
+        self.emb_title = discord.ui.TextInput(label="Embed Title inside Ticket", placeholder="e.g. Welcome to Support", required=True, default=category.embed_title if category else "")
+        self.emb_desc = discord.ui.TextInput(label="Embed Description", style=discord.TextStyle.paragraph, placeholder="Describe your issue.", required=False, default=category.embed_description if category else "")
+        
+        self.add_item(self.cat_name)
+        self.add_item(self.btn_label)
+        self.add_item(self.btn_emoji)
+        self.add_item(self.emb_title)
+        self.add_item(self.emb_desc)
 
     async def on_submit(self, interaction: discord.Interaction):
-        # Create category with empty roles
-        cat_id = self.db.add_category(
-            interaction.guild.id,
-            self.cat_name.value,
-            self.btn_label.value,
-            self.btn_emoji.value,
-            "", "",  # empty ping and admin roles initially
-            self.emb_title.value,
-            self.emb_desc.value
-        )
-        
+        if self.category:
+            self.db.update_category(
+                interaction.guild.id, self.category.id,
+                name=self.cat_name.value,
+                button_label=self.btn_label.value,
+                button_emoji=self.btn_emoji.value,
+                embed_title=self.emb_title.value,
+                embed_description=self.emb_desc.value
+            )
+            cat_id = self.category.id
+            desc = f"Category **{self.cat_name.value}** updated!\n\n"
+        else:
+            cat_id = self.db.add_category(
+                interaction.guild.id,
+                self.cat_name.value,
+                self.btn_label.value,
+                self.btn_emoji.value,
+                "", "",  # empty ping and admin roles initially
+                self.emb_title.value,
+                self.emb_desc.value
+            )
+            desc = f"Category **{self.cat_name.value}** created!\n\n"
+            
         # Add the control view to bot so buttons inside work
         cat = self.db.get_category(cat_id)
         self.bot.add_view(TicketControlView(cat))
 
         embed = discord.Embed(
             title="⚙️ Ticket Category Configured",
-            description=f"Category **{self.cat_name.value}** created!\n\nNow, select the Ping Roles and Admin Roles below, then click **Spawn Panel Here** when you're ready.",
+            description=desc + 
+                        f"**Next Steps:**\n"
+                        f"1. Select the Ping Roles and Admin Roles below.\n"
+                        f"2. To create a beautiful custom panel with your own text and banner image, click **Spawn Custom Panel** in the `/ticket setup` dashboard.\n"
+                        f"3. Or, if you just want a simple basic button here, click **Spawn Basic Panel** below.",
             color=0x3498DB
         )
         view = TicketSetupConfigView(self.bot, self.db, cat_id)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+class TicketHubSelectView(discord.ui.View):
+    def __init__(self, bot: commands.Bot, db: TicketDatabase, embed: discord.Embed, categories: list[TicketCategory]):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.db = db
+        self.embed = embed
+        self.categories = categories
+        
+        # Create a select menu for categories
+        options = []
+        for cat in categories:
+            options.append(discord.SelectOption(label=cat.name, description=cat.button_label, emoji=cat.button_emoji if cat.button_emoji else None, value=str(cat.id)))
+        
+        if not options:
+            options.append(discord.SelectOption(label="No Categories", value="none", description="Create a category first!"))
+
+        select = discord.ui.Select(placeholder="Select up to 5 categories to include in this hub", min_values=1, max_values=min(5, len(options) if options else 1), options=options, custom_id="hub_category_select")
+        select.callback = self.on_select
+        self.add_item(select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        select = self.children[0]
+        if "none" in select.values:
+            await interaction.response.send_message("❌ You must create a ticket category first using `/ticket setup`.", ephemeral=True)
+            return
+            
+        selected_cat_ids = [int(v) for v in select.values]
+        selected_cats = [c for c in self.categories if c.id in selected_cat_ids]
+        
+        hub_view = TicketHubView(selected_cats)
+        self.bot.add_view(hub_view)
+        
+        msg = await interaction.channel.send(embed=self.embed, view=hub_view)
+        self.db.add_hub(msg.id, interaction.channel.id, interaction.guild.id, selected_cat_ids)
+        
+        await interaction.response.send_message("✅ Ticket Hub spawned successfully!", ephemeral=True)
+
+
+class TicketHubModal(discord.ui.Modal, title="Create Ticket Hub"):
+    hub_title = discord.ui.TextInput(label="Hub Title", placeholder="e.g. Need Help?", required=True, default="Need Help?")
+    hub_desc = discord.ui.TextInput(label="Hub Description", style=discord.TextStyle.paragraph, placeholder="Describe the support rules here...", required=True)
+    hub_color = discord.ui.TextInput(label="Embed Color (Hex)", placeholder="e.g. #3498DB", required=False, default="#3498DB")
+    hub_image = discord.ui.TextInput(label="Banner Image URL", placeholder="https://example.com/image.png", required=False)
+
+    def __init__(self, bot: commands.Bot, db: TicketDatabase, categories: list[TicketCategory]):
+        super().__init__()
+        self.bot = bot
+        self.db = db
+        self.categories = categories
+
+    async def on_submit(self, interaction: discord.Interaction):
+        color_val = 0x3498DB
+        if self.hub_color.value:
+            try:
+                hex_str = self.hub_color.value.replace('#', '')
+                color_val = int(hex_str, 16)
+            except ValueError:
+                pass
+                
+        embed = discord.Embed(
+            title=self.hub_title.value,
+            description=self.hub_desc.value,
+            color=color_val
+        )
+        if self.hub_image.value:
+            embed.set_image(url=self.hub_image.value)
+            
+        view = TicketHubSelectView(self.bot, self.db, embed, self.categories)
+        await interaction.response.send_message("Select the categories you want to appear as buttons on this hub:", view=view, ephemeral=True)
+
+
+class TicketCategoryManageView(discord.ui.View):
+    def __init__(self, bot: commands.Bot, db: TicketDatabase, category: TicketCategory):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.db = db
+        self.category = category
+
+    @discord.ui.button(label="Edit Category Info", style=discord.ButtonStyle.blurple, emoji="✏️")
+    async def edit_info(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(TicketSetupModal(self.bot, self.db, self.category))
+
+    @discord.ui.button(label="Edit Ping/Admin Roles", style=discord.ButtonStyle.secondary, emoji="👥")
+    async def edit_roles(self, interaction: discord.Interaction, button: discord.ui.Button):
+        embed = discord.Embed(
+            title=f"⚙️ Edit Roles: {self.category.name}",
+            description="Select the Ping Roles and Admin Roles below.",
+            color=0x3498DB
+        )
+        view = TicketSetupConfigView(self.bot, self.db, self.category.id)
+        # Remove the spawn panel button for this context to avoid confusion
+        view.remove_item(view.children[2])
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="Delete Category", style=discord.ButtonStyle.danger, emoji="🗑️")
+    async def delete_cat(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.db.delete_category(interaction.guild.id, self.category.id)
+        await interaction.response.send_message(f"🗑️ Category **{self.category.name}** has been deleted.", ephemeral=True)
+
+
+class TicketCategorySelectView(discord.ui.View):
+    def __init__(self, bot: commands.Bot, db: TicketDatabase, categories: list[TicketCategory]):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.db = db
+        self.categories = categories
+
+        options = [
+            discord.SelectOption(label=cat.name, description=cat.button_label, value=str(cat.id))
+            for cat in categories
+        ]
+        
+        select = discord.ui.Select(placeholder="Select a category to manage", options=options, custom_id="manage_category_select")
+        select.callback = self.on_select
+        self.add_item(select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        cat_id = int(self.children[0].values[0])
+        category = next((c for c in self.categories if c.id == cat_id), None)
+        if not category:
+            await interaction.response.send_message("❌ Category not found.", ephemeral=True)
+            return
+            
+        embed = discord.Embed(
+            title=f"🛠️ Managing Category: {category.name}",
+            description=f"**Button:** {category.button_emoji} {category.button_label}\n**Embed Title:** {category.embed_title}",
+            color=0x3498DB
+        )
+        await interaction.response.send_message(embed=embed, view=TicketCategoryManageView(self.bot, self.db, category), ephemeral=True)
+
+
+class TicketPanelSelectView(discord.ui.View):
+    def __init__(self, bot: commands.Bot, db: TicketDatabase, guild_id: int):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.db = db
+        self.guild_id = guild_id
+        
+        # Gather all panels and hubs
+        self.panels = db.get_panels_by_guild(guild_id)
+        self.hubs = db.get_hubs_by_guild(guild_id)
+        
+        options = []
+        for p in self.panels:
+            options.append(discord.SelectOption(label=f"Panel in #{p['channel_id']}", description=f"Single Category ID: {p['category_id']}", value=f"panel_{p['message_id']}"))
+        for h in self.hubs:
+            options.append(discord.SelectOption(label=f"Hub in #{h['channel_id']}", description=f"Multi-Category Hub", value=f"hub_{h['message_id']}"))
+            
+        if not options:
+            options.append(discord.SelectOption(label="No Panels/Hubs Found", value="none"))
+
+        select = discord.ui.Select(placeholder="Select a Panel or Hub to delete", options=options[:25], custom_id="manage_panel_select")
+        select.callback = self.on_select
+        self.add_item(select)
+
+    async def on_select(self, interaction: discord.Interaction):
+        val = self.children[0].values[0]
+        if val == "none":
+            await interaction.response.send_message("❌ Nothing to delete.", ephemeral=True)
+            return
+            
+        ptype, msg_id = val.split('_', 1)
+        
+        # Try to delete the discord message
+        # We need to find which channel it was in
+        target_channel_id = None
+        if ptype == "panel":
+            target_channel_id = next((p["channel_id"] for p in self.panels if str(p["message_id"]) == msg_id), None)
+        else:
+            target_channel_id = next((h["channel_id"] for h in self.hubs if str(h["message_id"]) == msg_id), None)
+            
+        if target_channel_id:
+            channel = interaction.guild.get_channel(int(target_channel_id))
+            if channel:
+                try:
+                    msg = await channel.fetch_message(int(msg_id))
+                    await msg.delete()
+                except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                    pass # Message already deleted or missing perms
+                    
+        # Delete from DB
+        if ptype == "panel":
+            self.db.remove_panel(msg_id)
+            await interaction.response.send_message("🗑️ Panel deleted successfully.", ephemeral=True)
+        else:
+            self.db.remove_hub(msg_id)
+            await interaction.response.send_message("🗑️ Hub deleted successfully.", ephemeral=True)
+
+
+class TicketSetupDashboardView(discord.ui.View):
+    def __init__(self, bot: commands.Bot, db: TicketDatabase):
+        super().__init__(timeout=None)
+        self.bot = bot
+        self.db = db
+
+    @discord.ui.button(label="Create New Category", style=discord.ButtonStyle.green, custom_id="setup_new_category", emoji="➕")
+    async def new_category(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(TicketSetupModal(self.bot, self.db))
+
+    @discord.ui.button(label="Spawn Custom Panel", style=discord.ButtonStyle.blurple, custom_id="setup_spawn_panel", emoji="🎨")
+    async def spawn_panel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        categories = self.db.get_categories(interaction.guild.id)
+        if not categories:
+            await interaction.response.send_message("❌ You have no ticket categories yet. Create one first.", ephemeral=True)
+            return
+        await interaction.response.send_modal(TicketHubModal(self.bot, self.db, categories))
+
+    @discord.ui.button(label="Manage Categories", style=discord.ButtonStyle.secondary, custom_id="setup_manage_categories", emoji="🛠️", row=1)
+    async def manage_categories(self, interaction: discord.Interaction, button: discord.ui.Button):
+        categories = self.db.get_categories(interaction.guild.id)
+        if not categories:
+            await interaction.response.send_message("❌ You have no ticket categories yet.", ephemeral=True)
+            return
+        await interaction.response.send_message("Select a category to edit or delete:", view=TicketCategorySelectView(self.bot, self.db, categories), ephemeral=True)
+
+    @discord.ui.button(label="Delete Panels / Hubs", style=discord.ButtonStyle.danger, custom_id="setup_manage_panels", emoji="🗑️", row=1)
+    async def manage_panels(self, interaction: discord.Interaction, button: discord.ui.Button):
+        panels = self.db.get_panels_by_guild(interaction.guild.id)
+        hubs = self.db.get_hubs_by_guild(interaction.guild.id)
+        if not panels and not hubs:
+            await interaction.response.send_message("❌ There are no active panels or hubs in this server.", ephemeral=True)
+            return
+        await interaction.response.send_message("Select a Panel or Hub to permanently delete:", view=TicketPanelSelectView(self.bot, self.db, interaction.guild.id), ephemeral=True)
 
 # ---------------------------------------------------------------------------
 # Cog
@@ -634,13 +957,28 @@ class TicketsCog(commands.Cog):
         for cat in categories:
             self.bot.add_view(TicketPanelView(category_id=cat.id, button_label=cat.button_label, button_emoji=cat.button_emoji))
             self.bot.add_view(TicketControlView(cat))
+            
+        # Re-register all hub views
+        hubs = self.db.get_all_hubs_global()
+        for hub in hubs:
+            hub_cats = [c for c in categories if c.id in hub["category_ids"]]
+            if hub_cats:
+                self.bot.add_view(TicketHubView(hub_cats))
+                
+        # Register dashboard persistent view
+        self.bot.add_view(TicketSetupDashboardView(self.bot, self.db))
 
     ticket_group = app_commands.Group(name="ticket", description="Ticket system commands")
 
-    @ticket_group.command(name="setup", description="Start the interactive ticket setup UI")
+    @ticket_group.command(name="setup", description="Open the Ticket Setup Dashboard")
     @app_commands.default_permissions(manage_guild=True)
     async def setup(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(TicketSetupModal(self.bot, self.db))
+        embed = discord.Embed(
+            title="⚙️ Ticket Setup Dashboard",
+            description="Welcome to the Ticket Setup! Here you can create new ticket categories, or spawn a beautifully customized ticket panel in this channel.",
+            color=0x2b2d31
+        )
+        await interaction.response.send_message(embed=embed, view=TicketSetupDashboardView(self.bot, self.db), ephemeral=True)
 
     @ticket_group.command(name="panel", description="Spawn a ticket creation panel here")
     @app_commands.describe(category_id="The ID of the category to spawn a panel for (use /ticket category_list)")
@@ -657,6 +995,7 @@ class TicketsCog(commands.Cog):
             color=0x2b2d31
         )
         view = TicketPanelView(category_id=cat.id, button_label=cat.button_label, button_emoji=cat.button_emoji)
+        self.bot.add_view(view)  # Bug fix: was missing, buttons wouldn't work after restart
         
         msg = await interaction.channel.send(embed=embed, view=view)
         self.db.add_panel(msg.id, interaction.channel.id, interaction.guild.id, cat.id)
@@ -709,13 +1048,7 @@ class TicketsCog(commands.Cog):
         embed.set_footer(text="Use /ticket setlogchannel again to change it at any time.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# Extended Database method needed
-def get_all_categories_global(self):
-    with self._conn() as conn:
-        rows = conn.execute("SELECT * FROM ticket_categories").fetchall()
-    return [self._row_to_cat(r) for r in rows]
-
-TicketDatabase.get_all_categories_global = get_all_categories_global
+# get_all_categories_global is now defined as a proper method on TicketDatabase above
 
 
 async def setup(bot: commands.Bot):

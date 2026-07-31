@@ -62,8 +62,8 @@ class StickyModal(discord.ui.Modal, title="📌 Set Sticky Message"):
             except Exception:
                 pass
 
-        # Send the sticky as plain text so formatting is preserved exactly
-        bot_msg = await channel.send(f"-# 📌 Sticky\n{message}")
+        # Send the sticky wrapped in a code block as requested
+        bot_msg = await channel.send(f"📌\n```\n{message}\n```")
         self.db.set_sticky(channel.id, interaction.guild.id, message, bot_msg.id)
 
         await interaction.response.send_message(
@@ -176,9 +176,9 @@ class StickyMessagesCog(commands.Cog):
             except (discord.NotFound, discord.Forbidden, Exception):
                 pass
 
-        # Send the new sticky at the bottom as plain text (preserves exact formatting)
+        # Send the new sticky at the bottom wrapped in a code block
         try:
-            new_msg = await channel.send(f"-# 📌 Sticky\n{row['content']}")
+            new_msg = await channel.send(f"📌\n```\n{row['content']}\n```")
             self.db.update_bot_msg_id(channel.id, new_msg.id)
         except (discord.Forbidden, Exception) as e:
             print(f"[Sticky] ❌ Failed to repost sticky in #{channel.name}: {e}")
