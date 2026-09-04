@@ -110,8 +110,8 @@ class AutoReactionsCog(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         """Add reactions to messages in configured channels."""
-        # Ignore DMs, ignore the bot itself
-        if not message.guild or message.author.bot:
+        # Ignore DMs
+        if not message.guild:
             return
 
         reactions = self.db.get_reactions_for_channel(message.guild.id, message.channel.id)
@@ -125,8 +125,10 @@ class AutoReactionsCog(commands.Cog):
             except discord.HTTPException:
                 # Try to resolve as a custom emoji from this guild
                 try:
+                    # Remove colons if the user typed :emoji_name:
+                    clean_name = emoji_str.strip(':')
                     # Custom emoji format: <:name:id> or <a:name:id>
-                    emoji_obj = discord.utils.get(message.guild.emojis, name=emoji_str)
+                    emoji_obj = discord.utils.get(message.guild.emojis, name=clean_name)
                     if emoji_obj:
                         await message.add_reaction(emoji_obj)
                 except Exception:
@@ -144,55 +146,70 @@ class AutoReactionsCog(commands.Cog):
     @react_group.command(name="add", description="Add an auto-reaction emoji to a channel")
     @app_commands.describe(
         channel="The channel to add auto-reactions to",
-        emoji="The emoji to automatically add (e.g. 👍, or a custom server emoji)"
+        emoji="One or more emojis separated by spaces (e.g. 👍 ❤️ 🔥)"
     )
     @app_commands.default_permissions(manage_guild=True)
     async def add_reaction(self, interaction: discord.Interaction, channel: discord.TextChannel, emoji: str):
-        emoji = emoji.strip()
-
-        # Validate the emoji by trying to add a test reaction
-        # We'll try to react to a message we can find, but the simplest way is just to store and let it fail naturally
-        # Instead let's try a quick format validation
-        
-        success = self.db.add_reaction(interaction.guild.id, channel.id, emoji)
-        if not success:
-            await interaction.response.send_message(
-                f"⚠️ `{emoji}` is already an auto-reaction for {channel.mention}.",
-                ephemeral=True
-            )
+        emojis = [e.strip() for e in emoji.split() if e.strip()]
+        if not emojis:
+            await interaction.response.send_message("❌ Please provide at least one emoji.", ephemeral=True)
             return
 
+        added = []
+        skipped = []
+        for e in emojis:
+            success = self.db.add_reaction(interaction.guild.id, channel.id, e)
+            if success:
+                added.append(e)
+            else:
+                skipped.append(e)
+
         current = self.db.get_reactions_for_channel(interaction.guild.id, channel.id)
+        
+        desc = ""
+        if added:
+            desc += f"✅ Added **{' '.join(added)}** to {channel.mention}.\n"
+        if skipped:
+            desc += f"⚠️ Skipped **{' '.join(skipped)}** (already added).\n"
+            
+        desc += f"\n**All reactions for this channel:** {' '.join(current) if current else 'None'}"
+
         embed = discord.Embed(
-            title="✅ Auto-Reaction Added",
-            description=(
-                f"The bot will now react with **{emoji}** to every message in {channel.mention}.\n\n"
-                f"**All reactions for this channel:** {' '.join(current)}"
-            ),
-            color=0x2ECC71
+            title="Auto-Reaction Update",
+            description=desc,
+            color=0x2ECC71 if added else 0xE67E22
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @react_group.command(name="remove", description="Remove a specific auto-reaction from a channel")
     @app_commands.describe(
         channel="The channel to remove the reaction from",
-        emoji="The specific emoji to remove"
+        emoji="One or more specific emojis to remove separated by spaces"
     )
     @app_commands.default_permissions(manage_guild=True)
     async def remove_reaction(self, interaction: discord.Interaction, channel: discord.TextChannel, emoji: str):
-        emoji = emoji.strip()
-        removed = self.db.remove_reaction(interaction.guild.id, channel.id, emoji)
-        if not removed:
-            await interaction.response.send_message(
-                f"❌ `{emoji}` was not found as an auto-reaction for {channel.mention}.",
-                ephemeral=True
-            )
+        emojis = [e.strip() for e in emoji.split() if e.strip()]
+        if not emojis:
+            await interaction.response.send_message("❌ Please provide at least one emoji to remove.", ephemeral=True)
             return
+            
+        removed_list = []
+        not_found = []
+        
+        for e in emojis:
+            removed = self.db.remove_reaction(interaction.guild.id, channel.id, e)
+            if removed:
+                removed_list.append(e)
+            else:
+                not_found.append(e)
 
-        await interaction.response.send_message(
-            f"✅ Removed `{emoji}` from auto-reactions in {channel.mention}.",
-            ephemeral=True
-        )
+        desc = ""
+        if removed_list:
+            desc += f"✅ Removed **{' '.join(removed_list)}** from {channel.mention}.\n"
+        if not_found:
+            desc += f"❌ Not found: **{' '.join(not_found)}**\n"
+            
+        await interaction.response.send_message(desc, ephemeral=True)
 
     @react_group.command(name="clear", description="Remove ALL auto-reactions from a channel")
     @app_commands.describe(channel="The channel to clear all auto-reactions from")

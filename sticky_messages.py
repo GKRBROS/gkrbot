@@ -19,6 +19,7 @@ from discord.ext import commands
 import sqlite3
 import os
 from typing import Optional
+from gkr_ui import C, embed_error, embed_success, embed_info
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "sticky_messages.sqlite3")
 
@@ -67,7 +68,7 @@ class StickyModal(discord.ui.Modal, title="📌 Set Sticky Message"):
         self.db.set_sticky(channel.id, interaction.guild.id, message, bot_msg.id)
 
         await interaction.response.send_message(
-            f"✅ Sticky message set for {channel.mention}! It will always stay at the bottom.",
+            embed=embed_success("Sticky Set", f"Sticky message set for {channel.mention}! It will always stay at the bottom."),
             ephemeral=True
         )
 
@@ -146,13 +147,17 @@ class StickyMessagesCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        # Ignore DMs, ignore the bot itself
-        if not message.guild or message.author.bot:
+        # Ignore DMs
+        if not message.guild:
             return
 
         channel_id = message.channel.id
         row = self.db.get_sticky(channel_id)
         if not row:
+            return
+
+        # Prevent infinite loops by ignoring the sticky message itself
+        if message.author.id == self.bot.user.id and message.content == f"📌\n```\n{row['content']}\n```":
             return
 
         # If already cooling down, cancel previous pending task and start fresh
@@ -165,13 +170,20 @@ class StickyMessagesCog(commands.Cog):
 
     async def _repost_sticky(self, channel: discord.TextChannel, row):
         """Delete the old sticky bot message and send a fresh one at the bottom."""
-        await asyncio.sleep(STICKY_COOLDOWN)
+        try:
+            await asyncio.sleep(STICKY_COOLDOWN)
+        except asyncio.CancelledError:
+            return  # Task was cancelled by a newer message, just exit cleanly.
+
+        # Remove cooldown entry since we're executing
+        self._cooldown.pop(channel.id, None)
 
         # Delete old sticky message if it exists
         old_msg_id = row["bot_msg_id"]
         if old_msg_id:
             try:
-                old_msg = await channel.fetch_message(int(old_msg_id))
+                # Use partial message to avoid an expensive API call (fetch_message)
+                old_msg = channel.get_partial_message(int(old_msg_id))
                 await old_msg.delete()
             except (discord.NotFound, discord.Forbidden, Exception):
                 pass
@@ -182,9 +194,6 @@ class StickyMessagesCog(commands.Cog):
             self.db.update_bot_msg_id(channel.id, new_msg.id)
         except (discord.Forbidden, Exception) as e:
             print(f"[Sticky] ❌ Failed to repost sticky in #{channel.name}: {e}")
-
-        # Remove cooldown entry
-        self._cooldown.pop(channel.id, None)
 
     # ── Slash Commands ────────────────────────────────────────────────────────
 
@@ -206,7 +215,7 @@ class StickyMessagesCog(commands.Cog):
         channel = interaction.channel
         row = self.db.get_sticky(channel.id)
         if not row:
-            await interaction.response.send_message("❌ No sticky message is set for this channel.", ephemeral=True)
+            await interaction.response.send_message(embed=embed_error("No sticky message is set for this channel."), ephemeral=True)
             return
 
         # Delete the pinned bot message
@@ -218,19 +227,19 @@ class StickyMessagesCog(commands.Cog):
                 pass
 
         self.db.remove_sticky(channel.id)
-        await interaction.response.send_message("✅ Sticky message removed from this channel.", ephemeral=True)
+        await interaction.response.send_message(embed=embed_success("Removed", "Sticky message removed from this channel."), ephemeral=True)
 
     @sticky_group.command(name="view", description="Preview the current sticky message for this channel")
     async def sticky_view(self, interaction: discord.Interaction):
         row = self.db.get_sticky(interaction.channel.id)
         if not row:
-            await interaction.response.send_message("❌ No sticky message is set for this channel.", ephemeral=True)
+            await interaction.response.send_message(embed=embed_error("No sticky message is set for this channel."), ephemeral=True)
             return
 
         embed = discord.Embed(
             title=f"📌 Sticky for #{interaction.channel.name}",
             description=row["content"],
-            color=0xFAA61A,
+            color=C.BRAND,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -239,7 +248,7 @@ class StickyMessagesCog(commands.Cog):
     async def sticky_list(self, interaction: discord.Interaction):
         rows = self.db.get_all_for_guild(interaction.guild.id)
         if not rows:
-            await interaction.response.send_message("❌ No sticky messages set in this server.", ephemeral=True)
+            await interaction.response.send_message(embed=embed_error("No sticky messages set in this server."), ephemeral=True)
             return
 
         lines = []
@@ -252,7 +261,7 @@ class StickyMessagesCog(commands.Cog):
         embed = discord.Embed(
             title=f"📌 Sticky Messages in {interaction.guild.name}",
             description="\n".join(lines),
-            color=0xFAA61A,
+            color=C.BRAND,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

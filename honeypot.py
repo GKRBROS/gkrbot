@@ -13,6 +13,8 @@ import sqlite3
 import os
 import datetime
 
+from gkr_ui import C
+
 DB_PATH = os.path.join(os.path.dirname(__file__), "honeypot.sqlite3")
 
 
@@ -129,9 +131,7 @@ class HoneypotCog(commands.Cog):
         if not trap_channel_id or message.channel.id != trap_channel_id:
             return
 
-        # Ignore admins/mods
-        if message.author.guild_permissions.manage_messages:
-            return
+
 
         # Delete the triggering message immediately
         try:
@@ -197,7 +197,7 @@ class HoneypotCog(commands.Cog):
         alert_embed.add_field(name="📨 Message Sent", value=f"||{msg_content}||", inline=False)
         alert_embed.set_footer(text=f"#{message.channel.name} • {message.guild.name}")
 
-        # Send to configured log channel first, fall back to trap channel
+        # Send to configured log channel first, or fallback to ServerLogs security channel, then trap channel
         _, _, log_channel_id = self.db.get_trap_info(message.guild.id)
         sent_to_log = False
 
@@ -209,6 +209,29 @@ class HoneypotCog(commands.Cog):
                     sent_to_log = True
                 except (discord.Forbidden, discord.HTTPException):
                     pass
+
+        # Dispatch automatically to server_logs security channel
+        try:
+            server_logs_cog = self.bot.get_cog("ServerLogsCog")
+            if server_logs_cog and hasattr(server_logs_cog, "logger"):
+                desc = (
+                    f"**User:** {message.author.mention} (`{message.author.id}`)\n"
+                    f"**Offense:** #{offense_count}\n"
+                    f"**Action:** {action_taken}\n"
+                    f"**Message:** ||{msg_content}||\n"
+                    f"**Channel:** {message.channel.mention}"
+                )
+                await server_logs_cog.logger.dispatch_security(
+                    message.guild,
+                    "security_honeypot",
+                    "🚨 Spam Trap / Honeypot Triggered",
+                    desc,
+                    color=0xFF0000,
+                    thumbnail_url=message.author.display_avatar.url
+                )
+                sent_to_log = True
+        except Exception as e:
+            print(f"[Honeypot] server_logs dispatch failed: {e}")
 
         if not sent_to_log:
             try:
@@ -250,45 +273,152 @@ class HoneypotCog(commands.Cog):
         description="Manage the Honeypot (Spam Trap) Channel system"
     )
 
-    @hp_group.command(name="setchannel", description="Set a channel as the Honeypot/Spam Trap")
+    @hp_group.command(name="setup", description="Auto-create a Honeypot/Spam Trap channel with the bait message")
+    @app_commands.describe(
+        name="Name for the honeypot channel (default: 🚨 ꜱᴘᴀᴍ ᴄʜᴇᴄᴋ)",
+        category="Category to place the channel in (optional)"
+    )
     @app_commands.default_permissions(manage_guild=True)
-    async def hp_setchannel(self, interaction: discord.Interaction, channel: discord.TextChannel):
+    async def hp_setup(
+        self,
+        interaction: discord.Interaction,
+        name: str = "🚨・ꜱᴘᴀᴍ-ᴄʜᴇᴄᴋ",
+        category: discord.CategoryChannel = None
+    ):
+        await interaction.response.defer(ephemeral=True)
+
+        guild = interaction.guild
+        bot_member = guild.get_member(self.bot.user.id)
+
+        # ── Check if a honeypot already exists ──────────────────────────────
+        existing_id = self.db.get_channel(guild.id)
+        if existing_id:
+            existing_ch = guild.get_channel(existing_id)
+            if existing_ch:
+                embed = discord.Embed(
+                    title="⚠️ Honeypot Already Active",
+                    description=(
+                        f"A honeypot is already set up at {existing_ch.mention}.\n\n"
+                        "Run `/honeypot remove` first if you want to reset it."
+                    ),
+                    color=0xFF9900
+                )
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                return
+
+        # ── Build permission overwrites ──────────────────────────────────────
+        # @everyone: can VIEW + SEND (so bots/raiders are lured in)
+        # Bot itself: full permissions to manage messages
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                read_message_history=True,
+                add_reactions=False,
+                attach_files=False,
+                embed_links=False,
+            ),
+            bot_member: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                manage_messages=True,
+                read_message_history=True,
+                manage_channels=True,
+            ),
+        }
+
+        # ── Create the channel ───────────────────────────────────────────────
+        try:
+            trap_channel = await guild.create_text_channel(
+                name=name,
+                topic="🚨 Spam Trap — Any message sent here will result in automatic punishment.",
+                overwrites=overwrites,
+                category=category,
+                reason=f"Honeypot setup by {interaction.user}"
+            )
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "❌ I don't have permission to create channels. Please give me **Manage Channels** permission.",
+                ephemeral=True
+            )
+            return
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to create channel: `{e}`", ephemeral=True)
+            return
+
+        # ── Post the bait embed ──────────────────────────────────────────────
+        total = self.db.get_total_triggered(guild.id)
+        kicked = self.db.get_total_kicked(guild.id)
+
         trap_embed = discord.Embed(
-            title="⚠️ SPAM TRAP ⚠️",
-            description="**DO NOT SEND MESSAGES IN THIS CHANNEL**\n\n"
-                        "This channel is used to catch spam bots.\n\n"
-                        "**Punishment if you message here:**\n"
-                        "• 1st offense → 10 min timeout\n"
-                        "• 2nd offense → 1 day timeout\n"
-                        "• 3rd+ offense → Kicked",
-            color=0x2b2d31
+            title=f"🛡️  {guild.name} — Security Verification",
+            description=(
+                f"**Welcome to {guild.name}**\n\n"
+                "> 🔒 **Do NOT send any messages here.**\n"
+                "> This channel is an automated security trap for spam bots.\n\n"
+                "**Automated violation ladder:**\n"
+                "• 1st message → 10 minute timeout\n"
+                "• 2nd message → 24 hour timeout\n"
+                "• 3rd message → Server kick"
+            ),
+            color=C.NEUTRAL
         )
-        total = self.db.get_total_triggered(interaction.guild.id)
-        kicked = self.db.get_total_kicked(interaction.guild.id)
+        trap_embed.set_footer(text=f"🛡️ {guild.name} Security  •  ꜱᴘᴀᴍ ᴄʜᴇᴄᴋ ᴀᴄᴛɪᴠᴇ")
+
         view = discord.ui.View()
-        btn1 = discord.ui.Button(label=f"⚠️ Users Trapped: {total}", style=discord.ButtonStyle.danger, disabled=True)
-        btn2 = discord.ui.Button(label=f"🔨 Kicked: {kicked}", style=discord.ButtonStyle.secondary, disabled=True)
+        btn1 = discord.ui.Button(
+            label=f"⚠️ Users Trapped: {total}",
+            style=discord.ButtonStyle.danger,
+            disabled=True
+        )
+        btn2 = discord.ui.Button(
+            label=f"🔨 Kicked: {kicked}",
+            style=discord.ButtonStyle.secondary,
+            disabled=True
+        )
         view.add_item(btn1)
         view.add_item(btn2)
 
         try:
-            trap_msg = await channel.send(embed=trap_embed, view=view)
-            self.db.set_channel(interaction.guild.id, channel.id, trap_msg.id)
+            trap_msg = await trap_channel.send(embed=trap_embed, view=view)
         except discord.Forbidden:
-            await interaction.response.send_message("❌ I lack permissions to send messages in that channel.", ephemeral=True)
+            await trap_channel.delete(reason="Honeypot setup failed — no send permission")
+            await interaction.followup.send(
+                "❌ Channel was created but I couldn't send a message in it. Channel removed. Check my permissions.",
+                ephemeral=True
+            )
             return
 
-        embed = discord.Embed(
-            title="🚨 Honeypot Channel Set",
-            description=f"{channel.mention} is now the Spam Trap channel.\n\n"
-                        "Any normal user who types here will be punished:\n"
-                        "• **1st Offense:** 10m Timeout\n"
-                        "• **2nd Offense:** 1d Timeout\n"
-                        "• **3rd+ Offense:** Kicked\n\n"
-                        "💡 Use `/honeypot setlog #channel` to send alerts to a mod log instead of the trap channel.",
-            color=0xE74C3C
+        # ── Save to DB ───────────────────────────────────────────────────────
+        self.db.set_channel(guild.id, trap_channel.id, trap_msg.id)
+
+        # ── Confirmation to admin ────────────────────────────────────────────
+        confirm_embed = discord.Embed(
+            title="✅  Honeypot Channel Created!",
+            description=(
+                f"🪤 **Trap channel:** {trap_channel.mention}\n\n"
+                "**What happens when someone types there:**\n"
+                "• **1st Offense:** 10 min timeout\n"
+                "• **2nd Offense:** 1 day timeout\n"
+                "• **3rd+ Offense:** Kicked\n\n"
+                "The trap embed + counter are now live in that channel.\n\n"
+                "💡 **Next step:** Run `/honeypot setlog #mod-logs` to redirect "
+                "alert notifications to your mod log channel."
+            ),
+            color=0x00CC66
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        confirm_embed.add_field(
+            name="📋 Channel Details",
+            value=(
+                f"**Name:** `{trap_channel.name}`\n"
+                f"**ID:** `{trap_channel.id}`\n"
+                f"**Category:** {category.name if category else 'None (root)'}"
+            ),
+            inline=False
+        )
+        confirm_embed.set_footer(text="GKR Security  •  Honeypot System")
+        await interaction.followup.send(embed=confirm_embed, ephemeral=True)
+
 
     @hp_group.command(name="setlog", description="Set a channel to receive honeypot alert logs")
     @app_commands.default_permissions(manage_guild=True)
@@ -321,9 +451,57 @@ class HoneypotCog(commands.Cog):
         embed.add_field(name="Next Punishment if triggered again", value=next_action, inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+    @hp_group.command(name="remove", description="Delete the honeypot channel and remove it from the system")
+    @app_commands.default_permissions(administrator=True)
+    async def hp_remove(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+
+        channel_id = self.db.get_channel(guild.id)
+        if not channel_id:
+            try:
+                await interaction.followup.send(
+                    "❌ No honeypot channel is set up for this server.",
+                    ephemeral=True
+                )
+            except discord.HTTPException:
+                pass
+            return
+
+        channel = guild.get_channel(channel_id)
+        deleted_name = f"`#{channel.name}`" if channel else f"`(ID: {channel_id})`"
+
+        # 1. Clear from DB first
+        with self.db._conn() as conn:
+            conn.execute("DELETE FROM channels WHERE guild_id = ?", (str(guild.id),))
+            conn.commit()
+
+        # 2. Send confirmation to user FIRST before deleting the channel
+        embed = discord.Embed(
+            title="🗑️  Honeypot Removed",
+            description=(
+                f"The honeypot channel {deleted_name} has been **deleted** and removed from the system.\n\n"
+                "Run `/honeypot setup` to create a new one."
+            ),
+            color=0xFF4444
+        )
+        embed.set_footer(text="GKR Security  •  Honeypot System")
+        try:
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.HTTPException:
+            try:
+                await interaction.user.send(embed=embed)
+            except discord.HTTPException:
+                pass
+
+        # 3. Delete the Discord channel if it exists
+        if channel:
+            try:
+                await channel.delete(reason=f"Honeypot removed by {interaction.user}")
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
+                print(f"[Honeypot] Could not delete channel {channel_id}: {e}")
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(HoneypotCog(bot))
     print("🚨 Honeypot system loaded!")
-
-

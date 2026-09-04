@@ -5,6 +5,7 @@ import aiohttp
 from aiohttp import web
 from discord.ext import commands
 import discord
+from gkr_ui import embed_success, embed_error, embed_info, C
 
 # Load credentials from environment (they were added to .env by user)
 CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
@@ -224,10 +225,11 @@ async def handle_stream_alerts_post(request: web.Request):
             creator_id=creator_id,
             notification_channel_id=int(channel_id),
         )
-        if platform == "youtube" and hasattr(stream_cog, "yt_notifier") and getattr(stream_cog, "yt_notifier"):
+        if platform == "youtube" and hasattr(stream_cog, "yt_notifier") and stream_cog.yt_notifier is not None:
             try:
-                stream_cog.yt_notifier.subscribe([creator_id])
-                print(f"[DashboardAPI] ytnoti subscribed to {creator_id}")
+                import asyncio
+                asyncio.create_task(stream_cog.yt_notifier.subscribe([creator_id]))
+                print(f"[DashboardAPI] ytnoti subscribe task created for {creator_id}")
             except Exception as e:
                 print(f"[DashboardAPI] Failed to subscribe ytnoti: {e}")
                 

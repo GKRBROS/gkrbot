@@ -68,6 +68,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import os
+import signal
 import datetime
 import asyncio
 import random
@@ -219,7 +220,7 @@ def get_role_menu_gif():
         try:
             with open(gif_file_path, 'r') as f:
                 return f.read().strip()
-        except:
+        except Exception:
             pass
             
     # Default GIF if none is set
@@ -247,6 +248,7 @@ def load_message_id():
 
 # Bot setup with intents
 intents = discord.Intents.default()
+intents.voice_states = True  # Required for Discord voice connection state handshake
 intents.members = True  # Required for member events (privileged intent)
 intents.guilds = True
 intents.message_content = True  # Required for reading message content (privileged intent)
@@ -255,6 +257,7 @@ intents.reactions = True  # Required for reaction events
 bot_kwargs = {
     'command_prefix': '!',
     'intents': intents,
+    'allowed_mentions': discord.AllowedMentions(everyone=False, roles=False, users=True),
 }
 
 if APPLICATION_ID:
@@ -266,8 +269,116 @@ bot = commands.Bot(**bot_kwargs)
 tree = bot.tree
 
 
+# ── Graceful Shutdown System for Pterodactyl (SIGTERM / SIGINT) ───────────────
+_is_shutting_down = False
+_shutdown_lock = asyncio.Lock()
+
+async def graceful_shutdown(signal_name: str = "SIGTERM"):
+    """
+    Perform an orderly, graceful shutdown of the Discord bot and all subsystems.
+    Handles SIGTERM (Pterodactyl server stop/restart) and SIGINT (manual stop).
+    """
+    global _is_shutting_down
+    if _is_shutting_down:
+        return
+    _is_shutting_down = True
+
+    print(f"\n[Shutdown] {signal_name} received")
+
+    # Step 1: Stop all active music playback and close Wavelink nodes
+    print("[Shutdown] Stopping music players...")
+    try:
+        music_cog = bot.get_cog("MusicCog")
+        if music_cog and hasattr(music_cog, "guild_players"):
+            for guild_id, gp in list(music_cog.guild_players.items()):
+                try:
+                    guild = bot.get_guild(guild_id)
+                    if guild and guild.voice_client:
+                        if hasattr(guild.voice_client, "stop"):
+                            await guild.voice_client.stop()
+                        if hasattr(guild.voice_client, "queue"):
+                            guild.voice_client.queue.clear()
+                except Exception as e:
+                    print(f"[Shutdown] Error stopping music player for guild {guild_id}: {e}")
+            music_cog.guild_players.clear()
+    except Exception as e:
+        print(f"[Shutdown] Error in music cleanup: {e}")
+
+    try:
+        import wavelink
+        if hasattr(wavelink, "Pool") and wavelink.Pool.nodes:
+            await wavelink.Pool.close()
+            print("[Shutdown] Wavelink pool closed.")
+    except Exception as e:
+        print(f"[Shutdown] Error closing wavelink pool: {e}")
+
+    # Step 2: Disconnect the bot from every Discord voice channel
+    print("[Shutdown] Disconnecting voice clients...")
+    for vc in list(bot.voice_clients):
+        try:
+            if vc.is_connected():
+                await vc.disconnect(force=True)
+        except Exception as e:
+            print(f"[Shutdown] Error disconnecting voice client: {e}")
+
+    # Step 3: Unload all extensions to trigger each cog's cog_unload() cleanly.
+    print("[Shutdown] Cancelling background tasks...")
+    for ext_name in list(bot.extensions.keys()):
+        try:
+            await bot.unload_extension(ext_name)
+        except Exception:
+            pass
+
+    # Step 4: Close the Discord bot connection cleanly.
+    print("[Shutdown] Closing Discord connection...")
+    try:
+        if not bot.is_closed():
+            await commands.Bot.close(bot)
+    except Exception as e:
+        print(f"[Shutdown] Error closing bot: {e}")
+
+    print("[Shutdown] Graceful shutdown complete")
+
+
+def setup_signal_handlers(loop: asyncio.AbstractEventLoop):
+    """
+    Register signal handlers for SIGTERM (Pterodactyl) and SIGINT (Ctrl+C).
+    Uses asyncio native loop.add_signal_handler on POSIX/Linux, with Windows signal fallback.
+    """
+    for sig_name in ("SIGTERM", "SIGINT"):
+        sig = getattr(signal, sig_name, None)
+        if sig is not None:
+            try:
+                # POSIX / Linux / Pterodactyl container native asyncio handler
+                loop.add_signal_handler(
+                    sig,
+                    lambda s=sig_name: asyncio.create_task(graceful_shutdown(s))
+                )
+            except (NotImplementedError, RuntimeError, AttributeError):
+                # Fallback for Windows ProactorEventLoop or non-main threads
+                try:
+                    signal.signal(
+                        sig,
+                        lambda s, f, s_name=sig_name: asyncio.run_coroutine_threadsafe(
+                            graceful_shutdown(s_name), loop
+                        )
+                    )
+                except Exception:
+                    pass
+
+
+# NOTE: We do NOT override bot.close here.
+# The graceful_shutdown coroutine is triggered directly by signal handlers.
+# Overriding bot.close caused infinite recursion and CancelledError crashes.
+
+
 async def setup_hook():
     print("🔄 Running setup_hook...")
+    try:
+        loop = asyncio.get_running_loop()
+        setup_signal_handlers(loop)
+    except Exception as e:
+        print(f"⚠️ Warning: Could not register signal handlers in setup_hook: {e}")
 
     # ── Load all Cog extensions ───────────────────────────────────────────────
     extensions = [
@@ -276,9 +387,11 @@ async def setup_hook():
         "server_logs",
         "birthdays",
         "bot_status",
+        "bot_profile",
         "stream_alerts",
         "tickets",
         "protection",
+        "imageinfo",
         "temp_vc",
         "server_template",
         "server_backup",
@@ -289,6 +402,7 @@ async def setup_hook():
         "invite_tracker",
         "role_sync",
         "dev_global_logs",
+        "auto_backup",
         "music",
         "self_roles",
         "role_restore",
@@ -296,6 +410,19 @@ async def setup_hook():
         "auto_reactions",
         "anti_hacked",
         "honeypot",
+        "voice_analytics",   # V3: Voice XP, Coins, Levels, Achievements
+        "moderation",        # V3: Mute, Unmute, Staff Roles, /config, /status
+        "server_activity",   # V3: Text & Game Activity
+        "security",          # V3: Advanced Security & Anti-Nuke
+        "economy",           # V3: Centralized Economy System
+        "giveaways",         # V3: Giveaway System
+        "server_events",     # V3: Server Events & RSVP
+        "custom_commands",   # V3: Custom Commands (!name)
+        "community",         # V3: Verification & Suggestions
+        "profiles",          # V3: Member Profiles & Achievements
+        "festivals",         # New: Festival Announcements
+        "poll",              # New: Advanced Interactive Polling System
+        "ai_system",         # New: Central Self-Hosted & Zero-API AI System
     ]
     for ext in extensions:
         try:
@@ -452,7 +579,7 @@ async def ping_role(interaction: discord.Interaction, role: discord.Role, messag
         if not was_mentionable:
             try:
                 await role.edit(mentionable=False)
-            except:
+            except Exception:
                 pass
 
 # --- UTILITY SLASH COMMANDS ---
@@ -560,56 +687,6 @@ class SayModal(discord.ui.Modal, title="✉️ Send a Message"):
             await interaction.response.send_message(f"✅ Sent message to {self.target_channel.mention}.", ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f"❌ Failed to send message: {e}", ephemeral=True)
-
-
-class DmModal(discord.ui.Modal, title="📨 Direct Message"):
-    """Popup dialog capturing multi-line DM body for /dm."""
-    message_text = discord.ui.TextInput(
-        label="Message",
-        style=discord.TextStyle.paragraph,
-        placeholder="Type or paste your DM here.\nNewlines and spacing are fully preserved.",
-        required=True,
-        max_length=2000,
-    )
-
-    def __init__(self, user: discord.Member | None, role: discord.Role | None):
-        super().__init__()
-        self._user = user
-        self._role = role
-
-    async def on_submit(self, interaction: discord.Interaction) -> None:
-        message = str(self.message_text)
-        await interaction.response.defer(ephemeral=True)
-
-        if self._user:
-            try:
-                await self._user.send(message)
-                await interaction.followup.send(f"✅ Successfully sent DM to {self._user.mention}.", ephemeral=True)
-            except discord.Forbidden:
-                await interaction.followup.send(f"❌ Failed to DM {self._user.mention}. (User has DMs closed or has blocked the bot)", ephemeral=True)
-            except Exception as e:
-                await interaction.followup.send(f"❌ Error sending DM to {self._user.mention}: {e}", ephemeral=True)
-            return
-
-        if self._role:
-            members = self._role.members
-            if not members:
-                await interaction.followup.send(f"⚠️ No members found with the role {self._role.mention}.", ephemeral=True)
-                return
-            await interaction.followup.send(f"⏳ Sending DMs to {len(members)} members with role {self._role.name}...", ephemeral=True)
-            success = 0
-            failed = 0
-            for member in members:
-                if member.bot:
-                    continue
-                try:
-                    await member.send(message)
-                    success += 1
-                    await asyncio.sleep(0.5)
-                except Exception:
-                    failed += 1
-            await interaction.followup.send(f"🎯 DM campaign complete: {success} sent, {failed} failed.", ephemeral=True)
-
 
 class AnnouncementModal(discord.ui.Modal, title="📢 Create Announcement"):
     """Popup dialog capturing title + multi-line body for /announcement."""
@@ -820,25 +897,6 @@ async def say(
         return
     await interaction.response.send_modal(SayModal(target_channel, ping_role, format))
 
-
-@tree.command(name="dm", description="Send a direct message (DM) to a specific user or everyone with a role")
-@app_commands.default_permissions(manage_guild=True)
-@app_commands.describe(
-    user="The specific user to DM (optional)",
-    role="All members with this role to DM (optional)"
-)
-async def dm(
-    interaction: discord.Interaction,
-    user: discord.Member | None = None,
-    role: discord.Role | None = None
-) -> None:
-    """Open a multi-line DM modal — newlines and spacing are fully preserved."""
-    if not user and not role:
-        await interaction.response.send_message("❌ You must specify either a user or a role to DM.", ephemeral=True)
-        return
-    await interaction.response.send_modal(DmModal(user, role))
-
-
 @tree.command(name="announcement", description="Create a beautiful, formatted Embed announcement")
 @app_commands.default_permissions(manage_messages=True)
 @app_commands.describe(
@@ -927,12 +985,7 @@ async def pubg(
     await send_with_role_ping(interaction, interaction, content, role)
 
 
-# Activity rotation list - Simple and focused activities
-base_activities = [
-    # Only two core activities
-    {"type": discord.ActivityType.watching, "name": "all members 👀"},
-    {"type": discord.ActivityType.playing, "name": "helping players 🤝"}
-]
+
 
 async def auto_setup_reaction_roles():
     """Automatically create a reaction role message in the specified channel on bot startup"""
@@ -1079,16 +1132,20 @@ def has_gkr_role(member: discord.Member) -> bool:
 
 @tasks.loop(minutes=10)
 async def nickname_sync_task():
-    """Background task to sync nicknames for GKR role members across all guilds."""
+    """Background task to sync nicknames for GKR role members — HOME GUILD ONLY."""
     total_changed = 0
     total_failed = 0
     
     for guild in bot.guilds:
+        # ── GKR nickname sync only runs in the home GKR server ──────────────
+        if guild.id != GUILD_ID:
+            continue
+
         roles = []
-        if guild.id == GUILD_ID:
-            br = guild.get_role(BOT_ROLE_ID)
-            if br:
-                roles.append(br)
+        br = guild.get_role(BOT_ROLE_ID)
+        if br:
+            roles.append(br)
+        # Also catch any role literally named "GKR" in the home guild
         for r in guild.roles:
             if r.name.upper() == "GKR" and r not in roles:
                 roles.append(r)
@@ -1102,7 +1159,7 @@ async def nickname_sync_task():
         
         for role in roles:
             for member in role.members:
-                if member.id in synced_members:
+                if member.id in synced_members or member.bot:
                     continue
                 synced_members.add(member.id)
                 if member.nick != "GKR":
@@ -1120,7 +1177,7 @@ async def nickname_sync_task():
         total_failed += failed
         
     if total_changed > 0:
-        print(f"🎯 Global Nickname sync complete: {total_changed} changed, {total_failed} failed")
+        print(f"🎯 GKR Nickname sync complete: {total_changed} changed, {total_failed} failed")
         print('='*50)
 
 
@@ -1227,7 +1284,8 @@ async def on_member_join(member):
     except Exception:
         pass
 
-    if has_gkr_role(member):
+    # ── GKR nickname sync: home guild only ──────────────────────────────────
+    if guild.id == GUILD_ID and has_gkr_role(member) and not member.bot:
         if member.nick != "GKR":
             try:
                 await member.edit(nick="GKR")
@@ -1250,7 +1308,8 @@ async def on_member_update(before, after):
 
     has_gkr = has_gkr_role(after)
 
-    if has_gkr and not had_gkr:
+    # ── GKR nickname sync: home guild only ──────────────────────────────────
+    if after.guild.id == GUILD_ID and has_gkr and not had_gkr and not after.bot:
         if after.nick != "GKR":
             try:
                 await after.edit(nick="GKR")
@@ -1285,29 +1344,39 @@ async def on_guild_channel_update(before, after):
     except Exception as e:
         print(f"❌ Font Sync channel update handler failed: {e}")
 
-@tasks.loop(minutes=1)  # Changed from 5 seconds to 1 minute to respect Discord rate limits
+@tasks.loop(minutes=5)  # Changed to 5 minutes to drastically reduce CPU and API usage
 async def rotate_activity():
-    """Rotate bot activities with simple descriptions"""
+    """Rotate bot activities with live stats for a premium feel"""
     
-    # Simply alternate between the two defined activities
-    activity_data = random.choice(base_activities)
-    activity = discord.Activity(type=activity_data["type"], name=activity_data["name"])
+    total_members = sum(g.member_count for g in bot.guilds if g.member_count)
     
+    activities = [
+        discord.Activity(type=discord.ActivityType.watching, name=f"{total_members:,} Members 👥"),
+        discord.Activity(type=discord.ActivityType.playing, name="GKR ⚡ | /help"),
+        discord.Activity(type=discord.ActivityType.competing, name="GKR Leaderboards 🏆"),
+        discord.Activity(type=discord.ActivityType.listening, name="Slash Commands Only 💬"),
+        discord.Activity(type=discord.ActivityType.watching, name="Over The GKR Family 🛡️")
+    ]
+    
+    activity = random.choice(activities)
     await bot.change_presence(activity=activity)
     
     # Occasional logging to avoid console spam
     if random.randint(1, 12) == 1:  # Only log every ~12th change to reduce console spam
         print(f"🔄 Activity changed to: {activity.name}")
 
-@tasks.loop(hours=1)  # Run nickname sync every hour
+@tasks.loop(hours=1)
 async def periodic_nickname_sync():
-    """Periodically sync nicknames to catch any missed changes across all servers"""
+    """Periodically sync nicknames — HOME GUILD ONLY."""
     for guild in bot.guilds:
+        # ── Only run in the home GKR server ─────────────────────────────────
+        if guild.id != GUILD_ID:
+            continue
+
         roles = []
-        if guild.id == GUILD_ID:
-            br = guild.get_role(BOT_ROLE_ID)
-            if br:
-                roles.append(br)
+        br = guild.get_role(BOT_ROLE_ID)
+        if br:
+            roles.append(br)
         for r in guild.roles:
             if r.name.upper() == "GKR" and r not in roles:
                 roles.append(r)
@@ -2249,10 +2318,17 @@ async def simple_reaction_roles(ctx):
     await ctx.send(f"✅ Simple reaction roles set up! Message ID: {REACTION_MESSAGE_ID}")
     print(f"🎮 Simple reaction roles message created. ID: {REACTION_MESSAGE_ID}")
 
+async def main():
+    """Main asynchronous entrypoint."""
+    async with bot:
+        loop = asyncio.get_running_loop()
+        setup_signal_handlers(loop)
+        await bot.start(TOKEN)
+
 # Run the bot
 if __name__ == "__main__":
     try:
-        # Start HTTP server for Render in a separate thread
+        # Start HTTP server for Render in a separate daemon thread
         server_thread = Thread(target=start_http_server)
         server_thread.daemon = True
         server_thread.start()
@@ -2266,15 +2342,13 @@ if __name__ == "__main__":
             print(f"🎮 Reaction roles channel ID: {REACTION_CHANNEL_ID}")
         else:
             print("⚠️ Reaction roles channel not set. Use REACTION_CHANNEL_ID in .env")
-        
-        # Load FiveM cog
-        # bot.load_extension("fivem")
-        # print("🎮 FiveM integration loaded")
-        
         print('='*50)
         
-        # Run the bot
-        bot.run(TOKEN)
+        # Run the async main entrypoint with graceful shutdown handling
+        try:
+            asyncio.run(main())
+        except (KeyboardInterrupt, SystemExit):
+            pass
     except discord.PrivilegedIntentsRequired as e:
         print('='*50)
         print("❌ ERROR: Privileged Intents Required")

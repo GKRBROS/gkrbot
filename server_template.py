@@ -32,6 +32,7 @@ import sqlite3
 from typing import Optional
 
 import discord
+from gkr_ui import embed_success, embed_error, embed_info, C
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv

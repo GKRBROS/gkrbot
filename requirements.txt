@@ -12,6 +12,10 @@ Pillow>=10.0.0
 # HTTP Requests
 requests>=2.31.0
 aiohttp>=3.9.0
+beautifulsoup4>=4.12.0
+
+# Festivals & Dates
+holidays>=0.100.0
 
 # Music Bot Dependencies
 wavelink>=3.4.0
@@ -31,7 +35,9 @@ spotipy>=2.23.0
 
 psutil
 
-# Stream Alerts (YouTube, Twitch, Kick) — uses aiohttp already listed above
+# Stream Alerts (YouTube live detection via yt-dlp, Twitch, Kick)
+yt-dlp>=2024.1.0
+curl_cffi>=0.16.0
 # Add these keys to your .env file:
 #   YOUTUBE_API_KEY=your_key_here
 #   TWITCH_CLIENT_ID=your_id_here

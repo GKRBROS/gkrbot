@@ -1,12 +1,19 @@
 """
-server_logs.py
-──────────────
-Comprehensive A-Z Discord server event logging.
-  • Configurable log channel per guild  (/logs channel)
-  • Master on/off toggle               (/logs toggle)
-  • Per-event enable/disable           (/logs events)
-  • Logs commands used by any user/bot
-  • Modern, color-coded embed design
+server_logs.py — Comprehensive Discord Server Audit & Event Logging.
+
+Structured with the GKR Centralized Design System:
+  • /logs setup — Automatic server log category and channel provisioning
+    (creates category-based private log channels formatted in small caps with emojis)
+  • Comprehensive event catalogue (members, messages, channels, roles, voice,
+    server, threads, commands, emojis, stickers, events, stages, webhooks, automod)
+  • Uses unified `create_audit_embed()` answering:
+      1. What happened?
+      2. To whom / what?
+      3. Who performed it?
+      4. What changed?
+  • Zero raw database table/internal ID dumps
+  • Standardized 12-hour `<t:TIMESTAMP:t>` and relative timestamps
+  • Per-category custom routing & interactive configuration
 """
 
 from __future__ import annotations
@@ -15,21 +22,60 @@ import asyncio
 import json
 import os
 import sqlite3
-import textwrap
-from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List, Dict, Tuple, Any, Union
 
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-# ─── Database ─────────────────────────────────────────────────────────────────
+from gkr_ui import (
+    C,
+    create_audit_embed,
+    embed_success,
+    embed_error,
+    embed_info,
+    embed_warning,
+    fmt_rel,
+    fmt_ts,
+)
+
+# ─── Database Path ────────────────────────────────────────────────────────────
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "font_sync.sqlite3")
 
-# ─── Full event catalogue ─────────────────────────────────────────────────────
+# ─── Small Caps Converter Helper ──────────────────────────────────────────────
 
-ALL_EVENTS: list[str] = [
+SMALL_CAPS_MAP: Dict[str, str] = {
+    'a': 'ᴀ', 'b': 'ʙ', 'c': 'ᴄ', 'd': 'ᴅ', 'e': 'ᴇ', 'f': 'ꜰ', 'g': 'ɢ', 'h': 'ʜ',
+    'i': 'ɪ', 'j': 'ᴊ', 'k': 'ᴋ', 'l': 'ʟ', 'm': 'ᴍ', 'n': 'ɴ', 'o': 'ᴏ', 'p': 'ᴘ',
+    'q': 'ǫ', 'r': 'ʀ', 's': 'ꜱ', 't': 'ᴛ', 'u': 'ᴜ', 'v': 'ᴠ', 'w': 'ᴡ', 'x': 'x',
+    'y': 'ʏ', 'z': 'ᴢ', '-': '-', '_': '-', ' ': '-'
+}
+
+def to_small_caps(text: str) -> str:
+    """Convert standard text to aesthetic small caps format."""
+    return "".join(SMALL_CAPS_MAP.get(c.lower(), c.lower()) for c in text)
+
+
+# ─── Category Channel Provisioning Specs ──────────────────────────────────────
+
+CATEGORY_SPECS: List[Tuple[str, str, str, str]] = [
+    ("members",  "👥・ᴍᴇᴍʙᴇʀ-ʟᴏɢꜱ",    "👥 Members",    "Member joins, leaves, bans, unbans, kicks, timeouts, and nickname changes"),
+    ("messages", "💬・ᴍᴇꜱꜱᴀɢᴇ-ʟᴏɢꜱ",   "💬 Messages",   "Deleted messages, message edits, bulk purges, and mentions"),
+    ("channels", "📁・ᴄʜᴀɴɴᴇʟ-ʟᴏɢꜱ",   "📁 Channels",   "Channel creations, deletions, updates, stages, and webhooks"),
+    ("roles",    "🎭・ʀᴏʟᴇ-ʟᴏɢꜱ",      "🎭 Roles",      "Role creations, deletions, updates, and member role assignments"),
+    ("voice",    "🔊・ᴠᴏɪᴄᴇ-ʟᴏɢꜱ",     "🔊 Voice",      "Voice joins, leaves, moves, mutes, screen shares, and camera"),
+    ("server",   "⚙️・ꜱᴇʀᴠᴇʀ-ʟᴏɢꜱ",    "⚙️ Server",     "Server settings, invites, emojis, stickers, and scheduled events"),
+    ("threads",  "🧵・ᴛʜʀᴇᴀᴅ-ʟᴏɢꜱ",    "🧵 Threads",    "Thread creations, deletions, and archive updates"),
+    ("commands", "⌨️・ᴄᴏᴍᴍᴀɴᴅ-ʟᴏɢꜱ",   "⌨️ Commands",   "Slash commands used, bot messages, and AutoMod triggers"),
+    ("security", "🛡️・ꜱᴇᴄᴜʀɪᴛʏ-ʟᴏɢꜱ", "🛡️ Security",   "Warnings, auto-punishments, anti-spam, anti-raid, honeypot, and image scan actions"),
+    ("ai",       "🧠・ᴀɪ-ʟᴏɢꜱ",       "🧠 AI System",  "AI chat queries, deep research, generated images, animated GIF banners, and settings"),
+]
+
+
+# ─── Full Event Catalogue ─────────────────────────────────────────────────────
+
+ALL_EVENTS: List[str] = [
     # Members
     "member_join", "member_leave", "member_ban", "member_unban",
     "member_kick", "member_timeout", "member_role_add", "member_role_remove",
@@ -37,103 +83,58 @@ ALL_EVENTS: list[str] = [
     # Messages
     "message_delete", "message_edit", "message_bulk_delete", "message_send", "message_mention",
     # Channels
-    "channel_create", "channel_delete", "channel_update",
+    "channel_create", "channel_delete", "channel_update", "stage_instance_create", "stage_instance_delete", "webhook_update",
     # Roles
     "role_create", "role_delete", "role_update",
     # Voice
     "voice_join", "voice_leave", "voice_move", "voice_mute",
+    "voice_stream", "voice_camera",
     # Server
-    "server_update", "invite_create", "invite_delete",
+    "server_update", "invite_create", "invite_delete", "emoji_update", "sticker_update", "event_create", "event_delete", "event_update",
     # Threads
-    "thread_create", "thread_delete",
+    "thread_create", "thread_delete", "thread_update",
     # Commands & Bots
-    "command_used", "bot_message",
-    # Emoji / Sticker
-    "emoji_update",
+    "command_used", "bot_message", "automod_execution",
+    # Security (bot auto-actions)
+    "security_warn", "security_auto_timeout", "security_auto_kick", "security_auto_ban",
+    "security_anti_spam", "security_anti_raid", "security_image_flagged",
+    "security_honeypot",
+    # AI System
+    "ai_query", "ai_research", "ai_image", "ai_banner", "ai_comedy", "ai_config",
 ]
 
-EVENT_CATEGORIES: dict[str, list[str]] = {
+EVENT_CATEGORIES: Dict[str, List[str]] = {
     "members":  ["member_join", "member_leave", "member_ban", "member_unban",
                  "member_kick", "member_timeout", "member_nickname"],
     "messages": ["message_delete", "message_edit", "message_bulk_delete", "message_send", "message_mention"],
-    "channels": ["channel_create", "channel_delete", "channel_update"],
+    "channels": ["channel_create", "channel_delete", "channel_update", "stage_instance_create", "stage_instance_delete", "webhook_update"],
     "roles":    ["role_create", "role_delete", "role_update", "member_role_add", "member_role_remove"],
-    "voice":    ["voice_join", "voice_leave", "voice_move", "voice_mute"],
-    "server":   ["server_update", "invite_create", "invite_delete", "emoji_update"],
-    "threads":  ["thread_create", "thread_delete"],
-    "commands": ["command_used", "bot_message"],
+    "voice":    ["voice_join", "voice_leave", "voice_move", "voice_mute",
+                 "voice_stream", "voice_camera"],
+    "server":   ["server_update", "invite_create", "invite_delete", "emoji_update", "sticker_update", "event_create", "event_delete", "event_update"],
+    "threads":  ["thread_create", "thread_delete", "thread_update"],
+    "commands": ["command_used", "bot_message", "automod_execution"],
+    "security": [
+        "security_warn", "security_auto_timeout", "security_auto_kick", "security_auto_ban",
+        "security_anti_spam", "security_anti_raid", "security_image_flagged",
+        "security_honeypot",
+    ],
+    "ai": [
+        "ai_query", "ai_research", "ai_image", "ai_banner", "ai_comedy", "ai_config",
+    ],
 }
 
-# ─── Color palette ────────────────────────────────────────────────────────────
-C = {
-    "join":          0x2ECC71,
-    "leave":         0xE74C3C,
-    "ban":           0xC0392B,
-    "unban":         0x27AE60,
-    "kick":          0xE67E22,
-    "timeout":       0xF39C12,
-    "msg_del":       0xFF6B6B,
-    "msg_edit":      0xF1C40F,
-    "bulk_del":      0xFF4444,
-    "msg_send":      0x3498DB,
-    "msg_mention":   0xE67E22,
-    "ch_create":     0x2ECC71,
-    "ch_delete":     0xE74C3C,
-    "ch_update":     0xF1C40F,
-    "role_create":   0x9B59B6,
-    "role_delete":   0x8E44AD,
-    "role_update":   0xBB8FCE,
-    "role_add":      0x1ABC9C,
-    "role_remove":   0xE74C3C,
-    "nick":          0x3498DB,
-    "voice_join":    0x1ABC9C,
-    "voice_leave":   0x95A5A6,
-    "voice_move":    0x3498DB,
-    "voice_mute":    0xF39C12,
-    "server":        0x5865F2,
-    "invite_create": 0x2ECC71,
-    "invite_delete": 0xE74C3C,
-    "thread_create": 0x1ABC9C,
-    "thread_delete": 0xE74C3C,
-    "command":       0x5865F2,
-    "bot_msg":       0x99AAB5,
-    "emoji":         0xF39C12,
-    "default":       0x7289DA,
-}
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
-def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-
-
-def _trunc(text: str, limit: int = 1024) -> str:
-    """Truncate text to Discord field limit."""
+def _trunc(text: str, limit: int = 1000) -> str:
+    """Truncate text cleanly."""
     if not text:
-        return "*empty*"
+        return ""
     return text if len(text) <= limit else text[: limit - 3] + "..."
 
 
-def _fmt_user(user: discord.abc.User) -> str:
-    return f"{user.mention} (`{user}` · ID: `{user.id}`)"
-
-
-def _fmt_channel(channel) -> str:
-    if hasattr(channel, "mention"):
-        return f"{channel.mention} (`#{channel.name}` · ID: `{channel.id}`)"
-    return f"`{channel}`"
-
-
-def _base_embed(title: str, color: int, icon: Optional[str] = None) -> discord.Embed:
-    embed = discord.Embed(title=title, color=color, timestamp=datetime.now(timezone.utc))
-    if icon:
-        embed.set_author(name=title, icon_url=icon)
-        embed.title = None  # type: ignore[assignment]
-    embed.set_footer(text="GKR Logs • " + _now())
-    return embed
-
-
-# ─── Database layer ───────────────────────────────────────────────────────────
+# ─── Database Layer ───────────────────────────────────────────────────────────
 
 class LogsDB:
     def __init__(self, db_path: str = DB_PATH) -> None:
@@ -172,7 +173,7 @@ class LogsDB:
                 "guild_id": guild_id,
                 "log_channel_id": None,
                 "enabled": True,
-                "enabled_events": list(ALL_EVENTS),   # all on by default
+                "enabled_events": list(ALL_EVENTS),
                 "category_channels": {},
             }
         raw_events = json.loads(row["enabled_events"] or "[]")
@@ -209,21 +210,20 @@ class LogsDB:
             c.commit()
 
 
-# ─── Core dispatcher ──────────────────────────────────────────────────────────
+# ─── Core Dispatcher ──────────────────────────────────────────────────────────
 
 class ServerLogger:
-    """Fetches config and dispatches formatted embeds to the log channel."""
+    """Fetches config and dispatches formatted audit embeds to log channels."""
 
     def __init__(self, bot: commands.Bot, db: LogsDB) -> None:
         self.bot = bot
         self.db = db
         self._queue: dict[int, list[discord.Embed]] = {}
-        self._flush_task: asyncio.Task | None = None
+        self._flush_task: Optional[asyncio.Task] = None
 
     def start(self):
-        """Start the background flush loop. Must be called after the event loop is running."""
         if self._flush_task is None or self._flush_task.done():
-            self._flush_task = asyncio.get_event_loop().create_task(self._flush_loop())
+            self._flush_task = asyncio.get_running_loop().create_task(self._flush_loop())
 
     def stop(self):
         if self._flush_task:
@@ -248,15 +248,10 @@ class ServerLogger:
 
     async def _send(self, guild: discord.Guild, event: str, embed: discord.Embed) -> None:
         cfg = self.db.get(guild.id)
-        if not cfg["enabled"]:
-            return
-        if event not in cfg["enabled_events"]:
+        if not cfg["enabled"] or event not in cfg["enabled_events"]:
             return
 
-        # Determine target channel — start with master log channel
         target_channel_id = cfg["log_channel_id"]
-
-        # Check if the event's category has a specific override channel
         category_channels: dict = cfg.get("category_channels") or {}
         for category, events in EVENT_CATEGORIES.items():
             if event in events:
@@ -272,63 +267,163 @@ class ServerLogger:
         if not isinstance(channel, discord.TextChannel):
             return
 
-        # Ignore logs for temporary voice channels to prevent spam
-        for field in embed.fields:
-            if "🎮 Temp Voice Channels" in field.value or "➕ Join to Create" in field.value:
-                return
-        if embed.title and "Temp Voice Channels" in embed.title:
+        # Ignore temporary voice channel spam
+        if embed.description and ("Temp Voice" in embed.description or "Join to Create" in embed.description):
+            return
+        if embed.title and "Temp Voice" in embed.title:
             return
 
         if channel.id not in self._queue:
             self._queue[channel.id] = []
         self._queue[channel.id].append(embed)
 
+    async def dispatch_security(
+        self,
+        guild: discord.Guild,
+        event: str,
+        title: str,
+        description: str,
+        color: int = 0xFF0000,
+        thumbnail_url: Optional[str] = None,
+    ) -> None:
+        """Public method — lets security.py and honeypot.py post to the Security log channel."""
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=discord.utils.utcnow(),
+        )
+        if thumbnail_url:
+            embed.set_thumbnail(url=thumbnail_url)
+        embed.set_footer(text="GKR Security  •  Audit & Defense Log")
+        await self._send(guild, event, embed)
 
-    # ── Member events ─────────────────────────────────────────────────────────
+    async def dispatch_ai(
+        self,
+        guild: discord.Guild,
+        event: str,
+        title: str,
+        description: str,
+        color: int = 0x5865F2,
+        thumbnail_url: Optional[str] = None,
+        image_url: Optional[str] = None,
+    ) -> None:
+        """Public method — lets ai_system.py post to the AI log channel."""
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=discord.utils.utcnow(),
+        )
+        if thumbnail_url:
+            embed.set_thumbnail(url=thumbnail_url)
+        if image_url:
+            embed.set_image(url=image_url)
+        embed.set_footer(text="GKR AI System  •  Audit & Activity Log")
+        await self._send(guild, event, embed)
+
+
+    # ── Member Events ─────────────────────────────────────────────────────────
 
     async def on_member_join(self, member: discord.Member) -> None:
-        embed = _base_embed("📥  Member Joined", C["join"])
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="User", value=_fmt_user(member), inline=False)
-        embed.add_field(name="Account Created",
-                        value=discord.utils.format_dt(member.created_at, "R"), inline=True)
-        embed.add_field(name="Member #", value=f"`{member.guild.member_count}`", inline=True)
+        embed = create_audit_embed(
+            title="📥 Member joined",
+            subject=member.mention,
+            details=[
+                f"Account created {fmt_rel(member.created_at)}",
+                f"Member #{member.guild.member_count:,}"
+            ],
+            color=C.SUCCESS,
+            thumbnail_url=member.display_avatar.url,
+            footer_text="Member Join"
+        )
         await self._send(member.guild, "member_join", embed)
 
     async def on_member_remove(self, member: discord.Member) -> None:
-        embed = _base_embed("📤  Member Left", C["leave"])
-        embed.set_thumbnail(url=member.display_avatar.url)
-        embed.add_field(name="User", value=_fmt_user(member), inline=False)
-        roles = [r.mention for r in member.roles if r.name != "@everyone"]
-        embed.add_field(name="Roles Held", value=" ".join(roles) or "None", inline=False)
-        await self._send(member.guild, "member_leave", embed)
+        guild = member.guild
 
-    async def on_member_ban(self, guild: discord.Guild, user: discord.User) -> None:
-        embed = _base_embed("🔨  Member Banned", C["ban"])
-        embed.set_thumbnail(url=user.display_avatar.url)
-        embed.add_field(name="User", value=_fmt_user(user), inline=False)
-        # Try to fetch audit log for reason + moderator
+        # Audit check for kick vs regular leave
+        is_kick = False
+        kicker = None
+        kick_reason = "No reason provided"
+        try:
+            await asyncio.sleep(0.3)
+            async for entry in guild.audit_logs(limit=3, action=discord.AuditLogAction.kick):
+                if entry.target.id == member.id and (discord.utils.utcnow() - entry.created_at).total_seconds() < 5:
+                    is_kick = True
+                    kicker = entry.user
+                    if entry.reason:
+                        kick_reason = entry.reason
+                    break
+        except (discord.Forbidden, discord.HTTPException):
+            pass
+
+        if is_kick:
+            embed = create_audit_embed(
+                title="👢 Member kicked",
+                subject=member.mention,
+                actor=kicker,
+                details=[f"Reason: {kick_reason}"],
+                color=C.DANGER,
+                thumbnail_url=member.display_avatar.url,
+                footer_text="Kick Log"
+            )
+            await self._send(guild, "member_kick", embed)
+        else:
+            roles = [r.mention for r in member.roles if r.name != "@everyone"]
+            roles_str = f"Roles held: {' '.join(roles)}" if roles else "No roles held"
+            embed = create_audit_embed(
+                title="📤 Member left",
+                subject=member.mention,
+                details=[roles_str],
+                color=C.DANGER,
+                thumbnail_url=member.display_avatar.url,
+                footer_text="Member Leave"
+            )
+            await self._send(guild, "member_leave", embed)
+
+    async def on_member_ban(self, guild: discord.Guild, user: Union[discord.User, discord.Member]) -> None:
+        mod = None
+        reason = "No reason provided"
         try:
             async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.ban):
                 if entry.target.id == user.id:
-                    embed.add_field(name="Moderator", value=_fmt_user(entry.user), inline=True)
-                    embed.add_field(name="Reason", value=_trunc(entry.reason or "No reason"), inline=True)
+                    mod = entry.user
+                    if entry.reason:
+                        reason = entry.reason
                     break
         except discord.Forbidden:
             pass
+
+        embed = create_audit_embed(
+            title="🔨 Member banned",
+            subject=user.mention,
+            actor=mod,
+            details=[f"Reason: {reason}"],
+            color=C.DANGER,
+            thumbnail_url=user.display_avatar.url if hasattr(user, "display_avatar") else None,
+            footer_text="Ban Log"
+        )
         await self._send(guild, "member_ban", embed)
 
     async def on_member_unban(self, guild: discord.Guild, user: discord.User) -> None:
-        embed = _base_embed("✅  Member Unbanned", C["unban"])
-        embed.set_thumbnail(url=user.display_avatar.url)
-        embed.add_field(name="User", value=_fmt_user(user), inline=False)
+        mod = None
         try:
             async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.unban):
                 if entry.target.id == user.id:
-                    embed.add_field(name="Moderator", value=_fmt_user(entry.user), inline=True)
+                    mod = entry.user
                     break
         except discord.Forbidden:
             pass
+
+        embed = create_audit_embed(
+            title="✅ Member unbanned",
+            subject=user.mention,
+            actor=mod,
+            color=C.SUCCESS,
+            thumbnail_url=user.display_avatar.url,
+            footer_text="Unban Log"
+        )
         await self._send(guild, "member_unban", embed)
 
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
@@ -336,191 +431,175 @@ class ServerLogger:
 
         # Nickname change
         if before.nick != after.nick:
-            embed = _base_embed("✏️  Nickname Changed", C["nick"])
-            embed.set_thumbnail(url=after.display_avatar.url)
-            embed.add_field(name="User", value=_fmt_user(after), inline=False)
-            embed.add_field(name="Before", value=f"`{before.nick or before.name}`", inline=True)
-            embed.add_field(name="After",  value=f"`{after.nick or after.name}`",  inline=True)
+            embed = create_audit_embed(
+                title="✏️ Nickname changed",
+                subject=after.mention,
+                changes=[("Nickname", before.nick or before.name, after.nick or after.name)],
+                color=C.BRAND,
+                thumbnail_url=after.display_avatar.url,
+                footer_text="Nickname Update"
+            )
             await self._send(guild, "member_nickname", embed)
 
-        # Role changes
+        # Role changes — skip roles that were deleted from the server entirely
+        # (Discord fires on_member_update for every member who had a deleted role,
+        # which would spam the log with confusing "Role removed" entries)
+        guild_role_ids = {r.id for r in guild.roles}
         added   = [r for r in after.roles  if r not in before.roles and r.name != "@everyone"]
-        removed = [r for r in before.roles if r not in after.roles  and r.name != "@everyone"]
+        removed = [r for r in before.roles if r not in after.roles  and r.name != "@everyone"
+                   and r.id in guild_role_ids]  # ← only log if role still exists (wasn't deleted)
 
-        if added:
-            embed = _base_embed("🎭  Role Added", C["role_add"])
-            embed.set_thumbnail(url=after.display_avatar.url)
-            embed.add_field(name="User",  value=_fmt_user(after), inline=False)
-            embed.add_field(name="Roles Added", value=" ".join(r.mention for r in added), inline=False)
-            # Try audit log for who did it
+        if added or removed:
+            mod = None
             try:
-                await asyncio.sleep(0.5)  # small delay so Discord audit log catches up
+                await asyncio.sleep(0.5)
                 async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.member_role_update):
                     if entry.target.id == after.id:
-                        embed.add_field(name="By", value=_fmt_user(entry.user), inline=True)
+                        mod = entry.user
                         break
             except discord.Forbidden:
                 pass
-            await self._send(guild, "member_role_add", embed)
 
-        if removed:
-            embed = _base_embed("🎭  Role Removed", C["role_remove"])
-            embed.set_thumbnail(url=after.display_avatar.url)
-            embed.add_field(name="User",  value=_fmt_user(after), inline=False)
-            embed.add_field(name="Roles Removed", value=" ".join(r.mention for r in removed), inline=False)
-            # Try audit log for who did it
-            try:
-                await asyncio.sleep(0.5)  # small delay so Discord audit log catches up
-                async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.member_role_update):
-                    if entry.target.id == after.id:
-                        embed.add_field(name="By", value=_fmt_user(entry.user), inline=True)
-                        break
-            except discord.Forbidden:
-                pass
-            await self._send(guild, "member_role_remove", embed)
+            if added and removed:
+                added_str = " ".join(r.mention for r in added)
+                removed_str = " ".join(r.mention for r in removed)
+                embed = create_audit_embed(
+                    title="🎭 Roles updated",
+                    subject=after.mention,
+                    subject_header="👤  Member",
+                    action_desc=f"Roles were updated for {after.mention}.",
+                    actor=mod,
+                    actor_label="Updated By",
+                    details=[f"Roles Added: {added_str}", f"Roles Removed: {removed_str}"],
+                    color=C.PURPLE,
+                    thumbnail_url=after.display_avatar.url,
+                    footer_text="Role Update"
+                )
+                await self._send(guild, "role_update", embed)
+            elif added:
+                added_str = " ".join(r.mention for r in added)
+                embed = create_audit_embed(
+                    title="🎭 Role added",
+                    subject=after.mention,
+                    subject_header="👤  Member",
+                    action_desc=f"{added_str} was assigned to {after.mention}.",
+                    actor=mod,
+                    actor_label="Added By",
+                    details=[f"Role Added: {added_str}"],
+                    color=C.SUCCESS,
+                    thumbnail_url=after.display_avatar.url,
+                    footer_text="Role Added"
+                )
+                await self._send(guild, "member_role_add", embed)
+            elif removed:
+                removed_str = " ".join(r.mention for r in removed)
+                embed = create_audit_embed(
+                    title="🎭 Role removed",
+                    subject=after.mention,
+                    subject_header="👤  Member",
+                    action_desc=f"{removed_str} was removed from {after.mention}.",
+                    actor=mod,
+                    actor_label="Removed By",
+                    details=[f"Role Removed: {removed_str}"],
+                    color=C.DANGER,
+                    thumbnail_url=after.display_avatar.url,
+                    footer_text="Role Removed"
+                )
+                await self._send(guild, "member_role_remove", embed)
 
         # Timeout
         if before.timed_out_until != after.timed_out_until and after.timed_out_until:
-            embed = _base_embed("⏱️  Member Timed Out", C["timeout"])
-            embed.set_thumbnail(url=after.display_avatar.url)
-            embed.add_field(name="User",  value=_fmt_user(after), inline=False)
-            embed.add_field(name="Until", value=discord.utils.format_dt(after.timed_out_until, "F"), inline=True)
+            mod = None
+            reason = "No reason provided"
             try:
                 async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.member_update):
                     if entry.target.id == after.id:
-                        embed.add_field(name="Moderator", value=_fmt_user(entry.user), inline=True)
-                        embed.add_field(name="Reason",    value=_trunc(entry.reason or "No reason"), inline=True)
+                        mod = entry.user
+                        if entry.reason:
+                            reason = entry.reason
                         break
             except discord.Forbidden:
                 pass
+
+            embed = create_audit_embed(
+                title="⏱️ Member timed out",
+                subject=after.mention,
+                actor=mod,
+                details=[f"Expires {fmt_rel(after.timed_out_until)}", f"Reason: {reason}"],
+                color=C.WARNING,
+                thumbnail_url=after.display_avatar.url,
+                footer_text="Timeout Log"
+            )
             await self._send(guild, "member_timeout", embed)
 
-    # ── Message events ────────────────────────────────────────────────────────
 
-    async def on_message_delete(self, message: discord.Message) -> None:
-        if not message.guild or message.author.bot:
-            return
-        embed = _base_embed("🗑️  Message Deleted", C["msg_del"])
-        embed.set_thumbnail(url=message.author.display_avatar.url)
-        embed.add_field(name="Author",  value=_fmt_user(message.author), inline=True)
-        embed.add_field(name="Channel", value=_fmt_channel(message.channel), inline=True)
-        embed.add_field(name="Content", value=_trunc(message.content or "*[no text content]*"), inline=False)
-        if message.attachments:
-            embed.add_field(name="Attachments",
-                            value="\n".join(a.filename for a in message.attachments), inline=False)
-        await self._send(message.guild, "message_delete", embed)
-
-    async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
-        if not after.guild or after.author.bot:
-            return
-        if before.content == after.content:
-            return
-        embed = _base_embed("📝  Message Edited", C["msg_edit"])
-        embed.set_thumbnail(url=after.author.display_avatar.url)
-        embed.add_field(name="Author",  value=_fmt_user(after.author), inline=True)
-        embed.add_field(name="Channel", value=_fmt_channel(after.channel), inline=True)
-        embed.add_field(name="Jump",    value=f"[View Message]({after.jump_url})", inline=True)
-        embed.add_field(name="Before",  value=_trunc(before.content), inline=False)
-        embed.add_field(name="After",   value=_trunc(after.content),  inline=False)
-        await self._send(after.guild, "message_edit", embed)
-
-    async def on_bulk_message_delete(self, messages: list[discord.Message]) -> None:
-        if not messages:
-            return
-        guild = messages[0].guild
-        if not guild:
-            return
-        channel = messages[0].channel
-        embed = _base_embed(f"🗑️  Bulk Delete — {len(messages)} Messages", C["bulk_del"])
-        embed.add_field(name="Channel", value=_fmt_channel(channel), inline=True)
-        embed.add_field(name="Count",   value=f"`{len(messages)}`",  inline=True)
-        # Build short log
-        lines = []
-        for m in messages[-10:]:  # show last 10
-            lines.append(f"`{m.author}`: {_trunc(m.content, 80)}")
-        embed.add_field(name="Last Messages (up to 10)", value="\n".join(lines) or "*none*", inline=False)
-        await self._send(guild, "message_bulk_delete", embed)
-
-    # ── Channel events ────────────────────────────────────────────────────────
-
-    async def on_guild_channel_create(self, channel) -> None:
-        embed = _base_embed(f"➕  Channel Created", C["ch_create"])
-        embed.add_field(name="Name",     value=_fmt_channel(channel), inline=True)
-        embed.add_field(name="Type",     value=f"`{channel.type}`",   inline=True)
-        embed.add_field(name="Category", value=f"`{channel.category}`" if channel.category else "None", inline=True)
-        try:
-            async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
-                embed.add_field(name="Created By", value=_fmt_user(entry.user), inline=True)
-                break
-        except discord.Forbidden:
-            pass
-        await self._send(channel.guild, "channel_create", embed)
-
-    async def on_guild_channel_delete(self, channel) -> None:
-        embed = _base_embed(f"➖  Channel Deleted", C["ch_delete"])
-        embed.add_field(name="Name",     value=f"`#{channel.name}`", inline=True)
-        embed.add_field(name="Type",     value=f"`{channel.type}`",  inline=True)
-        embed.add_field(name="Category", value=f"`{channel.category}`" if channel.category else "None", inline=True)
-        try:
-            async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
-                embed.add_field(name="Deleted By", value=_fmt_user(entry.user), inline=True)
-                break
-        except discord.Forbidden:
-            pass
-        await self._send(channel.guild, "channel_delete", embed)
-
-    async def on_guild_channel_update(self, before, after) -> None:
-        changes: list[tuple[str, str, str]] = []
-        if before.name != after.name:
-            changes.append(("Name", f"`{before.name}`", f"`{after.name}`"))
-        if hasattr(before, "topic") and before.topic != after.topic:
-            changes.append(("Topic", _trunc(before.topic or "None", 200), _trunc(after.topic or "None", 200)))
-        if hasattr(before, "slowmode_delay") and before.slowmode_delay != after.slowmode_delay:
-            changes.append(("Slowmode", f"`{before.slowmode_delay}s`", f"`{after.slowmode_delay}s`"))
-        if hasattr(before, "nsfw") and before.nsfw != after.nsfw:
-            changes.append(("NSFW", f"`{before.nsfw}`", f"`{after.nsfw}`"))
-        if not changes:
-            return
-        embed = _base_embed(f"🔧  Channel Updated", C["ch_update"])
-        embed.add_field(name="Channel", value=_fmt_channel(after), inline=False)
-        for label, bval, aval in changes:
-            embed.add_field(name=f"{label} (before)", value=bval, inline=True)
-            embed.add_field(name=f"{label} (after)",  value=aval, inline=True)
-            embed.add_field(name="\u200b", value="\u200b", inline=True)
-        await self._send(after.guild, "channel_update", embed)
-
-    # ── Role events ───────────────────────────────────────────────────────────
+    # ── Guild Role Events ──────────────────────────────────────────────────────
 
     async def on_guild_role_create(self, role: discord.Role) -> None:
-        embed = _base_embed("🎭  Role Created", C["role_create"])
-        embed.add_field(name="Role",  value=role.mention, inline=True)
-        embed.add_field(name="Color", value=str(role.color), inline=True)
-        embed.add_field(name="Hoisted", value=str(role.hoist), inline=True)
+        guild = role.guild
+        mod = None
         try:
-            async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_create):
-                embed.add_field(name="Created By", value=_fmt_user(entry.user), inline=True)
-                break
+            await asyncio.sleep(0.4)
+            async for entry in guild.audit_logs(limit=3, action=discord.AuditLogAction.role_create):
+                if entry.target.id == role.id:
+                    mod = entry.user
+                    break
         except discord.Forbidden:
             pass
-        await self._send(role.guild, "role_create", embed)
+
+        details = []
+        if role.color.value:
+            details.append(f"Color: `{str(role.color)}`")
+        if role.mentionable:
+            details.append("Mentionable: ✅")
+        if role.hoist:
+            details.append("Displayed separately: ✅")
+
+        embed = create_audit_embed(
+            title="🎭 Role created",
+            subject=role.mention,
+            subject_header="🎭  Role",
+            action_desc=f"Role {role.mention} was created.",
+            actor=mod,
+            actor_label="Created By",
+            details=details or ["No special permissions"],
+            color=C.SUCCESS,
+            footer_text="Role Create"
+        )
+        await self._send(guild, "role_create", embed)
 
     async def on_guild_role_delete(self, role: discord.Role) -> None:
-        embed = _base_embed("🗑️  Role Deleted", C["role_delete"])
-        embed.add_field(name="Name",  value=f"`@{role.name}`", inline=True)
-        embed.add_field(name="Color", value=str(role.color),   inline=True)
-        embed.add_field(name="Members Had", value=f"`{len(role.members)}`", inline=True)
+        guild = role.guild
+        mod = None
         try:
-            async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_delete):
-                embed.add_field(name="Deleted By", value=_fmt_user(entry.user), inline=True)
-                break
+            await asyncio.sleep(0.4)
+            async for entry in guild.audit_logs(limit=3, action=discord.AuditLogAction.role_delete):
+                if entry.target.id == role.id:
+                    mod = entry.user
+                    break
         except discord.Forbidden:
             pass
-        await self._send(role.guild, "role_delete", embed)
+
+        embed = create_audit_embed(
+            title="🗑️ Role deleted",
+            subject=f"**@{role.name}**",
+            subject_header="🎭  Role",
+            action_desc=f"Role **@{role.name}** was deleted from the server.",
+            actor=mod,
+            actor_label="Deleted By",
+            details=[
+                f"Color: `{str(role.color)}`" if role.color.value else "Color: Default",
+            ],
+            color=C.DANGER,
+            footer_text="Role Delete"
+        )
+        await self._send(guild, "role_delete", embed)
 
     async def on_guild_role_update(self, before: discord.Role, after: discord.Role) -> None:
-        changes: list[tuple[str, str, str]] = []
+        guild = after.guild
+        changes = []
         if before.name != after.name:
-            changes.append(("Name", f"`{before.name}`", f"`{after.name}`"))
+            changes.append(("Name", before.name, after.name))
         if before.color != after.color:
             changes.append(("Color", str(before.color), str(after.color)))
         if before.hoist != after.hoist:
@@ -529,15 +608,249 @@ class ServerLogger:
             changes.append(("Mentionable", str(before.mentionable), str(after.mentionable)))
         if not changes:
             return
-        embed = _base_embed("✏️  Role Updated", C["role_update"])
-        embed.add_field(name="Role", value=after.mention, inline=False)
-        for label, bval, aval in changes:
-            embed.add_field(name=f"{label} (before)", value=bval, inline=True)
-            embed.add_field(name=f"{label} (after)",  value=aval, inline=True)
-            embed.add_field(name="\u200b", value="\u200b", inline=True)
+
+        mod = None
+        try:
+            await asyncio.sleep(0.4)
+            async for entry in guild.audit_logs(limit=3, action=discord.AuditLogAction.role_update):
+                if entry.target.id == after.id:
+                    mod = entry.user
+                    break
+        except discord.Forbidden:
+            pass
+
+        embed = create_audit_embed(
+            title="✏️ Role updated",
+            subject=after.mention,
+            subject_header="🎭  Role",
+            action_desc=f"Role {after.mention} was modified.",
+            actor=mod,
+            actor_label="Updated By",
+            changes=changes,
+            color=C.PURPLE,
+            footer_text="Role Update"
+        )
+        await self._send(guild, "role_update", embed)
+
+    # ── Message Events ────────────────────────────────────────────────────────
+
+    async def on_message_delete(self, message: discord.Message) -> None:
+        if not message.guild or message.author.bot:
+            return
+
+        content_preview = f"> {_trunc(message.content)}" if message.content else "*[No text content]*"
+        details = [f"Channel: {message.channel.mention}", content_preview]
+        if message.attachments:
+            details.append(f"Attachments: {', '.join(a.filename for a in message.attachments)}")
+
+        embed = create_audit_embed(
+            title="🗑️ Message deleted",
+            subject=f"#{message.channel.name}",
+            actor=message.author,
+            details=details,
+            color=C.DANGER,
+            thumbnail_url=message.author.display_avatar.url,
+            footer_text="Message Delete"
+        )
+        await self._send(message.guild, "message_delete", embed)
+
+    async def on_message_edit(self, before: discord.Message, after: discord.Message) -> None:
+        if not after.guild or after.author.bot or before.content == after.content:
+            return
+
+        embed = create_audit_embed(
+            title="📝 Message edited",
+            subject=f"#{after.channel.name}",
+            actor=after.author,
+            changes=[("Content", _trunc(before.content, 200), _trunc(after.content, 200))],
+            details=[f"[View Message]({after.jump_url})"],
+            color=C.WARNING,
+            thumbnail_url=after.author.display_avatar.url,
+            footer_text="Message Edit"
+        )
+        await self._send(after.guild, "message_edit", embed)
+
+    async def on_bulk_message_delete(self, messages: List[discord.Message]) -> None:
+        if not messages or not messages[0].guild:
+            return
+        guild = messages[0].guild
+        channel = messages[0].channel
+
+        embed = create_audit_embed(
+            title="🗑️ Bulk messages deleted",
+            subject=f"#{channel.name}",
+            details=[f"{len(messages):,} messages purged"],
+            color=C.DANGER,
+            footer_text="Bulk Purge"
+        )
+        await self._send(guild, "message_bulk_delete", embed)
+
+
+    # ── Channel Events ────────────────────────────────────────────────────────
+
+    async def on_guild_channel_create(self, channel) -> None:
+        creator = None
+        try:
+            async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
+                creator = entry.user
+                break
+        except discord.Forbidden:
+            pass
+
+        details = [f"Type: `{channel.type}`"]
+        if channel.category:
+            details.append(f"Category: {channel.category.name}")
+
+        embed = create_audit_embed(
+            title="➕ Channel created",
+            subject=channel.mention if hasattr(channel, "mention") else f"#{channel.name}",
+            actor=creator,
+            details=details,
+            color=C.SUCCESS,
+            footer_text="Channel Created"
+        )
+        await self._send(channel.guild, "channel_create", embed)
+
+    async def on_guild_channel_delete(self, channel) -> None:
+        deleter = None
+        try:
+            async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
+                deleter = entry.user
+                break
+        except discord.Forbidden:
+            pass
+
+        details = [f"Type: `{channel.type}`"]
+        embed = create_audit_embed(
+            title="➖ Channel deleted",
+            subject=f"#{channel.name}",
+            actor=deleter,
+            details=details,
+            color=C.DANGER,
+            footer_text="Channel Deleted"
+        )
+        await self._send(channel.guild, "channel_delete", embed)
+
+    async def on_guild_channel_update(self, before, after) -> None:
+        changes: List[Tuple[str, str, str]] = []
+        if before.name != after.name:
+            changes.append(("Name", before.name, after.name))
+        if hasattr(before, "topic") and before.topic != after.topic:
+            changes.append(("Topic", _trunc(before.topic or "None", 100), _trunc(after.topic or "None", 100)))
+        if hasattr(before, "slowmode_delay") and before.slowmode_delay != after.slowmode_delay:
+            changes.append(("Slowmode", f"{before.slowmode_delay}s", f"{after.slowmode_delay}s"))
+
+        if not changes:
+            return
+
+        embed = create_audit_embed(
+            title="🔧 Channel updated",
+            subject=after.mention if hasattr(after, "mention") else f"#{after.name}",
+            changes=changes,
+            color=C.BRAND,
+            footer_text="Channel Update"
+        )
+        await self._send(after.guild, "channel_update", embed)
+
+    async def on_stage_instance_create(self, stage_instance: discord.StageInstance) -> None:
+        channel = stage_instance.channel
+        embed = create_audit_embed(
+            title="🎭 Stage event started",
+            subject=channel.mention if hasattr(channel, "mention") else f"#{channel.name}",
+            details=[f"Topic: {stage_instance.topic}"],
+            color=C.PURPLE,
+            footer_text="Stage Channel"
+        )
+        await self._send(stage_instance.guild, "stage_instance_create", embed)
+
+    async def on_stage_instance_delete(self, stage_instance: discord.StageInstance) -> None:
+        channel = stage_instance.channel
+        embed = create_audit_embed(
+            title="🎭 Stage event ended",
+            subject=channel.mention if channel and hasattr(channel, "mention") else "Stage Channel",
+            color=C.MUTED,
+            footer_text="Stage Channel"
+        )
+        await self._send(stage_instance.guild, "stage_instance_delete", embed)
+
+    async def on_webhooks_update(self, channel: discord.abc.GuildChannel) -> None:
+        embed = create_audit_embed(
+            title="🪝 Webhooks updated",
+            subject=channel.mention if hasattr(channel, "mention") else f"#{channel.name}",
+            color=C.CYAN,
+            footer_text="Webhook Activity"
+        )
+        await self._send(channel.guild, "webhook_update", embed)
+
+
+    # ── Role Events ───────────────────────────────────────────────────────────
+
+    async def on_guild_role_create(self, role: discord.Role) -> None:
+        creator = None
+        try:
+            async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_create):
+                creator = entry.user
+                break
+        except discord.Forbidden:
+            pass
+
+        embed = create_audit_embed(
+            title="🎭 Role created",
+            subject=role.mention,
+            actor=creator,
+            details=[
+                f"Color #{role.color.value:06x}",
+                "Hoisted" if role.hoist else "Not hoisted"
+            ],
+            color=C.PURPLE,
+            footer_text="Role Created"
+        )
+        await self._send(role.guild, "role_create", embed)
+
+    async def on_guild_role_delete(self, role: discord.Role) -> None:
+        deleter = None
+        try:
+            async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_delete):
+                deleter = entry.user
+                break
+        except discord.Forbidden:
+            pass
+
+        embed = create_audit_embed(
+            title="🗑️ Role deleted",
+            subject=f"@{role.name}",
+            actor=deleter,
+            details=[f"Had {len(role.members):,} members"],
+            color=C.DANGER,
+            footer_text="Role Deleted"
+        )
+        await self._send(role.guild, "role_delete", embed)
+
+    async def on_guild_role_update(self, before: discord.Role, after: discord.Role) -> None:
+        changes: List[Tuple[str, str, str]] = []
+        if before.name != after.name:
+            changes.append(("Name", before.name, after.name))
+        if before.color != after.color:
+            changes.append(("Color", f"#{before.color.value:06x}", f"#{after.color.value:06x}"))
+        if before.hoist != after.hoist:
+            changes.append(("Hoisted", str(before.hoist), str(after.hoist)))
+        if before.mentionable != after.mentionable:
+            changes.append(("Mentionable", str(before.mentionable), str(after.mentionable)))
+
+        if not changes:
+            return
+
+        embed = create_audit_embed(
+            title="✏️ Role updated",
+            subject=after.mention,
+            changes=changes,
+            color=C.PURPLE,
+            footer_text="Role Update"
+        )
         await self._send(after.guild, "role_update", embed)
 
-    # ── Voice events ──────────────────────────────────────────────────────────
+
+    # ── Voice Events ──────────────────────────────────────────────────────────
 
     async def on_voice_state_update(
         self,
@@ -548,328 +861,461 @@ class ServerLogger:
         guild = member.guild
 
         if before.channel is None and after.channel is not None:
-            embed = _base_embed("🔊  Joined Voice", C["voice_join"])
-            embed.set_thumbnail(url=member.display_avatar.url)
-            embed.add_field(name="User",    value=_fmt_user(member),         inline=True)
-            embed.add_field(name="Channel", value=_fmt_channel(after.channel), inline=True)
+            embed = create_audit_embed(
+                title="🔊 Joined voice",
+                subject=member.mention,
+                details=[f"Channel: {after.channel.mention}"],
+                color=C.CYAN,
+                thumbnail_url=member.display_avatar.url,
+                footer_text="Voice Activity"
+            )
             await self._send(guild, "voice_join", embed)
 
         elif before.channel is not None and after.channel is None:
-            embed = _base_embed("🔇  Left Voice", C["voice_leave"])
-            embed.set_thumbnail(url=member.display_avatar.url)
-            embed.add_field(name="User",    value=_fmt_user(member),          inline=True)
-            embed.add_field(name="Channel", value=_fmt_channel(before.channel), inline=True)
+            embed = create_audit_embed(
+                title="🔇 Left voice",
+                subject=member.mention,
+                details=[f"Channel: {before.channel.mention}"],
+                color=C.MUTED,
+                thumbnail_url=member.display_avatar.url,
+                footer_text="Voice Activity"
+            )
             await self._send(guild, "voice_leave", embed)
 
         elif before.channel != after.channel and before.channel and after.channel:
-            embed = _base_embed("🔀  Moved Voice Channel", C["voice_move"])
-            embed.set_thumbnail(url=member.display_avatar.url)
-            embed.add_field(name="User",   value=_fmt_user(member),           inline=False)
-            embed.add_field(name="From",   value=_fmt_channel(before.channel), inline=True)
-            embed.add_field(name="→ To",   value=_fmt_channel(after.channel),  inline=True)
+            embed = create_audit_embed(
+                title="🔀 Moved voice channel",
+                subject=member.mention,
+                changes=[("Channel", before.channel.name, after.channel.name)],
+                color=C.BRAND,
+                thumbnail_url=member.display_avatar.url,
+                footer_text="Voice Activity"
+            )
             await self._send(guild, "voice_move", embed)
 
         elif before.self_mute != after.self_mute or before.mute != after.mute:
             muted = after.self_mute or after.mute
-            label = "🔕  Muted" if muted else "🔔  Unmuted"
-            embed = _base_embed(f"{label} (Voice)", C["voice_mute"])
-            embed.set_thumbnail(url=member.display_avatar.url)
-            embed.add_field(name="User",    value=_fmt_user(member), inline=True)
-            embed.add_field(name="Channel", value=_fmt_channel(after.channel) if after.channel else "N/A", inline=True)
+            embed = create_audit_embed(
+                title="🔕 Muted in voice" if muted else "🔔 Unmuted in voice",
+                subject=member.mention,
+                details=[f"Channel: {after.channel.mention if after.channel else 'N/A'}"],
+                color=C.WARNING if muted else C.SUCCESS,
+                thumbnail_url=member.display_avatar.url,
+                footer_text="Voice State"
+            )
             await self._send(guild, "voice_mute", embed)
 
-    # ── Server update ─────────────────────────────────────────────────────────
+        if before.self_stream != after.self_stream:
+            streaming = after.self_stream
+            embed = create_audit_embed(
+                title="📡 Stream started (Go Live)" if streaming else "📡 Stream ended",
+                subject=member.mention,
+                details=[f"Channel: {after.channel.mention if streaming and after.channel else before.channel.mention if before.channel else 'N/A'}"],
+                color=C.PURPLE,
+                thumbnail_url=member.display_avatar.url,
+                footer_text="Screen Share"
+            )
+            await self._send(guild, "voice_stream", embed)
+
+        if before.self_video != after.self_video:
+            video_on = after.self_video
+            embed = create_audit_embed(
+                title="📷 Camera enabled" if video_on else "📷 Camera disabled",
+                subject=member.mention,
+                details=[f"Channel: {after.channel.mention if video_on and after.channel else before.channel.mention if before.channel else 'N/A'}"],
+                color=C.CYAN,
+                thumbnail_url=member.display_avatar.url,
+                footer_text="Video Activity"
+            )
+            await self._send(guild, "voice_camera", embed)
+
+
+    # ── Server, Invites, Emojis, Stickers, Events ─────────────────────────────
 
     async def on_guild_update(self, before: discord.Guild, after: discord.Guild) -> None:
-        changes: list[tuple[str, str, str]] = []
+        changes: List[Tuple[str, str, str]] = []
         if before.name != after.name:
-            changes.append(("Name", f"`{before.name}`", f"`{after.name}`"))
+            changes.append(("Server Name", before.name, after.name))
         if before.icon != after.icon:
-            changes.append(("Icon", "Changed", "New icon set"))
+            changes.append(("Server Icon", "Previous Icon", "New Icon Set"))
         if before.verification_level != after.verification_level:
             changes.append(("Verification", str(before.verification_level), str(after.verification_level)))
+
         if not changes:
             return
-        embed = _base_embed("⚙️  Server Updated", C["server"])
-        if after.icon:
-            embed.set_thumbnail(url=after.icon.url)
-        for label, bval, aval in changes:
-            embed.add_field(name=f"{label} (before)", value=bval, inline=True)
-            embed.add_field(name=f"{label} (after)",  value=aval, inline=True)
-            embed.add_field(name="\u200b", value="\u200b", inline=True)
-        await self._send(after, "server_update", embed)
 
-    # ── Invite events ─────────────────────────────────────────────────────────
+        embed = create_audit_embed(
+            title="⚙️ Server settings updated",
+            subject=after.name,
+            changes=changes,
+            color=C.BRAND,
+            thumbnail_url=after.icon.url if after.icon else None,
+            footer_text="Server Settings"
+        )
+        await self._send(after, "server_update", embed)
 
     async def on_invite_create(self, invite: discord.Invite) -> None:
         if not invite.guild:
             return
-        embed = _base_embed("🔗  Invite Created", C["invite_create"])
-        embed.add_field(name="Code",    value=f"`{invite.code}`",  inline=True)
-        embed.add_field(name="Channel", value=_fmt_channel(invite.channel) if invite.channel else "N/A", inline=True)
-        embed.add_field(name="Max Uses", value=f"`{invite.max_uses or '∞'}`", inline=True)
-        embed.add_field(name="Created By", value=_fmt_user(invite.inviter) if invite.inviter else "Unknown", inline=True)
-        await self._send(invite.guild, "invite_create", embed)  # type: ignore[arg-type]
+        details = [f"Channel: {invite.channel.mention if invite.channel else 'N/A'}", f"Max uses: {invite.max_uses or '∞'}"]
+        embed = create_audit_embed(
+            title="🔗 Invite created",
+            subject=f"discord.gg/{invite.code}",
+            actor=invite.inviter,
+            details=details,
+            color=C.SUCCESS,
+            footer_text="Invite Create"
+        )
+        await self._send(invite.guild, "invite_create", embed)
 
     async def on_invite_delete(self, invite: discord.Invite) -> None:
         if not invite.guild:
             return
-        embed = _base_embed("🗑️  Invite Deleted", C["invite_delete"])
-        embed.add_field(name="Code",    value=f"`{invite.code}`", inline=True)
-        embed.add_field(name="Channel", value=_fmt_channel(invite.channel) if invite.channel else "N/A", inline=True)
-        await self._send(invite.guild, "invite_delete", embed)  # type: ignore[arg-type]
-
-    # ── Thread events ─────────────────────────────────────────────────────────
-
-    async def on_thread_create(self, thread: discord.Thread) -> None:
-        embed = _base_embed("🧵  Thread Created", C["thread_create"])
-        embed.add_field(name="Thread",   value=thread.mention,    inline=True)
-        embed.add_field(name="Parent",   value=_fmt_channel(thread.parent) if thread.parent else "N/A", inline=True)
-        embed.add_field(name="Owner",    value=_fmt_user(thread.owner) if thread.owner else "Unknown", inline=True)
-        await self._send(thread.guild, "thread_create", embed)
-
-    async def on_thread_delete(self, thread: discord.Thread) -> None:
-        embed = _base_embed("🗑️  Thread Deleted", C["thread_delete"])
-        embed.add_field(name="Name",   value=f"`{thread.name}`",  inline=True)
-        embed.add_field(name="Parent", value=_fmt_channel(thread.parent) if thread.parent else "N/A", inline=True)
-        await self._send(thread.guild, "thread_delete", embed)
-
-    # ── Command usage ─────────────────────────────────────────────────────────
-
-    async def on_message(self, message: discord.Message) -> None:
-        if not message.guild:
-            return
-
-        # Log bot messages (from OTHER bots, not us)
-        if message.author.bot and message.author.id != self.bot.user.id:  # type: ignore[union-attr]
-            embed = _base_embed("🤖  Bot Message", C["bot_msg"])
-            embed.set_thumbnail(url=message.author.display_avatar.url)
-            embed.add_field(name="Bot",     value=_fmt_user(message.author), inline=True)
-            embed.add_field(name="Channel", value=_fmt_channel(message.channel), inline=True)
-            content_preview = _trunc(message.content or "*[embed / file only]*", 512)
-            embed.add_field(name="Content", value=content_preview, inline=False)
-            if message.jump_url:
-                embed.add_field(name="Jump", value=f"[View]({message.jump_url})", inline=True)
-            await self._send(message.guild, "bot_message", embed)
-            return
-
-        if message.author.bot:
-            return
-
-        # 1. Check if the message contains any mentions
-        has_mention = bool(message.mentions or message.role_mentions or message.mention_everyone)
-        if has_mention:
-            embed = _base_embed("📣  Mention Detected", C["msg_mention"])
-            embed.set_thumbnail(url=message.author.display_avatar.url)
-            embed.add_field(name="Author", value=_fmt_user(message.author), inline=True)
-            embed.add_field(name="Channel", value=_fmt_channel(message.channel), inline=True)
-
-            mentions_str = []
-            if message.mentions:
-                mentions_str.append(f"**Users:** " + " ".join(u.mention for u in message.mentions[:10]))
-            if message.role_mentions:
-                mentions_str.append(f"**Roles:** " + " ".join(r.mention for r in message.role_mentions[:10]))
-            if message.mention_everyone:
-                mentions_str.append("**Everyone/Here:** Yes")
-
-            embed.add_field(name="Mentions", value="\n".join(mentions_str), inline=False)
-            content_preview = _trunc(message.content or "*[embed / file only]*", 512)
-            embed.add_field(name="Content", value=content_preview, inline=False)
-            if message.attachments:
-                embed.add_field(
-                    name="Attachments",
-                    value="\n".join(a.filename for a in message.attachments),
-                    inline=False
-                )
-            if message.jump_url:
-                embed.add_field(name="Jump", value=f"[View Message]({message.jump_url})", inline=True)
-            await self._send(message.guild, "message_mention", embed)
-
-        # 2. Check prefix-style commands from human users
-        is_command = False
-        PREFIXES = ("!", "/", "?", ".", "$", "-", "~", "=", ">>", ";;")
-        content = message.content.strip()
-        if content and any(content.startswith(p) for p in PREFIXES):
-            is_command = True
-            cmd_text = content.split()[0]
-            embed = _base_embed("⌨️  Command Used", C["command"])
-            embed.set_thumbnail(url=message.author.display_avatar.url)
-            embed.add_field(name="User",    value=_fmt_user(message.author),    inline=True)
-            embed.add_field(name="Channel", value=_fmt_channel(message.channel), inline=True)
-            embed.add_field(name="Command", value=f"`{cmd_text}`",               inline=True)
-            embed.add_field(name="Full Message", value=_trunc(content, 512),     inline=False)
-            if message.jump_url:
-                embed.add_field(name="Jump", value=f"[View]({message.jump_url})", inline=True)
-            await self._send(message.guild, "command_used", embed)
-
-        # 3. Log normal message send (if it's not a command)
-        if not is_command:
-            embed = _base_embed("💬  Message Sent", C["msg_send"])
-            embed.set_thumbnail(url=message.author.display_avatar.url)
-            embed.add_field(name="Author",  value=_fmt_user(message.author), inline=True)
-            embed.add_field(name="Channel", value=_fmt_channel(message.channel), inline=True)
-            
-            content_preview = _trunc(message.content or "*[embed / file only]*", 512)
-            embed.add_field(name="Content", value=content_preview, inline=False)
-            if message.attachments:
-                embed.add_field(
-                    name="Attachments",
-                    value="\n".join(a.filename for a in message.attachments),
-                    inline=False
-                )
-            if message.jump_url:
-                embed.add_field(name="Jump", value=f"[View Message]({message.jump_url})", inline=True)
-            await self._send(message.guild, "message_send", embed)
-
-    async def on_interaction(self, interaction: discord.Interaction) -> None:
-        """Log slash command / application command usage."""
-        if interaction.type != discord.InteractionType.application_command:
-            return
-        if not interaction.guild:
-            return
-        data = interaction.data or {}
-        cmd_name = data.get("name", "unknown")
-        embed = _base_embed("🔷  Slash Command Used", C["command"])
-        if interaction.user:
-            embed.set_thumbnail(url=interaction.user.display_avatar.url)
-            embed.add_field(name="User",    value=_fmt_user(interaction.user),      inline=True)
-        embed.add_field(name="Channel",  value=_fmt_channel(interaction.channel) if interaction.channel else "N/A", inline=True)
-        embed.add_field(name="Command",  value=f"`/{cmd_name}`",                    inline=True)
-        # Options / sub-commands
-        options = data.get("options", [])
-        if options:
-            opts_str = " ".join(
-                f"`{o['name']}`=`{o.get('value', '[sub]')}`" for o in options[:5]
-            )
-            embed.add_field(name="Options", value=opts_str, inline=False)
-        await self._send(interaction.guild, "command_used", embed)
-
-    # ── Emoji update ──────────────────────────────────────────────────────────
+        embed = create_audit_embed(
+            title="🗑️ Invite deleted",
+            subject=f"discord.gg/{invite.code}",
+            details=[f"Channel: {invite.channel.mention if invite.channel else 'N/A'}"],
+            color=C.DANGER,
+            footer_text="Invite Delete"
+        )
+        await self._send(invite.guild, "invite_delete", embed)
 
     async def on_guild_emojis_update(
         self,
         guild: discord.Guild,
-        before: list[discord.Emoji],
-        after: list[discord.Emoji],
+        before: List[discord.Emoji],
+        after: List[discord.Emoji],
     ) -> None:
         added   = [e for e in after  if e not in before]
         removed = [e for e in before if e not in after]
         if not added and not removed:
             return
-        embed = _base_embed("😀  Emoji Updated", C["emoji"])
+
+        details = []
         if added:
-            embed.add_field(name="Added",   value=" ".join(str(e) for e in added[:10]),   inline=False)
+            details.append(f"Added: {' '.join(str(e) for e in added[:8])}")
         if removed:
-            embed.add_field(name="Removed", value=" ".join(f"`:{e.name}:`" for e in removed[:10]), inline=False)
+            details.append(f"Removed: {' '.join(f':{e.name}:' for e in removed[:8])}")
+
+        embed = create_audit_embed(
+            title="😀 Emoji updated",
+            subject=guild.name,
+            details=details,
+            color=C.GOLD,
+            footer_text="Emoji Update"
+        )
         await self._send(guild, "emoji_update", embed)
 
+    async def on_guild_stickers_update(
+        self,
+        guild: discord.Guild,
+        before: List[discord.GuildSticker],
+        after: List[discord.GuildSticker],
+    ) -> None:
+        added   = [s for s in after  if s not in before]
+        removed = [s for s in before if s not in after]
+        if not added and not removed:
+            return
 
-# ─── Slash commands ───────────────────────────────────────────────────────────
+        details = []
+        if added:
+            details.append(f"Added: {', '.join(f'`{s.name}`' for s in added[:8])}")
+        if removed:
+            details.append(f"Removed: {', '.join(f'`{s.name}`' for s in removed[:8])}")
 
-EVENT_DESCRIPTIONS: dict[str, str] = {
-    "member_join":         "Member joins the server",
-    "member_leave":        "Member leaves the server",
-    "member_ban":          "Member is banned",
-    "member_unban":        "Member is unbanned",
-    "member_kick":         "Member is kicked",
-    "member_timeout":      "Member is timed out",
-    "member_role_add":     "Role added to member",
-    "member_role_remove":  "Role removed from member",
-    "member_nickname":     "Member nickname changes",
-    "message_delete":      "Message is deleted",
-    "message_edit":        "Message is edited",
-    "message_bulk_delete": "Bulk message deletion",
-    "message_send":        "A message is sent (created)",
-    "message_mention":     "A message containing mentions is sent",
-    "channel_create":      "Channel created",
-    "channel_delete":      "Channel deleted",
-    "channel_update":      "Channel settings changed",
-    "role_create":         "Role created",
-    "role_delete":         "Role deleted",
-    "role_update":         "Role updated",
-    "voice_join":          "User joins voice channel",
-    "voice_leave":         "User leaves voice channel",
-    "voice_move":          "User moves between voice channels",
-    "voice_mute":          "User mutes/unmutes in voice",
-    "server_update":       "Server settings changed",
-    "invite_create":       "Invite link created",
-    "invite_delete":       "Invite link deleted/expired",
-    "thread_create":       "Thread created",
-    "thread_delete":       "Thread deleted",
-    "command_used":        "Any slash/prefix command used",
-    "bot_message":         "Bot sends a message",
-    "emoji_update":        "Emoji added or removed",
+        embed = create_audit_embed(
+            title="🏷️ Sticker updated",
+            subject=guild.name,
+            details=details,
+            color=C.GOLD,
+            footer_text="Sticker Update"
+        )
+        await self._send(guild, "sticker_update", embed)
+
+    async def on_scheduled_event_create(self, event: discord.ScheduledEvent) -> None:
+        details = [f"Location: {event.location or 'Discord Voice'}", f"Starts: {fmt_ts(event.start_time)}"]
+        if event.description:
+            details.append(f"> {_trunc(event.description, 200)}")
+
+        embed = create_audit_embed(
+            title="📅 Scheduled event created",
+            subject=event.name,
+            actor=event.creator,
+            details=details,
+            color=C.SUCCESS,
+            thumbnail_url=event.cover.url if event.cover else None,
+            footer_text="Scheduled Event"
+        )
+        await self._send(event.guild, "event_create", embed)
+
+    async def on_scheduled_event_delete(self, event: discord.ScheduledEvent) -> None:
+        embed = create_audit_embed(
+            title="🗑️ Scheduled event deleted",
+            subject=event.name,
+            color=C.DANGER,
+            footer_text="Scheduled Event"
+        )
+        await self._send(event.guild, "event_delete", embed)
+
+    async def on_scheduled_event_update(self, before: discord.ScheduledEvent, after: discord.ScheduledEvent) -> None:
+        changes: List[Tuple[str, str, str]] = []
+        if before.name != after.name:
+            changes.append(("Name", before.name, after.name))
+        if before.start_time != after.start_time:
+            changes.append(("Start Time", fmt_ts(before.start_time), fmt_ts(after.start_time)))
+        if before.status != after.status:
+            changes.append(("Status", str(before.status), str(after.status)))
+
+        if not changes:
+            return
+
+        embed = create_audit_embed(
+            title="📅 Scheduled event updated",
+            subject=after.name,
+            changes=changes,
+            color=C.BRAND,
+            footer_text="Scheduled Event"
+        )
+        await self._send(after.guild, "event_update", embed)
+
+
+    # ── Thread Events ─────────────────────────────────────────────────────────
+
+    async def on_thread_create(self, thread: discord.Thread) -> None:
+        details = [f"Parent: {thread.parent.mention if thread.parent else 'N/A'}"]
+        embed = create_audit_embed(
+            title="🧵 Thread created",
+            subject=thread.mention,
+            actor=thread.owner,
+            details=details,
+            color=C.CYAN,
+            footer_text="Thread Created"
+        )
+        await self._send(thread.guild, "thread_create", embed)
+
+    async def on_thread_delete(self, thread: discord.Thread) -> None:
+        embed = create_audit_embed(
+            title="🗑️ Thread deleted",
+            subject=f"#{thread.name}",
+            details=[f"Parent: {thread.parent.mention if thread.parent else 'N/A'}"],
+            color=C.DANGER,
+            footer_text="Thread Deleted"
+        )
+        await self._send(thread.guild, "thread_delete", embed)
+
+    async def on_thread_update(self, before: discord.Thread, after: discord.Thread) -> None:
+        changes: List[Tuple[str, str, str]] = []
+        if before.name != after.name:
+            changes.append(("Name", before.name, after.name))
+        if before.archived != after.archived:
+            changes.append(("Archived", str(before.archived), str(after.archived)))
+        if before.locked != after.locked:
+            changes.append(("Locked", str(before.locked), str(after.locked)))
+        if before.slowmode_delay != after.slowmode_delay:
+            changes.append(("Slowmode", f"{before.slowmode_delay}s", f"{after.slowmode_delay}s"))
+
+        if not changes:
+            return
+
+        embed = create_audit_embed(
+            title="🧵 Thread updated",
+            subject=after.mention,
+            changes=changes,
+            color=C.CYAN,
+            footer_text="Thread Update"
+        )
+        await self._send(after.guild, "thread_update", embed)
+
+
+    # ── Command, AutoMod & Message Listeners ───────────────────────────────────
+
+    async def on_message(self, message: discord.Message) -> None:
+        if not message.guild or message.author.bot:
+            return
+
+        has_mention = bool(message.mentions or message.role_mentions or message.mention_everyone)
+        if has_mention:
+            mentions_list = []
+            if message.mentions:
+                mentions_list.append(" ".join(u.mention for u in message.mentions[:5]))
+            if message.role_mentions:
+                mentions_list.append(" ".join(r.mention for r in message.role_mentions[:5]))
+            if message.mention_everyone:
+                mentions_list.append("@everyone")
+
+            details = [f"Channel: {message.channel.mention}", f"Mentions: {' '.join(mentions_list)}"]
+            if message.content:
+                details.append(f"> {_trunc(message.content, 200)}")
+
+            embed = create_audit_embed(
+                title="📣 Mention detected",
+                subject=f"#{message.channel.name}",
+                actor=message.author,
+                details=details,
+                color=C.WARNING,
+                thumbnail_url=message.author.display_avatar.url,
+                footer_text="Mention Activity"
+            )
+            await self._send(message.guild, "message_mention", embed)
+
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        if interaction.type != discord.InteractionType.application_command or not interaction.guild:
+            return
+        data = interaction.data or {}
+        cmd_name = data.get("name", "unknown")
+
+        embed = create_audit_embed(
+            title="🔷 Slash command used",
+            subject=f"/{cmd_name}",
+            actor=interaction.user,
+            details=[f"Channel: {interaction.channel.mention if interaction.channel else 'N/A'}"],
+            color=C.BRAND,
+            thumbnail_url=interaction.user.display_avatar.url if interaction.user else None,
+            footer_text="Command Log"
+        )
+        await self._send(interaction.guild, "command_used", embed)
+
+    async def on_automod_action_execution(self, execution: discord.AutoModActionExecution) -> None:
+        details = [
+            f"Rule ID: `{execution.rule_id}`",
+            f"Action: `{execution.action.type.name}`",
+            f"Channel: <#{execution.channel_id}>" if execution.channel_id else "N/A"
+        ]
+        if execution.matched_keyword:
+            details.append(f"Matched keyword: `{execution.matched_keyword}`")
+        if execution.content:
+            details.append(f"> {_trunc(execution.content, 200)}")
+
+        embed = create_audit_embed(
+            title="🛡️ AutoMod triggered",
+            subject=f"<@{execution.user_id}>",
+            details=details,
+            color=C.DANGER,
+            footer_text="AutoMod Execution"
+        )
+        await self._send(execution.guild, "automod_execution", embed)
+
+
+# ─── Interactive UI Components ────────────────────────────────────────────────
+
+EVENT_DESCRIPTIONS: Dict[str, str] = {
+    "member_join":           "Member joins the server",
+    "member_leave":          "Member leaves the server",
+    "member_ban":            "Member is banned",
+    "member_unban":          "Member is unbanned",
+    "member_kick":           "Member is kicked from server",
+    "member_timeout":        "Member is timed out",
+    "member_role_add":       "Role added to member",
+    "member_role_remove":    "Role removed from member",
+    "member_nickname":       "Member nickname changes",
+    "message_delete":        "Message is deleted",
+    "message_edit":          "Message is edited",
+    "message_bulk_delete":   "Bulk message deletion (purge)",
+    "message_send":          "A message is sent",
+    "message_mention":       "A message containing mentions is sent",
+    "channel_create":        "Channel created",
+    "channel_delete":        "Channel deleted",
+    "channel_update":        "Channel settings changed",
+    "stage_instance_create": "Stage channel started",
+    "stage_instance_delete": "Stage channel ended",
+    "webhook_update":        "Webhook created, edited, or removed",
+    "role_create":           "Role created",
+    "role_delete":           "Role deleted",
+    "role_update":           "Role updated",
+    "voice_join":            "User joins voice channel",
+    "voice_leave":           "User leaves voice channel",
+    "voice_move":            "User moves between voice channels",
+    "voice_mute":            "User mutes/unmutes in voice",
+    "voice_stream":          "User starts/stops Go Live screen share",
+    "voice_camera":          "User turns camera on/off",
+    "server_update":         "Server settings changed",
+    "invite_create":         "Invite link created",
+    "invite_delete":         "Invite link deleted/expired",
+    "emoji_update":          "Emoji added or removed",
+    "sticker_update":        "Custom sticker added or removed",
+    "event_create":          "Scheduled server event created",
+    "event_delete":          "Scheduled server event deleted",
+    "event_update":          "Scheduled server event updated",
+    "thread_create":         "Thread created",
+    "thread_delete":         "Thread deleted",
+    "thread_update":         "Thread settings or archive status changed",
+    "command_used":          "Any slash command used",
+    "bot_message":           "Bot sends a message",
+    "automod_execution":     "Discord AutoMod triggers a rule action",
 }
-
-# EVENT_CATEGORIES is defined at the top of this file (line 55)
 
 
 class LogEventSelect(discord.ui.Select):
-    def __init__(self, db: LogsDB, guild_id: int, category: str, events: list[str]):
+    def __init__(self, db: LogsDB, guild_id: int, category: str, events: List[str]):
         self.db = db
         self.guild_id = guild_id
         self.category = category
         self.events = events
-        
+
         cfg = db.get(guild_id)
         enabled_events = set(cfg["enabled_events"])
-        
-        options = []
-        for ev in events:
-            desc = EVENT_DESCRIPTIONS.get(ev, "")
-            options.append(
-                discord.SelectOption(
-                    label=ev,
-                    description=desc[:100],
-                    value=ev,
-                    default=(ev in enabled_events)
-                )
+
+        options = [
+            discord.SelectOption(
+                label=ev,
+                description=EVENT_DESCRIPTIONS.get(ev, "")[:100],
+                value=ev,
+                default=(ev in enabled_events)
             )
+            for ev in events
+        ]
         super().__init__(
             placeholder=f"Select {category.title()} events...",
             min_values=0,
             max_values=len(options),
             options=options
         )
-        
+
     async def callback(self, interaction: discord.Interaction):
         cfg = self.db.get(self.guild_id)
         enabled_set = set(cfg["enabled_events"])
-        
-        # Remove all events of this category from the enabled list
+
         for ev in self.events:
             if ev in enabled_set:
                 enabled_set.remove(ev)
-                
-        # Re-add only the selected ones
+
         for val in self.values:
             enabled_set.add(val)
-            
+
         cfg["enabled_events"] = list(enabled_set)
         self.db.save(cfg)
-        
-        await interaction.response.send_message(f"✅ Successfully updated **{self.category.title()}** specific log events!", ephemeral=True)
+
+        await interaction.response.send_message(
+            embed=embed_success("Log Events Updated", f"Updated active events for **{self.category.title()}**."),
+            ephemeral=True
+        )
+
 
 class LogCategorySelect(discord.ui.Select):
     def __init__(self, db: LogsDB, guild_id: int):
         self.db = db
         self.guild_id = guild_id
         options = [
-            discord.SelectOption(label=cat.title(), value=cat, description=f"Configure specific {cat} events")
+            discord.SelectOption(label=cat.title(), value=cat, description=f"Configure {cat} log events")
             for cat in EVENT_CATEGORIES.keys()
         ]
-        super().__init__(placeholder="Choose a log category to configure...", min_values=1, max_values=1, options=options)
-        
+        super().__init__(placeholder="Choose a category to configure...", min_values=1, max_values=1, options=options)
+
     async def callback(self, interaction: discord.Interaction):
         category = self.values[0]
         events = EVENT_CATEGORIES[category]
-        
+
         view = discord.ui.View()
         view.add_item(LogCategorySelect(self.db, self.guild_id))
         view.add_item(LogEventSelect(self.db, self.guild_id, category, events))
-        
-        await interaction.response.edit_message(content=f"⚙️ **Configuring specific {category.title()} events:**\\nSelect the exact events you want to log below.", view=view)
 
+        await interaction.response.edit_message(
+            embed=embed_info(f"⚙️  Configure {category.title()} Events", "Toggle specific event notifications below:"),
+            view=view
+        )
+
+
+# ─── Main Server Logs Cog ─────────────────────────────────────────────────────
 
 class ServerLogsCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -877,137 +1323,270 @@ class ServerLogsCog(commands.Cog):
         self.db = LogsDB()
         self.db.initialize()
         self.logger = ServerLogger(bot, self.db)
-        
+
     def cog_load(self):
         self.logger.start()
-        # Wire up listeners
-        self.bot.add_listener(self.logger.on_member_join,           "on_member_join")
-        self.bot.add_listener(self.logger.on_member_remove,         "on_member_remove")
-        self.bot.add_listener(self.logger.on_member_ban,            "on_member_ban")
-        self.bot.add_listener(self.logger.on_member_unban,          "on_member_unban")
-        self.bot.add_listener(self.logger.on_member_update,         "on_member_update")
-        self.bot.add_listener(self.logger.on_message_delete,        "on_message_delete")
-        self.bot.add_listener(self.logger.on_message_edit,          "on_message_edit")
-        self.bot.add_listener(self.logger.on_bulk_message_delete,   "on_bulk_message_delete")
-        self.bot.add_listener(self.logger.on_guild_channel_create,  "on_guild_channel_create")
-        self.bot.add_listener(self.logger.on_guild_channel_delete,  "on_guild_channel_delete")
-        self.bot.add_listener(self.logger.on_guild_channel_update,  "on_guild_channel_update")
-        self.bot.add_listener(self.logger.on_guild_role_create,     "on_guild_role_create")
-        self.bot.add_listener(self.logger.on_guild_role_delete,     "on_guild_role_delete")
-        self.bot.add_listener(self.logger.on_guild_role_update,     "on_guild_role_update")
-        self.bot.add_listener(self.logger.on_voice_state_update,    "on_voice_state_update")
-        self.bot.add_listener(self.logger.on_guild_update,          "on_guild_update")
-        self.bot.add_listener(self.logger.on_invite_create,         "on_invite_create")
-        self.bot.add_listener(self.logger.on_invite_delete,         "on_invite_delete")
-        self.bot.add_listener(self.logger.on_thread_create,         "on_thread_create")
-        self.bot.add_listener(self.logger.on_thread_delete,         "on_thread_delete")
-        self.bot.add_listener(self.logger.on_message,               "on_message")
-        self.bot.add_listener(self.logger.on_interaction,           "on_interaction")
-        self.bot.add_listener(self.logger.on_guild_emojis_update,   "on_guild_emojis_update")
+        self.bot.add_listener(self.logger.on_member_join,               "on_member_join")
+        self.bot.add_listener(self.logger.on_member_remove,             "on_member_remove")
+        self.bot.add_listener(self.logger.on_member_ban,                "on_member_ban")
+        self.bot.add_listener(self.logger.on_member_unban,              "on_member_unban")
+        self.bot.add_listener(self.logger.on_member_update,             "on_member_update")
+        self.bot.add_listener(self.logger.on_message_delete,            "on_message_delete")
+        self.bot.add_listener(self.logger.on_message_edit,              "on_message_edit")
+        self.bot.add_listener(self.logger.on_bulk_message_delete,       "on_bulk_message_delete")
+        self.bot.add_listener(self.logger.on_guild_channel_create,      "on_guild_channel_create")
+        self.bot.add_listener(self.logger.on_guild_channel_delete,      "on_guild_channel_delete")
+        self.bot.add_listener(self.logger.on_guild_channel_update,      "on_guild_channel_update")
+        self.bot.add_listener(self.logger.on_stage_instance_create,     "on_stage_instance_create")
+        self.bot.add_listener(self.logger.on_stage_instance_delete,     "on_stage_instance_delete")
+        self.bot.add_listener(self.logger.on_webhooks_update,           "on_webhooks_update")
+        self.bot.add_listener(self.logger.on_guild_role_create,         "on_guild_role_create")
+        self.bot.add_listener(self.logger.on_guild_role_delete,         "on_guild_role_delete")
+        self.bot.add_listener(self.logger.on_guild_role_update,         "on_guild_role_update")
+        self.bot.add_listener(self.logger.on_voice_state_update,        "on_voice_state_update")
+        self.bot.add_listener(self.logger.on_guild_update,              "on_guild_update")
+        self.bot.add_listener(self.logger.on_invite_create,             "on_invite_create")
+        self.bot.add_listener(self.logger.on_invite_delete,             "on_invite_delete")
+        self.bot.add_listener(self.logger.on_guild_emojis_update,       "on_guild_emojis_update")
+        self.bot.add_listener(self.logger.on_guild_stickers_update,     "on_guild_stickers_update")
+        self.bot.add_listener(self.logger.on_scheduled_event_create,   "on_scheduled_event_create")
+        self.bot.add_listener(self.logger.on_scheduled_event_delete,   "on_scheduled_event_delete")
+        self.bot.add_listener(self.logger.on_scheduled_event_update,   "on_scheduled_event_update")
+        self.bot.add_listener(self.logger.on_thread_create,             "on_thread_create")
+        self.bot.add_listener(self.logger.on_thread_delete,             "on_thread_delete")
+        self.bot.add_listener(self.logger.on_thread_update,             "on_thread_update")
+        self.bot.add_listener(self.logger.on_message,                   "on_message")
+        self.bot.add_listener(self.logger.on_interaction,               "on_interaction")
+        self.bot.add_listener(self.logger.on_automod_action_execution,  "on_automod_action_execution")
 
     def cog_unload(self):
         self.logger.stop()
-        self.bot.remove_listener(self.logger.on_member_join,           "on_member_join")
-        self.bot.remove_listener(self.logger.on_member_remove,         "on_member_remove")
-        self.bot.remove_listener(self.logger.on_member_ban,            "on_member_ban")
-        self.bot.remove_listener(self.logger.on_member_unban,          "on_member_unban")
-        self.bot.remove_listener(self.logger.on_member_update,         "on_member_update")
-        self.bot.remove_listener(self.logger.on_message_delete,        "on_message_delete")
-        self.bot.remove_listener(self.logger.on_message_edit,          "on_message_edit")
-        self.bot.remove_listener(self.logger.on_bulk_message_delete,   "on_bulk_message_delete")
-        self.bot.remove_listener(self.logger.on_guild_channel_create,  "on_guild_channel_create")
-        self.bot.remove_listener(self.logger.on_guild_channel_delete,  "on_guild_channel_delete")
-        self.bot.remove_listener(self.logger.on_guild_channel_update,  "on_guild_channel_update")
-        self.bot.remove_listener(self.logger.on_guild_role_create,     "on_guild_role_create")
-        self.bot.remove_listener(self.logger.on_guild_role_delete,     "on_guild_role_delete")
-        self.bot.remove_listener(self.logger.on_guild_role_update,     "on_guild_role_update")
-        self.bot.remove_listener(self.logger.on_voice_state_update,    "on_voice_state_update")
-        self.bot.remove_listener(self.logger.on_guild_update,          "on_guild_update")
-        self.bot.remove_listener(self.logger.on_invite_create,         "on_invite_create")
-        self.bot.remove_listener(self.logger.on_invite_delete,         "on_invite_delete")
-        self.bot.remove_listener(self.logger.on_thread_create,         "on_thread_create")
-        self.bot.remove_listener(self.logger.on_thread_delete,         "on_thread_delete")
-        self.bot.remove_listener(self.logger.on_message,               "on_message")
-        self.bot.remove_listener(self.logger.on_interaction,           "on_interaction")
-        self.bot.remove_listener(self.logger.on_guild_emojis_update,   "on_guild_emojis_update")
+        self.bot.remove_listener(self.logger.on_member_join,               "on_member_join")
+        self.bot.remove_listener(self.logger.on_member_remove,             "on_member_remove")
+        self.bot.remove_listener(self.logger.on_member_ban,                "on_member_ban")
+        self.bot.remove_listener(self.logger.on_member_unban,              "on_member_unban")
+        self.bot.remove_listener(self.logger.on_member_update,             "on_member_update")
+        self.bot.remove_listener(self.logger.on_message_delete,            "on_message_delete")
+        self.bot.remove_listener(self.logger.on_message_edit,              "on_message_edit")
+        self.bot.remove_listener(self.logger.on_bulk_message_delete,       "on_bulk_message_delete")
+        self.bot.remove_listener(self.logger.on_guild_channel_create,      "on_guild_channel_create")
+        self.bot.remove_listener(self.logger.on_guild_channel_delete,      "on_guild_channel_delete")
+        self.bot.remove_listener(self.logger.on_guild_channel_update,      "on_guild_channel_update")
+        self.bot.remove_listener(self.logger.on_stage_instance_create,     "on_stage_instance_create")
+        self.bot.remove_listener(self.logger.on_stage_instance_delete,     "on_stage_instance_delete")
+        self.bot.remove_listener(self.logger.on_webhooks_update,           "on_webhooks_update")
+        self.bot.remove_listener(self.logger.on_guild_role_create,         "on_guild_role_create")
+        self.bot.remove_listener(self.logger.on_guild_role_delete,         "on_guild_role_delete")
+        self.bot.remove_listener(self.logger.on_guild_role_update,         "on_guild_role_update")
+        self.bot.remove_listener(self.logger.on_voice_state_update,        "on_voice_state_update")
+        self.bot.remove_listener(self.logger.on_guild_update,              "on_guild_update")
+        self.bot.remove_listener(self.logger.on_invite_create,             "on_invite_create")
+        self.bot.remove_listener(self.logger.on_invite_delete,             "on_invite_delete")
+        self.bot.remove_listener(self.logger.on_guild_emojis_update,       "on_guild_emojis_update")
+        self.bot.remove_listener(self.logger.on_guild_stickers_update,     "on_guild_stickers_update")
+        self.bot.remove_listener(self.logger.on_scheduled_event_create,   "on_scheduled_event_create")
+        self.bot.remove_listener(self.logger.on_scheduled_event_delete,   "on_scheduled_event_delete")
+        self.bot.remove_listener(self.logger.on_scheduled_event_update,   "on_scheduled_event_update")
+        self.bot.remove_listener(self.logger.on_thread_create,             "on_thread_create")
+        self.bot.remove_listener(self.logger.on_thread_delete,             "on_thread_delete")
+        self.bot.remove_listener(self.logger.on_thread_update,             "on_thread_update")
+        self.bot.remove_listener(self.logger.on_message,                   "on_message")
+        self.bot.remove_listener(self.logger.on_interaction,               "on_interaction")
+        self.bot.remove_listener(self.logger.on_automod_action_execution,  "on_automod_action_execution")
 
-    # ── /logs command group ───────────────────────────────────────────────────
+    # ── Slash Commands ────────────────────────────────────────────────────────
+
     logs_group = app_commands.Group(
         name="logs",
-        description="Configure server event logging for this guild",
+        description="Configure server event logging and category channels",
     )
 
-    @logs_group.command(name="channel", description="Set the channel where all server logs will be sent")
+    @logs_group.command(
+        name="setup",
+        description="Auto-create category-based private log channels in small caps format with emojis"
+    )
+    @app_commands.default_permissions(administrator=True)
+    async def setup_logs(self, interaction: discord.Interaction) -> None:
+        """Automatically create private category log channels for this server."""
+        await interaction.response.defer(ephemeral=True)
+        guild = interaction.guild
+        if not guild:
+            await interaction.followup.send(embed=embed_error("This command must be run inside a server."), ephemeral=True)
+            return
+
+        # Check permissions
+        me = guild.me
+        if not me.guild_permissions.manage_channels:
+            await interaction.followup.send(
+                embed=embed_error("Bot requires `Manage Channels` permission to auto-create log channels."),
+                ephemeral=True
+            )
+            return
+
+        cfg = self.db.get(guild.id)
+        if "category_channels" not in cfg:
+            cfg["category_channels"] = {}
+
+        # 1. Create or resolve the private Category
+        category_name = "📋・ꜱᴇʀᴠᴇʀ-ʟᴏɢꜱ"
+        category = discord.utils.get(guild.categories, name=category_name)
+        if not category:
+            category = discord.utils.get(guild.categories, name="📋 Logs")
+        if not category:
+            category = discord.utils.get(guild.categories, name="Server Logs")
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            me: discord.PermissionOverwrite(
+                view_channel=True,
+                send_messages=True,
+                embed_links=True,
+                attach_files=True,
+                read_message_history=True,
+            ),
+        }
+
+        if not category:
+            try:
+                category = await guild.create_category(
+                    category_name,
+                    overwrites=overwrites,
+                    reason="Auto-created GKR Server Logs Category"
+                )
+            except Exception as exc:
+                await interaction.followup.send(
+                    embed=embed_error(f"Failed to create category: {exc}"),
+                    ephemeral=True
+                )
+                return
+
+        # 2. Provision each channel under the category
+        created_channels: List[Tuple[str, discord.TextChannel, bool]] = []
+        master_channel_id: Optional[int] = None
+
+        for cat_key, ch_name, label, desc in CATEGORY_SPECS:
+            existing_ch = None
+            # Check existing config or look for channel under category
+            stored_id = cfg["category_channels"].get(cat_key)
+            if stored_id:
+                existing_ch = guild.get_channel(int(stored_id))
+
+            if not existing_ch:
+                # Search by exact or clean name in the category
+                for ch in category.text_channels:
+                    if ch.name.lower() == ch_name.lower() or ch.name.lower() == ch_name.replace("・", "-").lower():
+                        existing_ch = ch
+                        break
+
+            if existing_ch:
+                cfg["category_channels"][cat_key] = existing_ch.id
+                created_channels.append((label, existing_ch, False))
+                if master_channel_id is None:
+                    master_channel_id = existing_ch.id
+            else:
+                try:
+                    new_ch = await guild.create_text_channel(
+                        name=ch_name,
+                        category=category,
+                        topic=f"GKR Server Audit Log: {desc}",
+                        reason="Auto-created category log channel"
+                    )
+                    cfg["category_channels"][cat_key] = new_ch.id
+                    created_channels.append((label, new_ch, True))
+                    if master_channel_id is None:
+                        master_channel_id = new_ch.id
+                except Exception as exc:
+                    print(f"[Logs Setup] Failed to create #{ch_name}: {exc}")
+
+        # 3. Update database
+        cfg["enabled"] = True
+        if master_channel_id and not cfg.get("log_channel_id"):
+            cfg["log_channel_id"] = master_channel_id
+        self.db.save(cfg)
+
+        # 4. Build response embed
+        lines = []
+        for label, ch, is_new in created_channels:
+            status_tag = "`Created`" if is_new else "`Linked`"
+            lines.append(f"• **{label}:** {ch.mention} ({status_tag})")
+
+        embed = discord.Embed(
+            title="📋  Server Log Channels Configured",
+            description=(
+                f"Successfully provisioned category log channels under **{category.name}**.\n\n"
+                + "\n".join(lines)
+                + f"\n\n🔒 *All log channels are private and restricted to server staff.*"
+            ),
+            color=C.SUCCESS
+        )
+        embed.set_footer(text=f"Total active event types: {len(ALL_EVENTS)} trackable events")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    @logs_group.command(name="channel", description="Set a single master channel where all server logs will be sent")
     @app_commands.default_permissions(manage_guild=True)
     async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
         cfg = self.db.get(interaction.guild.id)
         cfg["log_channel_id"] = channel.id
         cfg["enabled"] = True
         self.db.save(cfg)
-        embed = discord.Embed(
-            title="✅  Logs Channel Set",
-            description=f"All server events will now be logged to {channel.mention}.",
-            color=0x2ECC71,
+
+        embed = embed_success(
+            "Logs Channel Configured",
+            f"Server events will now be logged to {channel.mention}.\nActive events: `{len(cfg['enabled_events'])}/{len(ALL_EVENTS)}`"
         )
-        embed.add_field(name="Active Events", value=f"`{len(cfg['enabled_events'])}` / `{len(ALL_EVENTS)}`", inline=True)
-        embed.set_footer(text="Use /logs events to enable or disable specific event categories.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @logs_group.command(name="toggle", description="Enable or disable the entire logging system for this server")
+    @logs_group.command(name="toggle", description="Enable or disable the logging system for this server")
     @app_commands.default_permissions(manage_guild=True)
     async def toggle(self, interaction: discord.Interaction) -> None:
         cfg = self.db.get(interaction.guild.id)
         cfg["enabled"] = not cfg["enabled"]
         self.db.save(cfg)
-        status = "**ENABLED** ✅" if cfg["enabled"] else "**DISABLED** ❌"
-        await interaction.response.send_message(
-            f"🔔 Server logging is now {status}.", ephemeral=True
-        )
+        status_text = "Enabled" if cfg["enabled"] else "Disabled"
+        embed = embed_success("Logging Status", f"Server event logging is now **{status_text}**.") if cfg["enabled"] else embed_warning(f"Server event logging is now **{status_text}**.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @logs_group.command(name="status", description="Show the current logging configuration for this server")
+    @logs_group.command(name="status", description="Show current logging configuration and category routing")
     @app_commands.default_permissions(manage_guild=True)
     async def status(self, interaction: discord.Interaction) -> None:
         cfg = self.db.get(interaction.guild.id)
         ch = interaction.guild.get_channel(cfg["log_channel_id"]) if cfg["log_channel_id"] else None
-        embed = discord.Embed(
-            title="📋  Server Logging Status",
-            color=0x2ECC71 if cfg["enabled"] else 0x808080,
-        )
-        embed.add_field(name="Status",  value="✅ Enabled" if cfg["enabled"] else "❌ Disabled", inline=True)
-        embed.add_field(name="Channel", value=ch.mention if ch else "Not set", inline=True)
-        embed.add_field(name="Active Events", value=f"`{len(cfg['enabled_events'])}` / `{len(ALL_EVENTS)}`", inline=True)
 
-        # Show per-category breakdown
-        lines = []
+        lines = [
+            f"**Master Channel:** {ch.mention if ch else '`Not set`'}",
+            f"**Active Events:** `{len(cfg['enabled_events'])}` / `{len(ALL_EVENTS)}`\n",
+            "**Category Breakdown & Routing:**"
+        ]
         for cat, events in EVENT_CATEGORIES.items():
             active = sum(1 for e in events if e in cfg["enabled_events"])
-            icon = "🟢" if active == len(events) else ("🟡" if active > 0 else "🔴")
-            
             override_id = cfg["category_channels"].get(cat)
-            route_str = f" ➔ <#{override_id}>" if override_id else ""
-            
-            lines.append(f"{icon} **{cat.title()}** — `{active}/{len(events)}`{route_str}")
-        embed.add_field(name="Category Breakdown & Routing", value="\n".join(lines), inline=False)
-        embed.set_footer(text="Use /logs config to toggle specific individual events.")
+            route_str = f" → <#{override_id}>" if override_id else ""
+            dot = "🟢" if active == len(events) else ("🟡" if active > 0 else "⚪")
+            lines.append(f"{dot} **{cat.title()}**: `{active}/{len(events)}`{route_str}")
+
+        embed = embed_info(
+            "📋  Server Logging Configuration",
+            "\n".join(lines),
+            color=C.BRAND if cfg["enabled"] else C.NEUTRAL
+        )
+        embed.set_footer(text="Use /logs setup to auto-create all channels, or /logs config to toggle events")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @logs_group.command(name="route", description="Route a specific category of logs to a different channel")
+    @logs_group.command(name="route", description="Route a specific category of logs to a separate channel")
     @app_commands.default_permissions(manage_guild=True)
     @app_commands.choices(category=[app_commands.Choice(name=c.title(), value=c) for c in EVENT_CATEGORIES.keys()])
     async def route(self, interaction: discord.Interaction, category: str, channel: discord.TextChannel) -> None:
         cfg = self.db.get(interaction.guild.id)
         if "category_channels" not in cfg:
             cfg["category_channels"] = {}
-        
+
         cfg["category_channels"][category] = channel.id
         self.db.save(cfg)
-        
-        embed = discord.Embed(
-            title="🔀 Log Routing Updated",
-            description=f"All **{category.title()}** logs will now be sent specifically to {channel.mention}.",
-            color=0x3498DB
+
+        await interaction.response.send_message(
+            embed=embed_success("Log Route Updated", f"**{category.title()}** logs will now be sent to {channel.mention}."),
+            ephemeral=True
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @logs_group.command(name="unroute", description="Remove a custom channel route for a category")
     @app_commands.default_permissions(manage_guild=True)
@@ -1017,93 +1596,29 @@ class ServerLogsCog(commands.Cog):
         if "category_channels" in cfg and category in cfg["category_channels"]:
             del cfg["category_channels"][category]
             self.db.save(cfg)
-            
             master_ch = interaction.guild.get_channel(cfg["log_channel_id"]) if cfg["log_channel_id"] else None
             dest = master_ch.mention if master_ch else "the master log channel"
-            
             await interaction.response.send_message(
-                f"✅ Removed custom route. **{category.title()}** logs will now fall back to {dest}.", 
+                embed=embed_success("Route Removed", f"**{category.title()}** logs will now fall back to {dest}."),
                 ephemeral=True
             )
         else:
-            await interaction.response.send_message(f"⚠️ **{category.title()}** is not currently routed anywhere.", ephemeral=True)
+            await interaction.response.send_message(
+                embed=embed_info("No Custom Route", f"**{category.title()}** is not currently routed to a custom channel."),
+                ephemeral=True
+            )
 
-    @logs_group.command(name="events", description="Enable or disable an entire logging category (or 'all')")
-    @app_commands.default_permissions(manage_guild=True)
-    @app_commands.describe(
-        category="Category to toggle: members | messages | channels | roles | voice | server | threads | commands | all",
-        action="enable or disable",
-    )
-    @app_commands.choices(
-        category=[app_commands.Choice(name=k, value=k) for k in list(EVENT_CATEGORIES.keys()) + ["all"]],
-        action=[
-            app_commands.Choice(name="enable",  value="enable"),
-            app_commands.Choice(name="disable", value="disable"),
-        ],
-    )
-    async def events(
-        self,
-        interaction: discord.Interaction,
-        category: str,
-        action: str,
-    ) -> None:
-        cfg = self.db.get(interaction.guild.id)
-        enabled: set[str] = set(cfg["enabled_events"])
-
-        if category == "all":
-            target_events = ALL_EVENTS
-        else:
-            target_events = EVENT_CATEGORIES.get(category, [])
-
-        if action == "enable":
-            enabled.update(target_events)
-            verb = "enabled"
-        else:
-            enabled.difference_update(target_events)
-            verb = "disabled"
-
-        cfg["enabled_events"] = list(enabled)
-        self.db.save(cfg)
-
-        ev_list = "\n".join(
-            f"{'✅' if e in enabled else '❌'} `{e}` — {EVENT_DESCRIPTIONS.get(e, '')}"
-            for e in target_events
-        )
-        embed = discord.Embed(
-            title=f"🔧  Events {verb.title()} — {category.title()}",
-            description=ev_list,
-            color=0x2ECC71 if action == "enable" else 0xE74C3C,
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @logs_group.command(name="list", description="List all available log events and their current status")
-    @app_commands.default_permissions(manage_guild=True)
-    async def list_events(self, interaction: discord.Interaction) -> None:
-        cfg = self.db.get(interaction.guild.id)
-        enabled: set[str] = set(cfg["enabled_events"])
-        embed = discord.Embed(
-            title="📑  All Log Events",
-            description="Full list of all trackable events and their current status.",
-            color=0x5865F2,
-        )
-        for cat, events in EVENT_CATEGORIES.items():
-            lines = [
-                f"{'✅' if e in enabled else '❌'} `{e}` — {EVENT_DESCRIPTIONS.get(e, '')}"
-                for e in events
-            ]
-            embed.add_field(name=f"📂 {cat.title()}", value="\n".join(lines), inline=False)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @logs_group.command(name="config", description="Interactive dropdown menu to toggle specific individual log events")
+    @logs_group.command(name="config", description="Interactive dropdown menu to toggle specific log events")
     @app_commands.default_permissions(manage_guild=True)
     async def config(self, interaction: discord.Interaction) -> None:
         view = discord.ui.View()
         view.add_item(LogCategorySelect(self.db, interaction.guild.id))
         await interaction.response.send_message(
-            "⚙️ **Specific Event Configuration**\nSelect a category from the dropdown below to choose exactly which events you want logged:", 
-            view=view, 
+            embed=embed_info("⚙️  Log Event Configuration", "Select a category from the dropdown below to customize active events:"),
+            view=view,
             ephemeral=True
         )
+
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(ServerLogsCog(bot))

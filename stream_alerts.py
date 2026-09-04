@@ -26,10 +26,11 @@ import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
+from gkr_ui import C, embed_error, embed_success, embed_info
 
 try:
     import ytnoti
-    from ytnoti import YouTubeNotifier
+    from ytnoti import AsyncYouTubeNotifier
     has_ytnoti = True
 except ImportError:
     has_ytnoti = False
@@ -52,8 +53,11 @@ TWITCH_STREAMS_URL  = "https://api.twitch.tv/helix/streams"
 TWITCH_USERS_URL    = "https://api.twitch.tv/helix/users"
 KICK_CHANNEL_URL    = "https://kick.com/api/v2/channels/{}"
 
-STREAM_POLL_MINUTES = 3   # check live every 3 min — balances speed vs YouTube API quota
+STREAM_POLL_SECONDS = 30  # check live every 30 seconds — very fast detection
 VIDEO_POLL_MINUTES  = 10  # how often to check for new video uploads
+
+# Require 1 consecutive live poll before firing (no extra delay, but prevents race conditions)
+YOUTUBE_LIVE_CONFIRM_COUNT = 1
 
 
 # ---------------------------------------------------------------------------
@@ -400,30 +404,110 @@ async def get_youtube_batch(
         except Exception as e:
             print(f"[StreamAlerts] Batch Videos API error: {e}")
 
-    # Step 3: For each channel, find the best result:
-    # Priority: LIVE > latest video
-    for channel_id in channel_ids:
-        vids = channel_to_vids.get(channel_id, [])
-        if not vids:
-            continue
+        # Step 3: For each channel, find the best result:
+        # Priority: LIVE > latest video
+        for channel_id in channel_ids:
+            vids = channel_to_vids.get(channel_id, [])
+            if not vids:
+                continue
 
-        # First: look for any video that is currently LIVE
-        live_result = None
-        for vid_id in vids:
-            r = api_results.get(vid_id)
-            if r and r.get("is_live"):
-                live_result = r
-                break
-
-        if live_result:
-            results[channel_id] = live_result
-        else:
-            # Fall back to the latest (first in RSS order)
+            # First: look for any video that is currently LIVE
+            live_result = None
             for vid_id in vids:
                 r = api_results.get(vid_id)
-                if r and not r.get("is_upcoming"):  # skip scheduled streams
-                    results[channel_id] = r
+                if r and r.get("is_live"):
+                    live_result = r
                     break
+
+            if live_result:
+                results[channel_id] = live_result
+            else:
+                # Fall back to the latest (first in RSS order)
+                for vid_id in vids:
+                    r = api_results.get(vid_id)
+                    if r and not r.get("is_upcoming"):  # skip scheduled streams
+                        results[channel_id] = r
+                        break
+
+        return results
+
+
+
+async def check_youtube_live_direct(
+    session: aiohttp.ClientSession,
+    channel_ids: list[str],
+) -> dict[str, Optional[dict]]:
+    """Directly check which channels are live using yt-dlp on the /streams page.
+    This is extremely reliable and costs ZERO API quota.
+    Returns dict: channel_id -> live info dict if live, else None.
+    """
+    if not channel_ids:
+        return {}
+
+    results: dict[str, Optional[dict]] = {cid: None for cid in channel_ids}
+
+    # We run yt-dlp in a thread pool so it doesn't block the async event loop
+    def _run_ytdlp(cid: str) -> Optional[dict]:
+        import yt_dlp
+        url = f"https://www.youtube.com/channel/{cid}/streams"
+        cookie_path = os.path.join(os.path.dirname(__file__), "cookies.txt")
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'nocheckcertificate': True,
+            'extract_flat': True,
+            'force_generic_extractor': False,
+            'playlist_items': '1', # Just get the first item
+            'retries': 0,
+            'ignoreerrors': True,
+        }
+        if os.path.exists(cookie_path):
+            ydl_opts['cookiefile'] = cookie_path
+
+        class _SilentLogger:
+            def debug(self, msg): pass
+            def warning(self, msg): pass
+            def error(self, msg): pass
+
+        ydl_opts['logger'] = _SilentLogger()
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info or 'entries' not in info or not info['entries']:
+                    return None
+
+                entry = info['entries'][0]
+                if entry and entry.get('live_status') == 'is_live':
+                    vid_id = entry.get('id', '')
+                    title = entry.get('title', 'YouTube Live Stream')
+                    thumbnail = entry.get('thumbnail') or (f"https://i.ytimg.com/vi/{vid_id}/hqdefault.jpg" if vid_id else "")
+
+                    print(f"[StreamAlerts] 🔴 YT-DLP LIVE DETECTED: {cid} -> {title}")
+                    return {
+                        "is_live": True,
+                        "video_id": vid_id,
+                        "title": title,
+                        "thumbnail": thumbnail,
+                        "url": entry.get('url', f"https://www.youtube.com/watch?v={vid_id}"),
+                        "description": entry.get('description', ''),
+                        "channel_title": entry.get('uploader', ''),
+                    }
+        except Exception:
+            pass
+        return None
+
+    # Run concurrently in the executor
+    loop = asyncio.get_running_loop()
+    tasks = [
+        loop.run_in_executor(None, _run_ytdlp, cid)
+        for cid in channel_ids
+    ]
+
+    ytdlp_results = await asyncio.gather(*tasks)
+
+    for cid, info in zip(channel_ids, ytdlp_results):
+        results[cid] = info
 
     return results
 
@@ -445,57 +529,129 @@ async def resolve_twitch_user_id(session: aiohttp.ClientSession, login: str) -> 
 async def get_twitch_stream(session: aiohttp.ClientSession, user_id: str) -> Optional[dict]:
     if not TWITCH_CLIENT_ID:
         return None
-    token = await _twitch_auth.get_token(session)
-    headers = {"Client-Id": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"}
-    async with session.get(TWITCH_STREAMS_URL, params={"user_id": user_id}, headers=headers) as resp:
-        if resp.status == 200:
-            data = await resp.json()
-            streams = data.get("data", [])
-            if streams:
-                s = streams[0]
-                thumb = s.get("thumbnail_url", "").replace("{width}", "1280").replace("{height}", "720")
-                return {
-                    "is_live": True,
-                    "title": s.get("title", ""),
-                    "game": s.get("game_name", ""),
-                    "thumbnail": thumb,
-                    "viewer_count": s.get("viewer_count", 0),
-                    "url": f"https://www.twitch.tv/{s.get('user_login', '')}",
-                    "user_name": s.get("user_name", ""),
-                    "user_login": s.get("user_login", ""),
-                }
+    try:
+        token = await _twitch_auth.get_token(session)
+        headers = {"Client-Id": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"}
+        async with session.get(TWITCH_STREAMS_URL, params={"user_id": user_id}, headers=headers) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                streams = data.get("data", [])
+                if streams:
+                    s = streams[0]
+                    import time
+                    thumb = s.get("thumbnail_url", "").replace("{width}", "1280").replace("{height}", "720")
+                    if thumb and "?" not in thumb:
+                        thumb = f"{thumb}?t={int(time.time())}"
+
+                    # Fetch creator profile avatar
+                    avatar_url = ""
+                    try:
+                        async with session.get(TWITCH_USERS_URL, params={"id": user_id}, headers=headers) as u_resp:
+                            if u_resp.status == 200:
+                                u_data = await u_resp.json()
+                                u_list = u_data.get("data", [])
+                                if u_list:
+                                    avatar_url = u_list[0].get("profile_image_url", "")
+                    except Exception:
+                        pass
+
+                    return {
+                        "is_live": True,
+                        "title": s.get("title", ""),
+                        "game": s.get("game_name", ""),
+                        "thumbnail": thumb,
+                        "avatar": avatar_url,
+                        "viewer_count": s.get("viewer_count", 0),
+                        "url": f"https://www.twitch.tv/{s.get('user_login', '')}",
+                        "user_name": s.get("user_name", ""),
+                        "user_login": s.get("user_login", ""),
+                    }
+    except Exception as e:
+        print(f"[StreamAlerts] Twitch check error for {user_id}: {e}")
     return None
 
 
 async def get_kick_stream(session: aiohttp.ClientSession, username: str) -> Optional[dict]:
-    url = KICK_CHANNEL_URL.format(username)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Accept": "application/json",
-    }
+    clean_user = username.strip().lstrip("@").lower()
     try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status != 200:
+        from curl_cffi.requests import AsyncSession
+        async with AsyncSession(impersonate="chrome110") as c_session:
+            # 1. Try v1 API first (returns live video screenshot in thumbnail)
+            resp = await c_session.get(f"https://kick.com/api/v1/channels/{clean_user}", timeout=10)
+            data = None
+            if resp.status_code == 200:
+                data = resp.json()
+            else:
+                # Fallback to v2 API
+                resp2 = await c_session.get(f"https://kick.com/api/v2/channels/{clean_user}", timeout=10)
+                if resp2.status_code == 200:
+                    data = resp2.json()
+
+            if not data:
                 return None
-            data = await resp.json(content_type=None)
+
             livestream = data.get("livestream")
             if not livestream:
                 return None
-            thumb = livestream.get("thumbnail", {})
+
+            # 2. Extract live stream preview screenshot / thumbnail
+            thumb_url = ""
+            thumb = livestream.get("thumbnail")
             if isinstance(thumb, dict):
                 thumb_url = thumb.get("url", "")
-            else:
-                thumb_url = str(thumb) if thumb else ""
+                if not thumb_url and thumb.get("responsive"):
+                    # Extract the highest resolution URL from responsive string
+                    parts = thumb.get("responsive", "").split(",")
+                    if parts:
+                        thumb_url = parts[0].strip().split(" ")[0]
+            elif isinstance(thumb, str) and thumb.strip():
+                thumb_url = thumb.strip()
+
+            # Fallback to channel banner if no live screenshot yet
+            if not thumb_url:
+                banner = data.get("banner_image")
+                if isinstance(banner, dict):
+                    thumb_url = banner.get("url", "")
+                elif isinstance(banner, str):
+                    thumb_url = banner
+
+            # Fallback to offline banner if available
+            if not thumb_url:
+                offline_banner = data.get("offline_banner_image")
+                if isinstance(offline_banner, dict):
+                    thumb_url = offline_banner.get("url", "")
+                elif isinstance(offline_banner, str):
+                    thumb_url = offline_banner
+
+            # 3. Extract user avatar
+            user_obj = data.get("user") or {}
+            avatar_url = user_obj.get("profile_pic") or data.get("profile_pic") or ""
+
+            # 4. Extract categories / game
+            game_name = ""
+            categories = livestream.get("categories") or []
+            if categories and isinstance(categories, list) and len(categories) > 0:
+                game_name = categories[0].get("name", "")
+
+            # 5. Append cache-buster timestamp so Discord loads fresh live frame
+            if thumb_url and "?" not in thumb_url:
+                import time
+                thumb_url = f"{thumb_url}?t={int(time.time())}"
+
+            creator_name = data.get("name") or user_obj.get("username") or username
+
             return {
                 "is_live": True,
-                "title": livestream.get("session_title", ""),
-                "game": livestream.get("categories", [{}])[0].get("name", "") if livestream.get("categories") else "",
+                "title": livestream.get("session_title") or f"{creator_name} is live on Kick!",
+                "game": game_name,
                 "thumbnail": thumb_url,
+                "avatar": avatar_url,
                 "viewer_count": livestream.get("viewer_count", 0),
-                "url": f"https://kick.com/{username}",
-                "user_name": data.get("name", username),
+                "url": f"https://kick.com/{clean_user}",
+                "user_name": creator_name,
             }
-    except Exception:
+    except Exception as e:
+        print(f"[StreamAlerts] Kick check error for {username}: {e}")
         return None
 
 
@@ -513,21 +669,27 @@ def build_live_embed(platform: str, creator: str, info: dict) -> discord.Embed:
         url=info.get("url", ""),
     )
     
-    # YouTube uses channel_title, Twitch/Kick use user_name
+    # Author name & avatar
     author_name = str(
         info.get("channel_title") or info.get("user_name") or creator
     ).upper()
     
+    stream_url = info.get("url", "")
     if info.get("avatar"):
-        embed.set_author(name=author_name, icon_url=info["avatar"])
+        embed.set_author(name=author_name, icon_url=info["avatar"], url=stream_url if stream_url else None)
     else:
-        embed.set_author(name=author_name)
+        embed.set_author(name=author_name, url=stream_url if stream_url else None)
         
+    if info.get("game"):
+        embed.add_field(name="Playing / Category", value=info["game"], inline=True)
+
     if info.get("viewer_count") is not None:
-        embed.add_field(name="Viewers", value=str(info["viewer_count"]), inline=False)
+        embed.add_field(name="Viewers", value=str(info["viewer_count"]), inline=True)
         
     if info.get("thumbnail"):
         embed.set_image(url=info["thumbnail"])
+    elif info.get("avatar"):
+        embed.set_thumbnail(url=info["avatar"])
     
     meta = PLATFORM_META.get(platform, {})
     embed.set_footer(text=f"{meta.get('name', platform.title())} Live Alert")
@@ -559,36 +721,54 @@ class StreamAlertsCog(commands.Cog):
         self.db = StreamAlertsDatabase()
         self.db.initialize()
         self._session: Optional[aiohttp.ClientSession] = None
+        # youtube_live_confirm[alert_id] = count of consecutive polls that showed live
+        # We require YOUTUBE_LIVE_CONFIRM_COUNT consecutive live polls before firing the alert
+        self._yt_live_confirm: dict[int, int] = {}
 
     async def cog_load(self) -> None:
         self._session = aiohttp.ClientSession()
         self.stream_check_loop.start()
         self.video_check_loop.start()
-        
-        if has_ytnoti:
-            cb_url = os.getenv("YTNOTI_WEBHOOK_URL")
-            if cb_url:
-                self.yt_notifier = YouTubeNotifier(callback_url=cb_url)
-            else:
-                self.yt_notifier = YouTubeNotifier()
-                
-            @self.yt_notifier.upload()
-            async def on_upload(video: Video):
-                await self._handle_ytnoti_upload(video)
+        self.yt_notifier = None
+        self._ytnoti_task: Optional[asyncio.Task] = None
 
-            # ytnoti doesn't have a specific event for 'live stream started' vs 'video uploaded' perfectly separated in older versions, 
-            # but we can check if it's a stream in the upload handler or check any().
-            # Let's just handle it in on_upload
-            
-            self.yt_notifier.run_in_background(port=8086)
-            
-            # Subscribe to existing YT channels
-            alerts = self.db.get_all_alerts()
-            yt_channels = list({a.creator_id for a in alerts if a.platform == "youtube" and a.creator_id})
-            if yt_channels:
-                print(f"[StreamAlerts] Subscribing {len(yt_channels)} channels to ytnoti...")
-                self.yt_notifier.subscribe(yt_channels)
+        if has_ytnoti:
+            cb_url = (os.getenv("YTNOTI_WEBHOOK_URL") or "").strip()
+            # Only start ytnoti if an explicit, valid external webhook URL is configured
+            if cb_url and cb_url.startswith(("http://", "https://")) and "localhost" not in cb_url and "127.0.0.1" not in cb_url:
+                try:
+                    self.yt_notifier = AsyncYouTubeNotifier(callback_url=cb_url)
+
+                    @self.yt_notifier.upload()
+                    async def on_upload(video):
+                        await self._handle_ytnoti_upload(video)
+
+                    alerts = self.db.get_all_alerts()
+                    yt_channels = list({a.creator_id for a in alerts if a.platform == "youtube" and a.creator_id})
+                    self._ytnoti_task = asyncio.create_task(self._start_ytnoti(yt_channels))
+                except Exception as exc:
+                    print(f"[StreamAlerts] ⚠️ Could not initialize ytnoti: {exc}. Using built-in YouTube polling.")
+                    self.yt_notifier = None
+            else:
+                self.yt_notifier = None
+                print("[StreamAlerts] ℹ️ YTNOTI_WEBHOOK_URL not configured. Using built-in high-efficiency YouTube API/RSS polling.")
         else:
+            self.yt_notifier = None
+
+    async def _start_ytnoti(self, initial_channels: list[str]):
+        """Start AsyncYouTubeNotifier in a background task with safe error handling."""
+        if not self.yt_notifier:
+            return
+        try:
+            if initial_channels:
+                print(f"[StreamAlerts] Subscribing {len(initial_channels)} channels to ytnoti...")
+                await self.yt_notifier.subscribe(initial_channels)
+                print(f"[StreamAlerts] ytnoti subscribed to {len(initial_channels)} channels.")
+            await self.yt_notifier.run(port=8086)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            print(f"[StreamAlerts] ⚠️ ytnoti startup/connection error: {e}. Falling back to standard YouTube polling.")
             self.yt_notifier = None
 
     async def _handle_ytnoti_upload(self, video):
@@ -614,12 +794,71 @@ class StreamAlertsCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
-        """Reset all live states on startup so streams that were live before restart get re-detected."""
-        self.db.reset_all_live_states()
+        """On startup, silently sync live states WITHOUT sending notifications.
+        This prevents duplicate alerts when the bot restarts while a stream is still live.
+        """
+        asyncio.create_task(self._sync_live_states_on_startup())
+
+    async def _sync_live_states_on_startup(self) -> None:
+        """Check all tracked streams silently and update last_live in DB.
+        No alerts are sent — this only calibrates the state so the next poll
+        knows which streams were ALREADY live before the bot came online.
+        """
+        print("[StreamAlerts] 🔄 Running startup live-state sync (no alerts will fire)...")
+        await asyncio.sleep(5)  # small delay to let the session fully start
+        alerts = self.db.get_all_alerts()
+        live_alerts = [a for a in alerts if a.notify_live]
+        if not live_alerts:
+            print("[StreamAlerts] ✅ No alerts to sync on startup.")
+            return
+
+        # ── YouTube batch sync ────────────────────────────────────────────────
+        yt_alerts = [a for a in live_alerts if a.platform == "youtube" and a.creator_id]
+        yt_channel_ids = list({a.creator_id for a in yt_alerts})
+        yt_results: dict = {}
+        if yt_channel_ids:
+            try:
+                live_direct = await check_youtube_live_direct(self.session, yt_channel_ids)
+                rss_batch = await get_youtube_batch(self.session, yt_channel_ids)
+                for cid in yt_channel_ids:
+                    yt_results[cid] = live_direct.get(cid) or rss_batch.get(cid)
+            except Exception as exc:
+                print(f"[StreamAlerts] Startup YT sync error: {exc}")
+
+        # ── Process each alert silently ───────────────────────────────────────
+        for alert in live_alerts:
+            try:
+                if alert.platform == "youtube":
+                    data = yt_results.get(alert.creator_id)
+                    is_live_now = bool(data and data.get("is_live"))
+                elif alert.platform == "kick":
+                    username = alert.creator_id or alert.creator_username
+                    info = await get_kick_stream(self.session, username)
+                    is_live_now = info is not None
+                elif alert.platform == "twitch" and alert.creator_id:
+                    info = await get_twitch_stream(self.session, alert.creator_id)
+                    is_live_now = info is not None
+                else:
+                    is_live_now = False
+
+                # Silently update last_live so the next poll won't fire a duplicate
+                if is_live_now != alert.last_live:
+                    self.db.update_live_state(alert.id, is_live_now)
+                    status = "🔴 LIVE" if is_live_now else "⚫ offline"
+                    print(f"[StreamAlerts] Startup sync: {alert.creator_username} ({alert.platform}) → {status} (no alert sent)")
+                else:
+                    print(f"[StreamAlerts] Startup sync: {alert.creator_username} ({alert.platform}) → state unchanged")
+
+            except Exception as exc:
+                print(f"[StreamAlerts] Startup sync error for {alert.creator_username}: {exc}")
+
+        print("[StreamAlerts] ✅ Startup live-state sync complete.")
 
     async def cog_unload(self) -> None:
         self.stream_check_loop.cancel()
         self.video_check_loop.cancel()
+        if self._ytnoti_task and not self._ytnoti_task.done():
+            self._ytnoti_task.cancel()
         if self._session:
             await self._session.close()
 
@@ -631,7 +870,7 @@ class StreamAlertsCog(commands.Cog):
 
     # ── Background polling ─────────────────────────────────────────────────
 
-    @tasks.loop(minutes=STREAM_POLL_MINUTES)
+    @tasks.loop(seconds=STREAM_POLL_SECONDS)
     async def stream_check_loop(self):
         """Check live status for all alerts — YouTube batched into 1 API call."""
         try:
@@ -644,14 +883,23 @@ class StreamAlertsCog(commands.Cog):
         if not live_alerts:
             return
 
-        # ── Batch fetch all YouTube channels in ONE API call ──────────────────
+        # ── Batch fetch all YouTube channels: DIRECT LIVE SEARCH + RSS/Videos fallback ───────
         yt_alerts = [a for a in live_alerts if a.platform == "youtube" and a.creator_id]
         yt_channel_ids = list({a.creator_id for a in yt_alerts})  # deduplicate
         yt_results: dict[str, Optional[dict]] = {}
         if yt_channel_ids:
             try:
-                yt_results = await get_youtube_batch(self.session, yt_channel_ids)
-                print(f"[StreamAlerts] YouTube batch check: {len(yt_channel_ids)} channels, 1 API call")
+                # Step 1: Direct live search (Search API, eventType=live) — real-time accurate
+                live_direct = await check_youtube_live_direct(self.session, yt_channel_ids)
+                # Step 2: RSS batch for video data (for non-live channels / video alerts)
+                rss_batch = await get_youtube_batch(self.session, yt_channel_ids)
+                # Merge: prefer the direct live result if channel is live, else use RSS batch result
+                for cid in yt_channel_ids:
+                    if live_direct.get(cid):  # channel is live right now
+                        yt_results[cid] = live_direct[cid]
+                    else:
+                        yt_results[cid] = rss_batch.get(cid)  # not live, use RSS data
+                print(f"[StreamAlerts] YouTube batch check: {len(yt_channel_ids)} channels checked (direct live search + RSS)")
             except Exception as exc:
                 print(f"[StreamAlerts] YouTube batch error: {exc}")
 
@@ -660,20 +908,34 @@ class StreamAlertsCog(commands.Cog):
             try:
                 if alert.platform == "youtube":
                     data = yt_results.get(alert.creator_id)
-                    info = data if (data and data.get("is_live")) else None
-                    is_live_now = info is not None
+                    is_live_now = bool(data and data.get("is_live"))
                     was_live = alert.last_live
                     print(f"[StreamAlerts] {alert.creator_username} (youtube): is_live={is_live_now}, was_live={was_live}")
+
                     if is_live_now and not was_live:
-                        print(f"[StreamAlerts] 🔴 GOING LIVE: {alert.creator_username}")
-                        await self._send_live_alert(alert, info)
-                    elif not is_live_now and was_live:
-                        print(f"[StreamAlerts] ⚫ WENT OFFLINE: {alert.creator_username}")
-                    self.db.update_live_state(alert.id, is_live_now)
+                        # Double-confirm: require YOUTUBE_LIVE_CONFIRM_COUNT consecutive live polls
+                        # to avoid firing alerts from YouTube's API lag when stream already ended
+                        confirm = self._yt_live_confirm.get(alert.id, 0) + 1
+                        self._yt_live_confirm[alert.id] = confirm
+                        if confirm >= YOUTUBE_LIVE_CONFIRM_COUNT:
+                            print(f"[StreamAlerts] 🔴 GOING LIVE (confirmed {confirm}x): {alert.creator_username}")
+                            await self._send_live_alert(alert, data)
+                            self.db.update_live_state(alert.id, True)
+                            self._yt_live_confirm.pop(alert.id, None)
+                        else:
+                            print(f"[StreamAlerts] 🟡 YouTube live candidate ({confirm}/{YOUTUBE_LIVE_CONFIRM_COUNT}): {alert.creator_username} — waiting to confirm")
+                    elif not is_live_now:
+                        # Reset confirm counter — stream ended or API caught up
+                        if alert.id in self._yt_live_confirm:
+                            print(f"[StreamAlerts] 🔄 YouTube live confirm reset for {alert.creator_username} (was pending)")
+                            self._yt_live_confirm.pop(alert.id, None)
+                        if was_live:
+                            print(f"[StreamAlerts] ⚫ WENT OFFLINE: {alert.creator_username}")
+                        self.db.update_live_state(alert.id, False)
                 else:
                     # Twitch / Kick — individual calls (their APIs don't support batch)
                     await self._check_live(alert)
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.3)
             except Exception as exc:
                 print(f"[StreamAlerts] Error for {alert.creator_username}: {exc}")
 
@@ -723,7 +985,8 @@ class StreamAlertsCog(commands.Cog):
         if alert.platform == "twitch" and alert.creator_id:
             info = await get_twitch_stream(self.session, alert.creator_id)
         elif alert.platform == "kick":
-            info = await get_kick_stream(self.session, alert.creator_username)
+            username = alert.creator_id or alert.creator_username
+            info = await get_kick_stream(self.session, username)
         elif alert.platform == "youtube" and alert.creator_id:
             data = await get_youtube_latest(self.session, alert.creator_id)
             if data and data.get("is_live"):
@@ -738,10 +1001,11 @@ class StreamAlertsCog(commands.Cog):
             # Just went live — send notification
             print(f"[StreamAlerts] 🔴 GOING LIVE: {alert.creator_username} — sending alert to guild {alert.guild_id}")
             await self._send_live_alert(alert, info)
+            self.db.update_live_state(alert.id, True)
         elif not is_live_now and was_live:
             print(f"[StreamAlerts] ⚫ WENT OFFLINE: {alert.creator_username}")
-
-        self.db.update_live_state(alert.id, is_live_now)
+            self.db.update_live_state(alert.id, False)
+        # If state hasn't changed, no update needed
 
     async def _check_new_video(self, alert: AlertConfig) -> None:
         if not alert.creator_id:
@@ -845,8 +1109,7 @@ class StreamAlertsCog(commands.Cog):
             return
         if platform == "twitch" and (not TWITCH_CLIENT_ID or not TWITCH_CLIENT_SECRET):
             await interaction.followup.send(
-                "❌ Twitch credentials (`TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET`) are not set. "
-                "Please add them and restart the bot.",
+                embed=embed_error("Twitch credentials (`TWITCH_CLIENT_ID` / `TWITCH_CLIENT_SECRET`) are not set. Please add them and restart the bot."),
                 ephemeral=True
             )
             return
@@ -860,8 +1123,7 @@ class StreamAlertsCog(commands.Cog):
                 creator_id = await resolve_youtube_channel_id(self.session, username) or ""
                 if not creator_id:
                     await interaction.followup.send(
-                        f"❌ Could not find a YouTube channel for `{username}`. "
-                        "Try using the exact channel handle (e.g. `@ChannelName`).",
+                        embed=embed_error(f"Could not find a YouTube channel for `{username}`. Try using the exact channel handle (e.g. `@ChannelName`)."),
                         ephemeral=True
                     )
                     return
@@ -870,7 +1132,7 @@ class StreamAlertsCog(commands.Cog):
                 creator_id = await resolve_twitch_user_id(self.session, username.lstrip("@")) or ""
                 if not creator_id:
                     await interaction.followup.send(
-                        f"❌ Could not find a Twitch user for `{username}`.",
+                        embed=embed_error(f"Could not find a Twitch user for `{username}`."),
                         ephemeral=True
                     )
                     return
@@ -880,7 +1142,7 @@ class StreamAlertsCog(commands.Cog):
                 test = await get_kick_stream(self.session, username.lstrip("@"))
                 creator_id = username.lstrip("@")  # Kick has no numeric ID needed
         except Exception as exc:
-            await interaction.followup.send(f"❌ API error while resolving creator: {exc}", ephemeral=True)
+            await interaction.followup.send(embed=embed_error(f"API error while resolving creator: {exc}"), ephemeral=True)
             return
 
         success = self.db.add_alert(
@@ -894,7 +1156,7 @@ class StreamAlertsCog(commands.Cog):
 
         if not success:
             await interaction.followup.send(
-                f"⚠️ An alert for **{display_name}** on **{platform.title()}** already exists in this server.",
+                embed=embed_error(f"An alert for **{display_name}** on **{platform.title()}** already exists in this server."),
                 ephemeral=True
             )
             return
@@ -908,28 +1170,22 @@ class StreamAlertsCog(commands.Cog):
         if alert:
             self.db.toggle_notify(alert.id, live, videos)
             
-        if platform == "youtube" and hasattr(self, "yt_notifier") and getattr(self, "yt_notifier"):
+        if platform == "youtube" and self.yt_notifier is not None:
             try:
-                if asyncio.iscoroutinefunction(self.yt_notifier.subscribe) or asyncio.iscoroutine(self.yt_notifier.subscribe):
-                    await self.yt_notifier.subscribe([creator_id])
-                else:
-                    # just in case it returns a coroutine despite not being a coroutine function (which happened in the traceback)
-                    res = self.yt_notifier.subscribe([creator_id])
-                    if asyncio.iscoroutine(res):
-                        await res
+                await self.yt_notifier.subscribe([creator_id])
                 print(f"[StreamAlerts] ytnoti subscribed to {creator_id}")
             except Exception as e:
                 print(f"[StreamAlerts] Failed to subscribe to ytnoti: {e}")
 
         meta = PLATFORM_META[platform]
         embed = discord.Embed(
-            title=f"✅ Alert Added — {meta['emoji']} {display_name}",
+            title=f"{meta['emoji']} Alert Added: {display_name}",
             color=meta["color"],
             timestamp=datetime.datetime.now(datetime.timezone.utc),
         )
         embed.add_field(name="Platform", value=meta["name"], inline=True)
         embed.add_field(name="Creator", value=display_name, inline=True)
-        embed.add_field(name="Notifications Channel", value=channel.mention, inline=True)
+        embed.add_field(name="Channel", value=channel.mention, inline=True)
         embed.add_field(name="🔴 Live Alerts", value="✅ On" if live else "❌ Off", inline=True)
         embed.add_field(name="🎬 Video Alerts", value="✅ On" if videos else "❌ Off", inline=True)
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -951,12 +1207,12 @@ class StreamAlertsCog(commands.Cog):
         removed = self.db.remove_alert(interaction.guild.id, platform, username.lstrip("@"))
         if removed:
             await interaction.response.send_message(
-                f"✅ Removed **{platform.title()}** alerts for **{username.lstrip('@')}**.",
+                embed=embed_success("Alert Removed", f"Removed **{platform.title()}** alerts for **{username.lstrip('@')}**."),
                 ephemeral=True
             )
         else:
             await interaction.response.send_message(
-                f"❌ No alert found for **{username.lstrip('@')}** on **{platform.title()}**.",
+                embed=embed_error(f"No alert found for **{username.lstrip('@')}** on **{platform.title()}**."),
                 ephemeral=True
             )
 
@@ -966,7 +1222,7 @@ class StreamAlertsCog(commands.Cog):
         alerts = self.db.get_alerts_for_guild(interaction.guild.id)
         if not alerts:
             await interaction.response.send_message(
-                "ℹ️ No stream alerts configured yet. Use `/alerts add` to add one.",
+                embed=embed_info("No Alerts", "No stream alerts configured yet. Use `/alerts add` to add one."),
                 ephemeral=True
             )
             return
@@ -974,7 +1230,7 @@ class StreamAlertsCog(commands.Cog):
         embed = discord.Embed(
             title="🔔 Stream Alerts",
             description=f"All configured alerts for **{interaction.guild.name}**",
-            color=0x7289DA,
+            color=C.BRAND,
             timestamp=datetime.datetime.now(datetime.timezone.utc),
         )
 
@@ -1021,14 +1277,14 @@ class StreamAlertsCog(commands.Cog):
         )
         if not alert:
             await interaction.response.send_message(
-                f"❌ No alert found for **{username}** on **{platform.title()}**.",
+                embed=embed_error(f"No alert found for **{username}** on **{platform.title()}**."),
                 ephemeral=True
             )
             return
 
         self.db.update_messages(alert.id, live_message, video_message)
         await interaction.response.send_message(
-            f"✅ Custom messages updated for **{username}** on **{platform.title()}**.",
+            embed=embed_success("Messages Updated", f"Custom messages updated for **{username}** on **{platform.title()}**."),
             ephemeral=True
         )
 
@@ -1060,15 +1316,18 @@ class StreamAlertsCog(commands.Cog):
         )
         if not alert:
             await interaction.response.send_message(
-                f"❌ No alert found for **{username}** on **{platform.title()}**.",
+                embed=embed_error(f"No alert found for **{username}** on **{platform.title()}**."),
                 ephemeral=True
             )
             return
 
         self.db.toggle_notify(alert.id, live, videos)
         await interaction.response.send_message(
-            f"✅ Updated **{username}** ({platform.title()}): "
-            f"Live={'✅' if live else '❌'}  Videos={'✅' if videos else '❌'}",
+            embed=embed_success(
+                "Alerts Toggled",
+                f"Updated **{username}** ({platform.title()}): \n"
+                f"Live={'✅' if live else '❌'}  Videos={'✅' if videos else '❌'}"
+            ),
             ephemeral=True
         )
 
@@ -1106,14 +1365,14 @@ class StreamAlertsCog(commands.Cog):
         )
         if not alert:
             await interaction.followup.send(
-                f"❌ No alert found for **{username}** on **{platform.title()}**. Add it first with `/alerts add`.",
+                embed=embed_error(f"No alert found for **{username}** on **{platform.title()}**. Add it first with `/alerts add`."),
                 ephemeral=True
             )
             return
 
         channel = interaction.guild.get_channel(alert.notification_channel_id)
         if not channel or not isinstance(channel, discord.TextChannel):
-            await interaction.followup.send("❌ Notification channel not found.", ephemeral=True)
+            await interaction.followup.send(embed=embed_error("Notification channel not found."), ephemeral=True)
             return
 
         meta = PLATFORM_META[platform]
@@ -1151,9 +1410,9 @@ class StreamAlertsCog(commands.Cog):
                 await channel.send(content=f"[TEST] {content}", embed=embed, view=view)
             else:
                 await channel.send(content=f"[TEST] {content}", embed=embed)
-            await interaction.followup.send(f"✅ Test alert sent to {channel.mention}!", ephemeral=True)
+            await interaction.followup.send(embed=embed_success("Test Sent", f"Test alert sent to {channel.mention}!"), ephemeral=True)
         except Exception as exc:
-            await interaction.followup.send(f"❌ Failed to send test: {exc}", ephemeral=True)
+            await interaction.followup.send(embed=embed_error(f"Failed to send test: {exc}"), ephemeral=True)
 
 
 # ---------------------------------------------------------------------------

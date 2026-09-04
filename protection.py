@@ -179,6 +179,32 @@ class ProtectionCog(commands.Cog):
                         embed.add_field(name="User", value=f"{message.author.mention} ({message.author.id})")
                         embed.add_field(name="Channel", value=message.channel.mention)
                         embed.add_field(name="Action", value="Timed out for 10 minutes")
+
+                        # Try to extract EXIF data as a "spam footprint" from the latest image
+                        spam_attachment = next((a for a in message.attachments if a.content_type and a.content_type.startswith('image/')), None)
+                        if spam_attachment:
+                            try:
+                                import io
+                                from PIL import Image
+                                from imageinfo import get_exif_data
+                                
+                                img_bytes = await spam_attachment.read()
+                                img = Image.open(io.BytesIO(img_bytes))
+                                exif = get_exif_data(img)
+                                
+                                if exif:
+                                    footprint = []
+                                    for k in ["Make", "Model", "Software", "DateTimeOriginal", "GPSInfo"]:
+                                        if k in exif:
+                                            # GPSInfo is a dict, convert to string
+                                            val = exif[k] if not isinstance(exif[k], dict) else "GPS Data Present"
+                                            footprint.append(f"**{k}:** `{val}`")
+                                            
+                                    if footprint:
+                                        embed.add_field(name="📸 Image Spam Fingerprint (EXIF)", value="\n".join(footprint), inline=False)
+                            except Exception as e:
+                                print(f"[Protection] Failed to extract EXIF for spam log: {e}")
+
                         await self._log_action(message.guild, embed)
                     except discord.Forbidden:
                         pass

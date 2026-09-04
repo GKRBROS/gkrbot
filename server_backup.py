@@ -106,7 +106,7 @@ async def _snapshot_full_backup(guild: discord.Guild, progress_msg: discord.Mess
                 description=f"Fetching messages for `#{ch.name}` ({idx + 1}/{len(text_channels)})...",
                 color=0x00AAFF
             ))
-        except:
+        except Exception:
             pass
 
         messages = []
@@ -324,7 +324,7 @@ class ServerBackupCog(commands.Cog):
                     mentionable=role_data["mentionable"],
                     reason="GKR Backup Restore"
                 )
-            except:
+            except Exception:
                 pass
             await asyncio.sleep(DELAY_STRUCTURE)
 
@@ -339,7 +339,7 @@ class ServerBackupCog(commands.Cog):
                     reason="GKR Backup Restore"
                 )
                 cat_map[cat_data["name"]] = new_cat
-            except:
+            except Exception:
                 pass
             await asyncio.sleep(DELAY_STRUCTURE)
 
@@ -356,7 +356,7 @@ class ServerBackupCog(commands.Cog):
                     overwrites=overwrites,
                     reason="GKR Backup Restore",
                 )
-            except:
+            except Exception:
                 pass
             await asyncio.sleep(DELAY_STRUCTURE)
 
@@ -410,7 +410,7 @@ class ServerBackupCog(commands.Cog):
             summary_ch = guild.system_channel or next((c for c in guild.text_channels), None)
             if summary_ch:
                 await summary_ch.send("✅ **Server Restore Complete!**")
-        except:
+        except Exception:
             pass
 
 async def setup(bot: commands.Bot) -> None:

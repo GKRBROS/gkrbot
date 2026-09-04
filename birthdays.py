@@ -22,6 +22,8 @@ from typing import Optional
 
 BIRTHDAY_DB_PATH = os.path.join(os.path.dirname(__file__), "birthdays.sqlite3")
 
+IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+
 MONTH_NAMES = [
     "", "January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December"
@@ -57,12 +59,36 @@ class BirthdayDatabase:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS birthday_wishes_sent (
+                    guild_id INTEGER NOT NULL,
+                    user_id  INTEGER NOT NULL,
+                    year     INTEGER NOT NULL,
+                    PRIMARY KEY (guild_id, user_id, year)
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS global_state (
                     id INTEGER PRIMARY KEY DEFAULT 1,
                     last_checked_date TEXT
                 )
             """)
             conn.execute("INSERT OR IGNORE INTO global_state (id) VALUES (1)")
+            conn.commit()
+
+    def has_wished(self, guild_id: int, user_id: int, year: int) -> bool:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM birthday_wishes_sent WHERE guild_id = ? AND user_id = ? AND year = ?",
+                (guild_id, user_id, year)
+            ).fetchone()
+        return bool(row)
+
+    def mark_wished(self, guild_id: int, user_id: int, year: int):
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT OR IGNORE INTO birthday_wishes_sent (guild_id, user_id, year) VALUES (?, ?, ?)",
+                (guild_id, user_id, year)
+            )
             conn.commit()
 
     def get_last_checked_date(self) -> Optional[str]:
@@ -156,59 +182,76 @@ class BirthdayDatabase:
         return row[0] if row else None
 
 
-# ── Birthday GIF Generator ────────────────────────────────────────────────────
-import io
-import requests
-from PIL import Image, ImageDraw, ImageFont, ImageSequence
+# ── Dynamic Birthday GIF Fetcher (Giphy API + Fallback) ───────────────────────
+import aiohttp
+import re
+import random
 
-def get_birthday_gif_with_name(name: str) -> io.BytesIO:
-    # Use a solid birthday GIF (or download a random one)
-    gif_url = "https://media.giphy.com/media/l4KibWpBGWchSqCRy/giphy.gif"
-    try:
-        resp = requests.get(gif_url, timeout=10)
-        if resp.status_code != 200:
-            return None
-            
-        im = Image.open(io.BytesIO(resp.content))
-        frames = []
-        
-        try:
-            font = ImageFont.truetype("arialbd.ttf", 40)
-        except Exception:
-            font = ImageFont.load_default()
-            
-        for frame in ImageSequence.Iterator(im):
-            frame = frame.convert("RGBA")
-            draw = ImageDraw.Draw(frame)
-            
-            text = f"Happy Birthday\n{name}!"
-            bbox = draw.textbbox((0, 0), text, font=font, align="center")
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            
-            x = (frame.width - text_w) / 2
-            y = frame.height - text_h - 30
-            
-            # Draw shadow
-            draw.text((x+2, y+2), text, font=font, fill="black", align="center")
-            draw.text((x, y), text, font=font, fill="white", align="center")
-            
-            frames.append(frame)
-            
-        out = io.BytesIO()
-        frames[0].save(
-            out, 
-            format="GIF", 
-            save_all=True, 
-            append_images=frames[1:], 
-            loop=0, 
-            duration=im.info.get("duration", 100)
+# Curated fallback GIFs (used only when Giphy API is unavailable)
+FALLBACK_BIRTHDAY_GIFS = [
+    "https://media.tenor.com/pFcRukOLzjgAAAAM/happy-birthday-happy-birthday-gif.gif",
+    "https://media.tenor.com/hgzA4YmfDOAAAAAM/happy-birthday-happy-birthday-to-you.gif",
+    "https://media.tenor.com/DVpjF2OFKdgAAAAM/happy-birthday-birthday.gif",
+    "https://media.tenor.com/NlhQLtHnHsAAAAAM/cat-birthday-cats-birthday.gif",
+    "https://media.tenor.com/NN5ynvO7ckAAAAAM/happy-birthday-happy-birthday-cheer.gif",
+    "https://media.tenor.com/aC3t4_ZJ2qMAAAAM/happy-birthday-confetti.gif",
+    "https://media.tenor.com/1G8N3E-b4bEAAAAM/happy-birthday-minions.gif",
+    "https://media.tenor.com/vH0n_O3bTfEAAAAM/happy-birthday-cake.gif",
+    "https://media.tenor.com/7v9hS3_xXG0AAAAM/happy-birthday.gif",
+    "https://media.tenor.com/C9R28l_7R_sAAAAM/happy-birthday-celebration.gif"
+]
+
+GIPHY_BIRTHDAY_TAGS = [
+    "happy birthday",
+    "birthday cake",
+    "birthday celebration",
+    "birthday party",
+    "happy birthday wishes",
+    "birthday confetti",
+    "birthday balloons",
+]
+
+async def fetch_dynamic_birthday_gif() -> str:
+    """
+    Fetch a random high-quality birthday GIF.
+    1st choice: Giphy API (uses GIPHY_API_KEY from .env)
+    Fallback: Curated Tenor GIF pool
+    """
+    giphy_key = os.getenv("GIPHY_API_KEY", "")
+
+    if giphy_key:
+        tag = random.choice(GIPHY_BIRTHDAY_TAGS)
+        giphy_url = (
+            f"https://api.giphy.com/v1/gifs/search"
+            f"?api_key={giphy_key}&q={tag.replace(' ', '+')}"
+            f"&limit=25&rating=g&lang=en"
         )
-        out.seek(0)
-        return out
-    except Exception as e:
-        print(f"Failed to generate birthday GIF: {e}")
-        return None
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    giphy_url,
+                    timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        results = data.get("data", [])
+                        if results:
+                            item = random.choice(results)
+                            gif_url = (
+                                item.get("images", {})
+                                    .get("original", {})
+                                    .get("url", "")
+                            )
+                            if gif_url:
+                                print(f"[Birthdays] Giphy GIF fetched: {gif_url[:60]}...")
+                                return gif_url
+        except Exception as e:
+            print(f"[Birthdays] Giphy API error: {e}")
+    else:
+        print("[Birthdays] GIPHY_API_KEY not set — using fallback GIF pool.")
+
+    # Fallback to curated Tenor pool
+    return random.choice(FALLBACK_BIRTHDAY_GIFS)
 
 # ── Birthday embed builder ────────────────────────────────────────────────────
 
@@ -254,7 +297,7 @@ def build_birthday_list_embed(guild: discord.Guild, birthdays: list[dict]) -> di
         return embed
 
     lines = []
-    today = datetime.date.today()
+    now = datetime.datetime.now(IST)
 
     for entry in birthdays:
         month_name = MONTH_NAMES[entry["month"]]
@@ -262,7 +305,7 @@ def build_birthday_list_embed(guild: discord.Guild, birthdays: list[dict]) -> di
         display = member.mention if member else f"@{entry['username']}"
 
         # Mark today's birthday
-        is_today = (entry["day"] == today.day and entry["month"] == today.month)
+        is_today = (entry["day"] == now.day and entry["month"] == now.month)
         star = " 🎉 **TODAY!**" if is_today else ""
 
         lines.append(f"**{entry['day']} {month_name}** — {display}{star}")
@@ -284,28 +327,41 @@ class BirthdayCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.db = BirthdayDatabase()
-        self._wish_loop_started = False
-        self._last_checked_date = None
 
-    # ── Task loop ─────────────────────────────────────────────────────────────
+    # ── Wishing Logic ─────────────────────────────────────────────────────────
 
-    @tasks.loop(hours=1)
-    async def check_birthdays(self):
-        """Every hour, check if it is anyone's birthday. Tracks the date persistently to ensure it fires once per day."""
-        # Convert to Indian Standard Time (IST) UTC+05:30
-        ist = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
-        now = datetime.datetime.now(ist)
-        current_date_str = now.date().isoformat()
-        
-        # If we already sent wishes for today (persisted in DB), do nothing.
-        last_checked = self.db.get_last_checked_date()
-        if last_checked == current_date_str:
-            return
-            
-        self.db.set_last_checked_date(current_date_str)
-        await self._send_birthday_wishes(now.day, now.month)
+    async def _send_single_wish(self, guild: discord.Guild, member: discord.Member, day: int, month: int, year: int) -> bool:
+        """Send a birthday wish for a single member in the guild's birthday channel if not already sent this year."""
+        if self.db.has_wished(guild.id, member.id, year):
+            return False
 
-    async def _send_birthday_wishes(self, day: int, month: int):
+        channel_id = self.db.get_birthday_channel(guild.id)
+        if not channel_id:
+            print(f"⚠️ No birthday channel set for guild: {guild.name}")
+            return False
+
+        channel = guild.get_channel(channel_id)
+        if not channel or not isinstance(channel, discord.TextChannel):
+            print(f"⚠️ Birthday channel not found in guild: {guild.name}")
+            return False
+
+        try:
+            embed = build_birthday_embed(member, day, month)
+            gif_url = await fetch_dynamic_birthday_gif()
+            embed.set_image(url=gif_url)
+            await channel.send(
+                content="@everyone",
+                embed=embed,
+                allowed_mentions=discord.AllowedMentions(everyone=True)
+            )
+            self.db.mark_wished(guild.id, member.id, year)
+            print(f"🎉 Sent birthday wish for {member.display_name} in {guild.name}")
+            return True
+        except Exception as e:
+            print(f"❌ Failed to send birthday wish in {guild.name}: {e}")
+            return False
+
+    async def _send_birthday_wishes(self, day: int, month: int, year: int):
         """Find today's birthdays and send wishes in each guild's birthday channel."""
         entries = self.db.get_todays_birthdays(day, month)
         if not entries:
@@ -318,16 +374,6 @@ class BirthdayCog(commands.Cog):
             if not guild:
                 continue
 
-            channel_id = self.db.get_birthday_channel(guild.id)
-            if not channel_id:
-                print(f"⚠️ No birthday channel set for guild: {guild.name}")
-                continue
-
-            channel = guild.get_channel(channel_id)
-            if not channel or not isinstance(channel, discord.TextChannel):
-                print(f"⚠️ Birthday channel not found in guild: {guild.name}")
-                continue
-
             member = guild.get_member(entry["user_id"])
             if not member:
                 try:
@@ -336,22 +382,21 @@ class BirthdayCog(commands.Cog):
                     print(f"⚠️ Could not find member {entry['user_id']} in {guild.name}")
                     continue
 
-            try:
-                embed = build_birthday_embed(member, day, month)
-                
-                # Generate custom GIF
-                gif_bytes = get_birthday_gif_with_name(member.display_name)
-                
-                if gif_bytes:
-                    file = discord.File(gif_bytes, filename="birthday.gif")
-                    embed.set_image(url="attachment://birthday.gif")
-                    await channel.send(content="@everyone", embed=embed, file=file)
-                else:
-                    await channel.send(content="@everyone", embed=embed)
-                    
-                print(f"🎉 Sent birthday wish for {member.display_name} in {guild.name}")
-            except Exception as e:
-                print(f"❌ Failed to send birthday wish in {guild.name}: {e}")
+            await self._send_single_wish(guild, member, day, month, year)
+
+    # ── Task loop ─────────────────────────────────────────────────────────────
+
+    @tasks.loop(hours=1)
+    async def check_birthdays(self):
+        """Every hour, check if it is anyone's birthday in IST and send wishes."""
+        now = datetime.datetime.now(IST)
+        await self._send_birthday_wishes(now.day, now.month, now.year)
+
+    async def _startup_check(self):
+        """Run an immediate birthday check on bot startup once ready."""
+        await self.bot.wait_until_ready()
+        now = datetime.datetime.now(IST)
+        await self._send_birthday_wishes(now.day, now.month, now.year)
 
     @check_birthdays.before_loop
     async def before_check_birthdays(self):
@@ -361,6 +406,7 @@ class BirthdayCog(commands.Cog):
         if not self.check_birthdays.is_running():
             self.check_birthdays.start()
             print("🎂 Birthday check loop started!")
+        self.bot.loop.create_task(self._startup_check())
 
     def cog_unload(self):
         self.check_birthdays.cancel()
@@ -420,12 +466,20 @@ class BirthdayCog(commands.Cog):
             month=month
         )
 
+        now = datetime.datetime.now(IST)
+        wished_now = False
+        if day == now.day and month == now.month:
+            # It's their birthday TODAY! Announce happy birthday right away
+            wished_now = await self._send_single_wish(interaction.guild, target_user, day, month, now.year)
+
         month_name = MONTH_NAMES[month]
+        extra_note = "\n\n🎉 **Today is their birthday!** Happy Birthday wishes have been announced in the birthday channel! 🥳" if wished_now else ""
+
         embed = discord.Embed(
             title="🎂  Birthday Added!",
             description=(
                 f"Successfully stored the birthday for {target_user.mention}!\n\n"
-                f"🗓️ **Date:** {day} {month_name}"
+                f"🗓️ **Date:** {day} {month_name}{extra_note}"
             ),
             color=0x9B59B6,
             timestamp=datetime.datetime.now(datetime.timezone.utc)
@@ -501,6 +555,9 @@ class BirthdayCog(commands.Cog):
             f"✅ Birthday announcements will now be sent to {channel.mention}! 🎂",
             ephemeral=True
         )
+        # Check if there are any pending birthdays today in this guild that need wishing
+        now = datetime.datetime.now(IST)
+        await self._send_birthday_wishes(now.day, now.month, now.year)
 
     @birthday_group.command(
         name="testwish",
@@ -526,10 +583,16 @@ class BirthdayCog(commands.Cog):
             )
             return
 
-        today = datetime.date.today()
-        embed = build_birthday_embed(user, today.day, today.month)
+        now = datetime.datetime.now(IST)
+        embed = build_birthday_embed(user, now.day, now.month)
+        gif_url = await fetch_dynamic_birthday_gif()
+        embed.set_image(url=gif_url)
+        await channel.send(
+            content="@everyone",
+            embed=embed,
+            allowed_mentions=discord.AllowedMentions(everyone=True)
+        )
 
-        await channel.send(content="@everyone", embed=embed)
         await interaction.response.send_message(
             f"✅ Test birthday wish sent for {user.mention} in {channel.mention}!",
             ephemeral=True
