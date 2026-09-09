@@ -8,11 +8,29 @@ function Landing() {
     setLoading(true);
     try {
       const redirectUri = window.location.origin + '/auth/callback';
+      const clientId = import.meta.env.VITE_DISCORD_CLIENT_ID;
+
+      // 1. If client ID is defined directly in environment, navigate immediately
+      if (clientId) {
+        const oauthUrl = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=identify%20guilds&prompt=consent`;
+        window.location.href = oauthUrl;
+        return;
+      }
+
+      // 2. Otherwise fetch authorization URL from bot API
       const res = await api.get(`/auth/discord?redirect_uri=${encodeURIComponent(redirectUri)}`);
+      
+      // Verify response is valid JSON with a url property (not an HTML fallback)
+      if (!res.data || typeof res.data !== 'object' || !res.data.url) {
+        throw new Error(
+          'Bot API did not return a valid login URL. Please make sure your bot is running and that your Vercel rewrites or VITE_API_URL are set to your bot server IP/port.'
+        );
+      }
+
       window.location.href = res.data.url;
     } catch (err) {
-      console.error(err);
-      const msg = err.response?.data?.error || 'Failed to initialize login. Is the bot running?';
+      console.error('Login error:', err);
+      const msg = err.response?.data?.error || err.message || 'Failed to initialize login. Is the bot server online?';
       alert(msg);
       setLoading(false);
     }

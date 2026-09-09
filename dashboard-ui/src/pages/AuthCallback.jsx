@@ -20,6 +20,11 @@ function AuthCallback({ setUser }) {
           code,
           redirect_uri: window.location.origin + '/auth/callback'
         });
+
+        if (!res.data || typeof res.data !== 'object' || !res.data.token) {
+          throw new Error('Bot server returned an invalid response. Is your bot API online and reachable from Vercel?');
+        }
+
         localStorage.setItem('bot_dashboard_token', res.data.token);
         setUser(res.data.user);
         navigate('/dashboard');

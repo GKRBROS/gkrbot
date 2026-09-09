@@ -55,6 +55,9 @@ function App() {
         <Route path="welcome" element={<Welcome />} />
         <Route path="music" element={<Music />} />
       </Route>
+
+      {/* Fallback route for unknown paths like /undefined */}
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
