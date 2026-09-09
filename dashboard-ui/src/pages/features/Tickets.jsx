@@ -2,11 +2,15 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../api';
 import { withSync, syncParams } from '../../sync';
+import { MultiSelect } from '../../components/Select';
 
 function Tickets() {
   const { guildId } = useParams();
   const [categories, setCategories] = useState([]);
   const [channels, setChannels] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [pingRoles, setPingRoles] = useState([]);
+  const [adminRoles, setAdminRoles] = useState([]);
   const [logChannelId, setLogChannelId] = useState('');
   const [logChannelSaved, setLogChannelSaved] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -16,23 +20,23 @@ function Tickets() {
   const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({
     name: '', button_label: '', button_emoji: '🎫', embed_title: 'New Ticket', embed_description: '',
-    ping_roles: '', admin_roles: '',
   });
 
   const EMPTY_FORM = {
     name: '', button_label: '', button_emoji: '🎫', embed_title: 'New Ticket', embed_description: '',
-    ping_roles: '', admin_roles: '',
   };
 
   const fetchData = useCallback(async () => {
     try {
-      const [ticketsRes, channelsRes] = await Promise.all([
+      const [ticketsRes, channelsRes, rolesRes] = await Promise.all([
         api.get(`/guilds/${guildId}/tickets`),
         api.get(`/guilds/${guildId}/channels`),
+        api.get(`/guilds/${guildId}/roles`),
       ]);
       setCategories(ticketsRes.data.categories || []);
       setLogChannelId(ticketsRes.data.log_channel_id || '');
       setChannels(channelsRes.data.channels || []);
+      setRoles(rolesRes.data.roles || []);
     } catch (err) {
       console.error('Failed to fetch tickets data', err);
     }
@@ -46,15 +50,18 @@ function Tickets() {
     setError('');
     setSubmitting(true);
     try {
+      const payload = { ...form, ping_roles: pingRoles.join(', '), admin_roles: adminRoles.join(', ') };
       if (editingId) {
-        await api.put(`/guilds/${guildId}/tickets/categories/${editingId}`, withSync(form));
+        await api.put(`/guilds/${guildId}/tickets/categories/${editingId}`, withSync(payload));
       } else {
-        await api.post(`/guilds/${guildId}/tickets`, withSync(form));
+        await api.post(`/guilds/${guildId}/tickets`, withSync(payload));
       }
       await fetchData();
       setShowForm(false);
       setEditingId(null);
       setForm(EMPTY_FORM);
+      setPingRoles([]);
+      setAdminRoles([]);
     } catch (err) {
       setError(err.response?.data?.error || (editingId ? 'Failed to update category' : 'Failed to create category'));
     }
@@ -69,9 +76,9 @@ function Tickets() {
       button_emoji: cat.button_emoji || '🎫',
       embed_title: cat.embed_title || '',
       embed_description: cat.embed_description || '',
-      ping_roles: cat.ping_roles || '',
-      admin_roles: cat.admin_roles || '',
     });
+    setPingRoles(cat.ping_roles ? cat.ping_roles.split(',').map(s => s.trim()).filter(Boolean) : []);
+    setAdminRoles(cat.admin_roles ? cat.admin_roles.split(',').map(s => s.trim()).filter(Boolean) : []);
     setShowForm(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -121,17 +128,16 @@ function Tickets() {
           <p style={{ color: 'var(--text-muted)', fontSize: '13px', marginBottom: '16px', lineHeight: 1.5 }}>
             When a ticket is closed, a full transcript HTML file will be sent to this channel.
           </p>
-          <div className="flex gap-2">
-            <select
-              value={logChannelId}
-              onChange={e => setLogChannelId(e.target.value)}
-              className="input-field flex-1"
-            >
-              <option value="">None (Disabled)</option>
-              {channels.map(ch => (
-                <option key={ch.id} value={ch.id}>#{ch.name}</option>
-              ))}
-            </select>
+          <div className="flex gap-2" style={{ alignItems: 'flex-start' }}>
+            <div className="flex-1">
+              <Select
+                value={logChannelId}
+                onChange={setLogChannelId}
+                options={[{ value: '', label: '🚫 None (Disabled)' }, ...channels.map(ch => ({ value: ch.id, label: '# ' + ch.name })) ]}
+                placeholder="Select a log channel..."
+                searchable
+              />
+            </div>
             <button onClick={handleSaveLogChannel} className={`btn ${logChannelSaved ? 'btn-success' : 'btn-primary'}`}>
               {logChannelSaved ? '✅ Saved' : 'Save'}
             </button>
@@ -200,12 +206,22 @@ function Tickets() {
 
           <div className="grid-2">
             <div className="form-group">
-              <label className="form-label">Ping Roles (Role IDs, comma separated — optional)</label>
-              <input type="text" className="input-field" value={form.ping_roles} onChange={e => setForm({...form, ping_roles: e.target.value})} placeholder="e.g. 123456789012345678, 987654321098765432" />
+              <label className="form-label">Ping Roles (mentioned when a ticket opens)</label>
+              <MultiSelect
+                values={pingRoles}
+                onChange={setPingRoles}
+                options={roles.map(r => ({ value: r.id, label: r.name }))}
+                placeholder="Select roles to ping..."
+              />
             </div>
             <div className="form-group">
-              <label className="form-label">Admin Roles (Role IDs, comma separated — optional)</label>
-              <input type="text" className="input-field" value={form.admin_roles} onChange={e => setForm({...form, admin_roles: e.target.value})} placeholder="e.g. 123456789012345678" />
+              <label className="form-label">Admin Roles (can see &amp; manage tickets)</label>
+              <MultiSelect
+                values={adminRoles}
+                onChange={setAdminRoles}
+                options={roles.map(r => ({ value: r.id, label: r.name }))}
+                placeholder="Select staff roles..."
+              />
             </div>
           </div>
 
@@ -213,7 +229,7 @@ function Tickets() {
             <button
               type="button"
               className="btn btn-ghost"
-              onClick={() => { setShowForm(false); setEditingId(null); setForm(EMPTY_FORM); }}
+              onClick={() => { setShowForm(false); setEditingId(null); setForm(EMPTY_FORM); setPingRoles([]); setAdminRoles([]); }}
             >
               Cancel
             </button>

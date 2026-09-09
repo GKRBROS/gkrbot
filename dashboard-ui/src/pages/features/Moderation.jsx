@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync, syncParams } from '../../sync';
+import { Select } from '../../components/Select';
 
 function Moderation() {
   const { guildId } = useParams();
@@ -125,17 +126,16 @@ function Moderation() {
         </p>
 
         {/* Add Role Form */}
-        <form onSubmit={handleAddRole} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '24px' }}>
-          <select
-            className="form-control"
-            style={{ maxWidth: '320px' }}
-            value={selectedRole}
-            onChange={e => setSelectedRole(e.target.value)}
-          >
-            {roles.map(r => (
-              <option key={r.id} value={r.id}>{r.name}</option>
-            ))}
-          </select>
+        <form onSubmit={handleAddRole} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: '24px' }}>
+          <div style={{ maxWidth: '320px', flex: 1 }}>
+            <Select
+              value={selectedRole}
+              onChange={setSelectedRole}
+              options={roles.map(r => ({ value: r.id, label: r.name }))}
+              placeholder="Select a role..."
+              searchable
+            />
+          </div>
           <button
             type="submit"
             disabled={submitting || !selectedRole}

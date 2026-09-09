@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync, syncParams } from '../../sync';
+import { Select } from '../../components/Select';
 
 function StickyMessages() {
   const { guildId } = useParams();
@@ -130,16 +131,13 @@ function StickyMessages() {
         <form onSubmit={handleAddSticky}>
           <div className="form-group" style={{ maxWidth: '400px', marginBottom: '16px' }}>
             <label className="form-label">Target Channel</label>
-            <select
-              className="form-control"
+            <Select
               value={selectedChannel}
-              onChange={e => setSelectedChannel(e.target.value)}
-              required
-            >
-              {channels.map(ch => (
-                <option key={ch.id} value={ch.id}>#{ch.name}</option>
-              ))}
-            </select>
+              onChange={setSelectedChannel}
+              options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
+              placeholder="Select a channel..."
+              searchable
+            />
           </div>
 
           <div className="form-group" style={{ marginBottom: '16px' }}>

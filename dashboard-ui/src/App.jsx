@@ -16,6 +16,9 @@ import Moderation from './pages/features/Moderation';
 import StickyMessages from './pages/features/StickyMessages';
 import AutoReactions from './pages/features/AutoReactions';
 import ServerSync from './pages/features/ServerSync';
+import CustomCommands from './pages/features/CustomCommands';
+import Economy from './pages/features/Economy';
+import TempVC from './pages/features/TempVC';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -62,7 +65,10 @@ function App() {
         <Route path="moderation" element={<Moderation />} />
         <Route path="sticky" element={<StickyMessages />} />
         <Route path="auto-reactions" element={<AutoReactions />} />
+        <Route path="custom-commands" element={<CustomCommands />} />
+        <Route path="temp-vc" element={<TempVC />} />
         <Route path="music" element={<Music />} />
+        <Route path="economy" element={<Economy />} />
         <Route path="sync" element={<ServerSync />} />
       </Route>
 

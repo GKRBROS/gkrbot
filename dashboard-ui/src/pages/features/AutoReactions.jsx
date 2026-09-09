@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync, syncParams } from '../../sync';
+import { Select } from '../../components/Select';
 
 const QUICK_EMOJIS = ['👍', '❤️', '🔥', '🎉', '⭐', '📢', '✅', '🚀'];
 
@@ -133,16 +134,13 @@ function AutoReactions() {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '16px' }}>
             <div className="form-group">
               <label className="form-label">Channel</label>
-              <select
-                className="form-control"
+              <Select
                 value={selectedChannel}
-                onChange={e => setSelectedChannel(e.target.value)}
-                required
-              >
-                {channels.map(ch => (
-                  <option key={ch.id} value={ch.id}>#{ch.name}</option>
-                ))}
-              </select>
+                onChange={setSelectedChannel}
+                options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
+                placeholder="Select a channel..."
+                searchable
+              />
             </div>
 
             <div className="form-group">

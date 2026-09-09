@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync } from '../../sync';
+import { Select } from '../../components/Select';
 
 function Welcome() {
   const { guildId } = useParams();
@@ -124,17 +125,13 @@ function Welcome() {
           <div className="glass-panel" style={{ padding: '24px', opacity: config.enabled ? 1 : 0.5, pointerEvents: config.enabled ? 'auto' : 'none', transition: 'all 0.3s' }}>
             <div className="form-group">
               <label className="form-label">Welcome Channel</label>
-              <select
-                className="input-field"
+              <Select
                 value={config.channel_id}
-                onChange={e => setConfig({ ...config, channel_id: e.target.value })}
-                required={config.enabled}
-              >
-                <option value="" disabled>Select a channel...</option>
-                {channels.map(ch => (
-                  <option key={ch.id} value={ch.id}>#{ch.name}</option>
-                ))}
-              </select>
+                onChange={v => setConfig({ ...config, channel_id: v })}
+                options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
+                placeholder="Select a channel..."
+                searchable
+              />
             </div>
 
             <div className="form-group" style={{ marginBottom: 0 }}>
@@ -226,17 +223,13 @@ function Welcome() {
           <div className="glass-panel" style={{ padding: '24px', opacity: config.leave_enabled ? 1 : 0.5, pointerEvents: config.leave_enabled ? 'auto' : 'none', transition: 'all 0.3s' }}>
             <div className="form-group">
               <label className="form-label">Leave Channel</label>
-              <select
-                className="input-field"
+              <Select
                 value={config.leave_channel_id}
-                onChange={e => setConfig({ ...config, leave_channel_id: e.target.value })}
-                required={config.leave_enabled}
-              >
-                <option value="" disabled>Select a channel...</option>
-                {channels.map(ch => (
-                  <option key={ch.id} value={ch.id}>#{ch.name}</option>
-                ))}
-              </select>
+                onChange={v => setConfig({ ...config, leave_channel_id: v })}
+                options={[{ value: '', label: 'None (Disabled)' }, ...channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))]}
+                placeholder="Select a channel..."
+                searchable
+              />
             </div>
 
             <div className="form-group">

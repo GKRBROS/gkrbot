@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync } from '../../sync';
+import { Select } from '../../components/Select';
 
 function Security() {
   const { guildId } = useParams();
@@ -219,16 +220,13 @@ function Security() {
             {/* Log Channel */}
             <div className="form-group" style={{ maxWidth: '420px' }}>
               <label className="form-label">Security Incident Log Channel</label>
-              <select
-                className="form-control"
+              <Select
                 value={config.log_channel_id || ''}
-                onChange={e => setConfig({ ...config, log_channel_id: e.target.value })}
-              >
-                <option value="">-- Disabled (No Logging) --</option>
-                {channels.map(ch => (
-                  <option key={ch.id} value={ch.id}>#{ch.name}</option>
-                ))}
-              </select>
+                onChange={v => setConfig({ ...config, log_channel_id: v })}
+                options={[{ value: '', label: '🚫 Disabled (No Logging)' }, ...channels.map(ch => ({ value: ch.id, label: '# ' + ch.name })) ]}
+                placeholder="Select a log channel..."
+                searchable
+              />
               <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
                 Where warnings, deleted spam, and scan triggers will be logged.
               </span>

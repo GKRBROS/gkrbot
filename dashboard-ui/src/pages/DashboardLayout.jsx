@@ -51,12 +51,15 @@ function DashboardLayout({ user }) {
       items: [
         { name: 'Sticky Messages', path: `/dashboard/${guildId}/sticky`, icon: '📌' },
         { name: 'Auto Reactions', path: `/dashboard/${guildId}/auto-reactions`, icon: '⚡' },
+        { name: 'Custom Commands', path: `/dashboard/${guildId}/custom-commands`, icon: '💬' },
+        { name: 'Temp Voice Channels', path: `/dashboard/${guildId}/temp-vc`, icon: '🎙️' },
       ]
     },
     {
       label: 'Entertainment',
       items: [
         { name: 'Music Player', path: `/dashboard/${guildId}/music`, icon: '🎵' },
+        { name: 'Economy & Shop', path: `/dashboard/${guildId}/economy`, icon: '🪙' },
       ]
     },
     {

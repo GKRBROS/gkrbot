@@ -1248,6 +1248,221 @@ async def handle_moderation_staff_del(request: web.Request):
 
     return web.json_response({"success": True})
 
+# --- Voice Channels Endpoint (for Temp VC etc.) ---
+
+async def handle_bot_voice_channels(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = request.match_info["guild_id"]
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(int(guild_id))
+    if not guild:
+        return web.json_response({"error": "Guild not found"}, status=404)
+
+    channels = []
+    categories = []
+    for ch in guild.voice_channels:
+        channels.append({"id": str(ch.id), "name": ch.name})
+    for cat in guild.categories:
+        categories.append({"id": str(cat.id), "name": cat.name})
+    return web.json_response({"channels": channels, "categories": categories})
+
+# --- Custom Commands Endpoints ---
+
+async def handle_custom_commands_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import custom_commands
+    db = custom_commands.CustomCommandDatabase()
+    db.initialize()
+    cmds = db.list_all(guild_id)
+    return web.json_response({"commands": [
+        {"id": c["id"], "name": c["name"], "response": c["response"], "uses": c.get("uses", 0)}
+        for c in cmds
+    ]})
+
+async def handle_custom_commands_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    name = data.get("name", "").strip().lower().lstrip("!")
+    response = data.get("response", "").strip()
+    if not name or not response:
+        return web.json_response({"error": "Command name and response are required"}, status=400)
+    if len(name) > 30:
+        return web.json_response({"error": "Command name must be 30 characters or fewer"}, status=400)
+    if len(response) > 2000:
+        return web.json_response({"error": "Response must be 2000 characters or fewer"}, status=400)
+    import custom_commands
+    db = custom_commands.CustomCommandDatabase()
+    db.initialize()
+    ok = db.create(guild_id, name, response, created_by=0)
+    if not ok:
+        return web.json_response({"error": f"A command named !{name} already exists"}, status=400)
+    return web.json_response({"success": True})
+
+async def handle_custom_commands_put(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    name = request.match_info["name"].lower()
+    data = await request.json()
+    response = data.get("response", "").strip()
+    if not response:
+        return web.json_response({"error": "Response is required"}, status=400)
+    if len(response) > 2000:
+        return web.json_response({"error": "Response must be 2000 characters or fewer"}, status=400)
+    import custom_commands
+    db = custom_commands.CustomCommandDatabase()
+    ok = db.edit(guild_id, name, response)
+    if not ok:
+        return web.json_response({"error": "Command not found"}, status=404)
+    return web.json_response({"success": True})
+
+async def handle_custom_commands_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    name = request.match_info["name"].lower()
+    import custom_commands
+    db = custom_commands.CustomCommandDatabase()
+    ok = db.delete(guild_id, name)
+    if not ok:
+        return web.json_response({"error": "Command not found"}, status=404)
+    return web.json_response({"success": True})
+
+# --- Economy Endpoints ---
+
+async def handle_economy_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import economy
+    db = economy.EconomyDatabase()
+    db.initialize()
+    items = db.get_shop_items(guild_id)
+    with db._conn() as conn:
+        row = conn.execute("SELECT rob_enabled, crime_enabled FROM eco_settings WHERE guild_id = ?", (str(guild_id),)).fetchone()
+    return web.json_response({
+        "shop_items": [
+            {"id": i["id"], "name": i["name"], "description": i["description"],
+             "price": i["price"], "role_id": i["role_id"]}
+            for i in items
+        ],
+        "settings": {
+            "rob_enabled": bool(row["rob_enabled"]) if row else True,
+            "crime_enabled": bool(row["crime_enabled"]) if row else True,
+        }
+    })
+
+async def handle_economy_shop_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    name = data.get("name", "").strip()
+    description = data.get("description", "").strip()
+    try:
+        price = int(data.get("price", 0))
+    except (ValueError, TypeError):
+        return web.json_response({"error": "Price must be a number"}, status=400)
+    role_id = data.get("role_id") or None
+    if not name or price < 0:
+        return web.json_response({"error": "Item name and a valid price are required"}, status=400)
+    import economy
+    db = economy.EconomyDatabase()
+    db.initialize()
+    item_id = db.add_shop_item(guild_id, name, description, price, int(role_id) if role_id else None)
+    return web.json_response({"success": True, "id": item_id})
+
+async def handle_economy_shop_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    item_id = int(request.match_info["item_id"])
+    import economy
+    db = economy.EconomyDatabase()
+    ok = db.remove_shop_item(guild_id, item_id)
+    if not ok:
+        return web.json_response({"error": "Item not found"}, status=404)
+    return web.json_response({"success": True})
+
+async def handle_economy_settings_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    import economy
+    db = economy.EconomyDatabase()
+    db.initialize()
+    with db._conn() as conn:
+        conn.execute("""
+            INSERT INTO eco_settings (guild_id, rob_enabled, crime_enabled)
+            VALUES (?, ?, ?)
+            ON CONFLICT(guild_id) DO UPDATE SET
+                rob_enabled = excluded.rob_enabled,
+                crime_enabled = excluded.crime_enabled
+        """, (
+            str(guild_id),
+            1 if data.get("rob_enabled", True) else 0,
+            1 if data.get("crime_enabled", True) else 0,
+        ))
+        conn.commit()
+    return web.json_response({"success": True})
+
+# --- Temp VC Endpoints ---
+
+async def handle_tempvc_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import temp_vc
+    hub_ids = temp_vc.get_hubs(guild_id)
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    hubs = []
+    for cid in hub_ids:
+        cat_id = None
+        with temp_vc._db() as conn:
+            row = conn.execute("SELECT category_id FROM tempvc_hubs WHERE channel_id = ?", (cid,)).fetchone()
+            if row:
+                cat_id = row["category_id"]
+        ch = guild.get_channel(int(cid)) if guild else None
+        hubs.append({
+            "channel_id": str(cid),
+            "channel_name": ch.name if ch else f"Channel {cid}",
+            "category_id": str(cat_id) if cat_id else None,
+        })
+    return web.json_response({"hubs": hubs})
+
+async def handle_tempvc_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    channel_id = data.get("channel_id")
+    if not channel_id:
+        return web.json_response({"error": "A voice channel is required"}, status=400)
+    category_id = data.get("category_id") or None
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    ch = guild.get_channel(int(channel_id)) if guild else None
+    if not ch:
+        return web.json_response({"error": "Voice channel not found on this server"}, status=404)
+    import temp_vc
+    temp_vc.add_hub(guild_id, ch.id, int(category_id) if category_id else None)
+    return web.json_response({"success": True})
+
+async def handle_tempvc_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    channel_id = int(request.match_info["channel_id"])
+    import temp_vc
+    temp_vc.remove_hub(guild_id, channel_id)
+    return web.json_response({"success": True})
+
 # --- Multi-Server Sync Engine ---
 
 async def handle_guild_sync(request: web.Request):
@@ -1452,6 +1667,21 @@ class DashboardAPI(commands.Cog):
             # Channels & Roles (shared)
             web.get("/api/guilds/{guild_id}/channels", handle_bot_channels),
             web.get("/api/guilds/{guild_id}/roles", handle_bot_roles),
+            web.get("/api/guilds/{guild_id}/voice-channels", handle_bot_voice_channels),
+            # Custom Commands
+            web.get("/api/guilds/{guild_id}/custom-commands", handle_custom_commands_get),
+            web.post("/api/guilds/{guild_id}/custom-commands", handle_custom_commands_post),
+            web.put("/api/guilds/{guild_id}/custom-commands/{name}", handle_custom_commands_put),
+            web.delete("/api/guilds/{guild_id}/custom-commands/{name}", handle_custom_commands_delete),
+            # Economy
+            web.get("/api/guilds/{guild_id}/economy", handle_economy_get),
+            web.post("/api/guilds/{guild_id}/economy/shop", handle_economy_shop_post),
+            web.delete("/api/guilds/{guild_id}/economy/shop/{item_id}", handle_economy_shop_delete),
+            web.post("/api/guilds/{guild_id}/economy/settings", handle_economy_settings_post),
+            # Temp VC
+            web.get("/api/guilds/{guild_id}/tempvc", handle_tempvc_get),
+            web.post("/api/guilds/{guild_id}/tempvc", handle_tempvc_post),
+            web.delete("/api/guilds/{guild_id}/tempvc/{channel_id}", handle_tempvc_delete),
             # Stream Alerts
             web.get("/api/guilds/{guild_id}/stream-alerts", handle_stream_alerts_get),
             web.post("/api/guilds/{guild_id}/stream-alerts", handle_stream_alerts_post),

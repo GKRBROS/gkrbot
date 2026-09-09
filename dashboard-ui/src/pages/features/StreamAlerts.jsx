@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../api';
 import { withSync, syncParams } from '../../sync';
+import { Select } from '../../components/Select';
 
 function StreamAlerts() {
   const { guildId } = useParams();
@@ -13,6 +14,8 @@ function StreamAlerts() {
   const [editingAlert, setEditingAlert] = useState(null);
   const [editForm, setEditForm] = useState(null);
   const [editSaving, setEditSaving] = useState(false);
+  const [addPlatform, setAddPlatform] = useState('youtube');
+  const [addChannel, setAddChannel] = useState('');
 
   useEffect(() => {
     fetchData();
@@ -35,20 +38,21 @@ function StreamAlerts() {
   const handleAddAlert = async (e) => {
     e.preventDefault();
     setError('');
-    
+
     const data = {
-      platform: e.target.platform.value,
+      platform: addPlatform,
       creator_username: e.target.username.value,
-      notification_channel_id: e.target.channel.value,
+      notification_channel_id: addChannel,
     };
-    
+
     if (!data.creator_username || !data.notification_channel_id) return;
-    
+
     setSubmitting(true);
     try {
       await api.post(`/guilds/${guildId}/stream-alerts`, withSync(data));
       await fetchData();
       e.target.reset();
+      setAddChannel('');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to add alert');
     }
@@ -130,11 +134,15 @@ function StreamAlerts() {
         <form onSubmit={handleAddAlert} className="flex gap-4 items-end" style={{ flexWrap: 'wrap' }}>
           <div className="form-group" style={{ flex: 1, minWidth: '150px', marginBottom: 0 }}>
             <label className="form-label">Platform</label>
-            <select name="platform" className="input-field" required>
-              <option value="youtube">YouTube</option>
-              <option value="twitch">Twitch</option>
-              <option value="kick">Kick</option>
-            </select>
+            <Select
+              value={addPlatform}
+              onChange={setAddPlatform}
+              options={[
+                { value: 'youtube', label: '▶️ YouTube' },
+                { value: 'twitch', label: '🟣 Twitch' },
+                { value: 'kick', label: '🟢 Kick' },
+              ]}
+            />
           </div>
           <div className="form-group" style={{ flex: 2, minWidth: '200px', marginBottom: 0 }}>
             <label className="form-label">Channel Name/Handle</label>
@@ -142,12 +150,13 @@ function StreamAlerts() {
           </div>
           <div className="form-group" style={{ flex: 2, minWidth: '200px', marginBottom: 0 }}>
             <label className="form-label">Notification Channel</label>
-            <select name="channel" className="input-field" required>
-              <option value="">Select a channel...</option>
-              {channels.map(ch => (
-                <option key={ch.id} value={ch.id}>#{ch.name}</option>
-              ))}
-            </select>
+            <Select
+              value={addChannel}
+              onChange={setAddChannel}
+              options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
+              placeholder="Select a channel..."
+              searchable
+            />
           </div>
           <div>
             <button type="submit" className="btn btn-primary" style={{ padding: '10px 24px' }} disabled={submitting}>
@@ -243,17 +252,13 @@ function StreamAlerts() {
 
             <div className="form-group">
               <label className="form-label">Notification Channel</label>
-              <select
-                className="input-field"
+              <Select
                 value={editForm.notification_channel_id}
-                onChange={e => setEditForm({ ...editForm, notification_channel_id: e.target.value })}
-                required
-              >
-                <option value="">Select a channel...</option>
-                {channels.map(ch => (
-                  <option key={ch.id} value={ch.id}>#{ch.name}</option>
-                ))}
-              </select>
+                onChange={v => setEditForm({ ...editForm, notification_channel_id: v })}
+                options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
+                placeholder="Select a channel..."
+                searchable
+              />
             </div>
 
             <div className="toggle-wrapper" style={{ marginBottom: '16px' }}>
