@@ -27,18 +27,41 @@ function Tickets() {
   };
 
   const fetchData = useCallback(async () => {
-    try {
-      const [ticketsRes, channelsRes, rolesRes] = await Promise.all([
-        api.get(`/guilds/${guildId}/tickets`),
-        api.get(`/guilds/${guildId}/channels`),
-        api.get(`/guilds/${guildId}/roles`),
-      ]);
-      setCategories(ticketsRes.data.categories || []);
-      setLogChannelId(ticketsRes.data.log_channel_id || '');
-      setChannels(channelsRes.data.channels || []);
-      setRoles(rolesRes.data.roles || []);
-    } catch (err) {
-      console.error('Failed to fetch tickets data', err);
+    // Load each endpoint independently so one failure doesn't blank the page
+    const [ticketsRes, channelsRes, rolesRes] = await Promise.allSettled([
+      api.get(`/guilds/${guildId}/tickets`),
+      api.get(`/guilds/${guildId}/channels`),
+      api.get(`/guilds/${guildId}/roles`),
+    ]);
+
+    const failures = [];
+
+    if (ticketsRes.status === 'fulfilled') {
+      setCategories(ticketsRes.value.data.categories || []);
+      setLogChannelId(ticketsRes.value.data.log_channel_id || '');
+    } else {
+      failures.push(
+        `Tickets config: ${ticketsRes.reason?.response?.data?.error || ticketsRes.reason?.message || 'failed to load'}`
+      );
+    }
+
+    if (channelsRes.status === 'fulfilled') {
+      setChannels(channelsRes.value.data.channels || []);
+    } else {
+      failures.push(`Channels: ${channelsRes.reason?.response?.data?.error || channelsRes.reason?.message || 'failed to load'}`);
+    }
+
+    if (rolesRes.status === 'fulfilled') {
+      setRoles(rolesRes.value.data.roles || []);
+    } else {
+      failures.push(`Roles: ${rolesRes.reason?.response?.data?.error || rolesRes.reason?.message || 'failed to load'}`);
+    }
+
+    if (failures.length > 0) {
+      setError(failures.join(' • '));
+      console.error('Failed to fetch tickets data', { ticketsRes, channelsRes, rolesRes });
+    } else {
+      setError('');
     }
     setLoading(false);
   }, [guildId]);
@@ -114,10 +137,27 @@ function Tickets() {
 
   return (
     <div className="animate-fade-in">
-      <div className="page-header">
-        <h1 className="page-title">🎫 Tickets</h1>
-        <p className="page-subtitle">Manage ticket categories and configure the transcript log channel.</p>
+      <div className="page-header flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '12px' }}>
+        <div>
+          <h1 className="page-title">🎫 Tickets</h1>
+          <p className="page-subtitle">Manage ticket categories and configure the transcript log channel.</p>
+        </div>
+        <button className="btn btn-ghost" onClick={() => { setLoading(true); fetchData(); }} title="Reload data">
+          ↻ Reload
+        </button>
       </div>
+
+      {error && (
+        <div className="alert alert-error">
+          ⚠️ {error}
+          <button
+            onClick={() => { setLoading(true); fetchData(); }}
+            style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', textDecoration: 'underline', marginLeft: '8px', fontWeight: 600 }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="grid-2" style={{ marginBottom: '24px' }}>
         {/* Log Channel Panel */}

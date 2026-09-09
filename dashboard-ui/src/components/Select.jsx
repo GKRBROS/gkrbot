@@ -6,10 +6,20 @@ import { useEffect, useRef, useState } from 'react';
  */
 export function Select({ value, onChange, options = [], placeholder = 'Select...', searchable = false, style = {}, disabled = false }) {
   const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
   const [query, setQuery] = useState('');
   const ref = useRef(null);
 
   const selected = options.find(o => String(o.value) === String(value));
+
+  const toggleOpen = () => {
+    if (!open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setDropUp(window.innerHeight - rect.bottom < 300 && rect.top > 320);
+    }
+    setOpen(!open);
+    setQuery('');
+  };
 
   useEffect(() => {
     const onDoc = (e) => {
@@ -32,7 +42,7 @@ export function Select({ value, onChange, options = [], placeholder = 'Select...
         type="button"
         disabled={disabled}
         className={`select-trigger ${open ? 'open' : ''}`}
-        onClick={() => { setOpen(!open); setQuery(''); }}
+        onClick={toggleOpen}
       >
         <span style={{
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -49,7 +59,7 @@ export function Select({ value, onChange, options = [], placeholder = 'Select...
       </button>
 
       {open && (
-        <div className="select-menu">
+        <div className={`select-menu ${dropUp ? 'drop-up' : ''}`}>
           {searchable && options.length > 6 && (
             <input
               autoFocus
@@ -88,6 +98,7 @@ export function Select({ value, onChange, options = [], placeholder = 'Select...
  */
 export function MultiSelect({ values = [], onChange, options = [], placeholder = 'Select...', style = {} }) {
   const [open, setOpen] = useState(false);
+  const [dropUp, setDropUp] = useState(false);
   const [query, setQuery] = useState('');
   const ref = useRef(null);
 
@@ -104,6 +115,15 @@ export function MultiSelect({ values = [], onChange, options = [], placeholder =
 
   const toggle = (v) => {
     onChange(values.includes(v) ? values.filter(x => x !== v) : [...values, v]);
+  };
+
+  const toggleOpen = () => {
+    if (!open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      setDropUp(window.innerHeight - rect.bottom < 300 && rect.top > 320);
+    }
+    setOpen(!open);
+    setQuery('');
   };
 
   const filtered = options.filter(o => o.label.toLowerCase().includes(query.trim().toLowerCase()));
@@ -134,7 +154,7 @@ export function MultiSelect({ values = [], onChange, options = [], placeholder =
       <button
         type="button"
         className={`select-trigger ${open ? 'open' : ''}`}
-        onClick={() => { setOpen(!open); setQuery(''); }}
+        onClick={toggleOpen}
       >
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-main)' }}>
           {selectedLabels.length > 0
@@ -147,7 +167,7 @@ export function MultiSelect({ values = [], onChange, options = [], placeholder =
       </button>
 
       {open && (
-        <div className="select-menu">
+        <div className={`select-menu ${dropUp ? 'drop-up' : ''}`}>
           <input
             autoFocus
             className="select-search"

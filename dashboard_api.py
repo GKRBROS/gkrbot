@@ -729,16 +729,20 @@ async def handle_tickets_get(request: web.Request):
     bot: commands.Bot = request.app["bot"]
     ticket_cog = bot.get_cog("TicketCog")
     if not ticket_cog:
-        return web.json_response({"error": "Tickets module not loaded"}, status=500)
-    cats = ticket_cog.db.get_categories(guild_id)
-    log_ch = ticket_cog.db.get_log_channel(guild_id)
-    cats_data = [{
-        "id": c.id, "name": c.name, "button_label": c.button_label,
-        "button_emoji": c.button_emoji, "ping_roles": c.ping_roles,
-        "admin_roles": c.admin_roles, "embed_title": c.embed_title,
-        "embed_description": c.embed_description, "ticket_counter": c.ticket_counter,
-    } for c in cats]
-    return web.json_response({"categories": cats_data, "log_channel_id": str(log_ch) if log_ch else None})
+        return web.json_response({"error": "Tickets module not loaded (check bot console)"}, status=500)
+    try:
+        cats = ticket_cog.db.get_categories(guild_id)
+        log_ch = ticket_cog.db.get_log_channel(guild_id)
+        cats_data = [{
+            "id": c.id, "name": c.name or "", "button_label": c.button_label or "",
+            "button_emoji": c.button_emoji or "\U0001F3AB", "ping_roles": c.ping_roles or "",
+            "admin_roles": c.admin_roles or "", "embed_title": c.embed_title or "",
+            "embed_description": c.embed_description or "", "ticket_counter": c.ticket_counter or 0,
+        } for c in cats]
+        return web.json_response({"categories": cats_data, "log_channel_id": str(log_ch) if log_ch else None})
+    except Exception as e:
+        print(f"[DashboardAPI] Tickets GET error: {e}")
+        return web.json_response({"error": f"Failed to read ticket config: {e}"}, status=500)
 
 async def handle_tickets_post(request: web.Request):
     session_data = _get_session(request)
