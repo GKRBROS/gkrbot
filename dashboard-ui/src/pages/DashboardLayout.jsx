@@ -1,12 +1,26 @@
 import { Outlet, Link, useParams, useLocation, useNavigate } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import api from '../api';
+import { autoSyncEnabled, setAutoSyncEnabled } from '../sync';
 
 function DashboardLayout({ user }) {
   const { guildId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   const [guild, setGuild] = useState(null);
+  const [autoSync, setAutoSync] = useState(autoSyncEnabled());
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+
+  const toggleAutoSync = () => {
+    const next = !autoSync;
+    setAutoSync(next);
+    setAutoSyncEnabled(next);
+  };
+
+  // Close mobile nav whenever the route changes
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
 
   useEffect(() => {
     // Fetch guild details from user's guilds
@@ -20,15 +34,35 @@ function DashboardLayout({ user }) {
     {
       label: 'Core Features',
       items: [
+        { name: 'Welcome & Leave', path: `/dashboard/${guildId}/welcome`, icon: '👋' },
         { name: 'Stream Alerts', path: `/dashboard/${guildId}/stream-alerts`, icon: '📺' },
-        { name: 'Tickets', path: `/dashboard/${guildId}/tickets`, icon: '🎫' },
-        { name: 'Welcome Message', path: `/dashboard/${guildId}/welcome`, icon: '👋' },
+        { name: 'Tickets System', path: `/dashboard/${guildId}/tickets`, icon: '🎫' },
+      ]
+    },
+    {
+      label: 'Security & Moderation',
+      items: [
+        { name: 'Security & Anti-Spam', path: `/dashboard/${guildId}/security`, icon: '🛡️' },
+        { name: 'Staff Roles & Mod', path: `/dashboard/${guildId}/moderation`, icon: '⚖️' },
+      ]
+    },
+    {
+      label: 'Server Automation',
+      items: [
+        { name: 'Sticky Messages', path: `/dashboard/${guildId}/sticky`, icon: '📌' },
+        { name: 'Auto Reactions', path: `/dashboard/${guildId}/auto-reactions`, icon: '⚡' },
       ]
     },
     {
       label: 'Entertainment',
       items: [
         { name: 'Music Player', path: `/dashboard/${guildId}/music`, icon: '🎵' },
+      ]
+    },
+    {
+      label: 'Multi-Server Tools',
+      items: [
+        { name: 'Sync To Other Servers', path: `/dashboard/${guildId}/sync`, icon: '🔄' },
       ]
     }
   ];
@@ -37,16 +71,27 @@ function DashboardLayout({ user }) {
 
   return (
     <div className="flex animate-fade-in" style={{ height: '100vh', overflow: 'hidden' }}>
-      
+
+      {/* Mobile nav backdrop */}
+      {mobileNavOpen && (
+        <div
+          onClick={() => setMobileNavOpen(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(3,4,10,0.7)',
+            backdropFilter: 'blur(4px)', zIndex: 150,
+          }}
+        />
+      )}
+
       {/* Sidebar */}
-      <div className="sidebar">
+      <div className={`sidebar ${mobileNavOpen ? 'mobile-open' : ''}`}>
         {/* App Logo */}
         <Link to="/dashboard" className="sidebar-logo" style={{ textDecoration: 'none' }}>
           <div style={{
-            width: '28px', height: '28px', borderRadius: '6px',
-            background: 'linear-gradient(135deg, var(--primary), var(--accent))',
+            width: '30px', height: '30px', borderRadius: '9px',
+            background: 'linear-gradient(135deg, #818cf8, #6366f1 45%, #22d3ee)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '16px'
+            fontSize: '16px', boxShadow: '0 4px 14px -4px rgba(99,102,241,0.7)'
           }}>🤖</div>
           <span className="sidebar-logo-text">GKR Dashboard</span>
         </Link>
@@ -57,8 +102,8 @@ function DashboardLayout({ user }) {
             <img src={guild.icon} alt="Guild" className="sidebar-guild-icon" />
           ) : (
             <div className="sidebar-guild-icon" style={{
-              background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center', 
-              justifyContent: 'center', fontSize: '14px', fontWeight: 'bold'
+              background: 'rgba(255,255,255,0.05)', display: 'flex', alignItems: 'center',
+              justifyContent: 'center', fontSize: '14px', fontWeight: 'bold', boxShadow: 'none'
             }}>
               {guild?.name ? guild.name.charAt(0) : '?'}
             </div>
@@ -71,7 +116,7 @@ function DashboardLayout({ user }) {
         {/* Navigation */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
           {navGroups.map((group, idx) => (
-            <div key={idx} style={{ marginBottom: '16px' }}>
+            <div key={idx} style={{ marginBottom: '12px' }}>
               <div className="sidebar-section-label">{group.label}</div>
               {group.items.map(item => (
                 <Link
@@ -93,7 +138,7 @@ function DashboardLayout({ user }) {
             <img src={user.avatar} alt="User" className="sidebar-user-avatar" />
           ) : (
             <div className="sidebar-user-avatar" style={{
-              background: 'var(--primary)', display: 'flex', alignItems: 'center', 
+              background: 'var(--brand-gradient)', display: 'flex', alignItems: 'center',
               justifyContent: 'center', fontWeight: 'bold'
             }}>
               {user?.username?.charAt(0) || 'U'}
@@ -102,7 +147,7 @@ function DashboardLayout({ user }) {
           <div className="sidebar-user-name">
             {user?.username || 'User'}
           </div>
-          <button 
+          <button
             onClick={() => {
               localStorage.removeItem('session_token');
               window.location.href = '/';
@@ -123,8 +168,55 @@ function DashboardLayout({ user }) {
       </div>
 
       {/* Main Content Area */}
-      <div style={{ flex: 1, backgroundColor: 'var(--bg)', overflowY: 'auto', position: 'relative' }}>
-        <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '40px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', position: 'relative' }}>
+        {/* Topbar */}
+        <div className="topbar">
+          <button
+            type="button"
+            className="topbar-toggle"
+            onClick={() => setMobileNavOpen(true)}
+            aria-label="Open navigation"
+          >
+            ☰
+          </button>
+
+          <Link to="/dashboard" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '17px' }}>🏰</span>
+            <span style={{
+              fontSize: '14px', fontWeight: 700, color: 'var(--text-main)',
+              fontFamily: 'var(--font-display)', whiteSpace: 'nowrap',
+              overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px'
+            }}>
+              {guild?.name || 'Dashboard'}
+            </span>
+          </Link>
+
+          {/* Global Auto-Sync Toggle */}
+          <div
+            className={`autosync-pill ${autoSync ? 'on' : ''}`}
+            onClick={toggleAutoSync}
+            role="button"
+            tabIndex={0}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') toggleAutoSync(); }}
+            title={autoSync
+              ? 'Auto-sync is ON — every edit is applied to all your other servers.'
+              : 'Auto-sync is OFF — edits only affect this server.'}
+            style={{ cursor: 'pointer', userSelect: 'none' }}
+          >
+            <span className="autosync-dot" />
+            <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-main)' }}>🔄</span>
+            <span className="autosync-label-text">
+              <span style={{ fontSize: '12.5px', fontWeight: 700, color: autoSync ? '#a5b4fc' : 'var(--text-sub)', display: 'block', lineHeight: 1.2 }}>
+                Auto-sync to ALL servers: {autoSync ? 'ON' : 'OFF'}
+              </span>
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', lineHeight: 1.3 }}>
+                {autoSync ? 'Edits apply everywhere' : 'Edits affect this server only'}
+              </span>
+            </span>
+          </div>
+        </div>
+
+        <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '36px 40px 56px' }}>
           <Outlet />
         </div>
       </div>

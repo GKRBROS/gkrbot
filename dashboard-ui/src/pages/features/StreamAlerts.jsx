@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../api';
+import { withSync, syncParams } from '../../sync';
 
 function StreamAlerts() {
   const { guildId } = useParams();
@@ -9,6 +10,9 @@ function StreamAlerts() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [editingAlert, setEditingAlert] = useState(null);
+  const [editForm, setEditForm] = useState(null);
+  const [editSaving, setEditSaving] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -42,7 +46,7 @@ function StreamAlerts() {
     
     setSubmitting(true);
     try {
-      await api.post(`/guilds/${guildId}/stream-alerts`, data);
+      await api.post(`/guilds/${guildId}/stream-alerts`, withSync(data));
       await fetchData();
       e.target.reset();
     } catch (err) {
@@ -54,11 +58,40 @@ function StreamAlerts() {
   const handleDeleteAlert = async (platform, username) => {
     if (!window.confirm(`Are you sure you want to delete the alert for ${username}?`)) return;
     try {
-      await api.delete(`/guilds/${guildId}/stream-alerts/${platform}/${username}`);
+      await api.delete(`/guilds/${guildId}/stream-alerts/${platform}/${username}`, { params: syncParams() });
       await fetchData();
     } catch (err) {
       console.error('Failed to delete alert', err);
     }
+  };
+
+  const openEditAlert = (alert) => {
+    setEditingAlert(alert);
+    setEditForm({
+      notification_channel_id: alert.notification_channel_id || '',
+      notify_live: !!alert.notify_live,
+      notify_videos: !!alert.notify_videos,
+      custom_live_message: alert.custom_live_message || '',
+      custom_video_message: alert.custom_video_message || '',
+    });
+  };
+
+  const handleSaveEdit = async (e) => {
+    e.preventDefault();
+    if (!editingAlert || !editForm.notification_channel_id) return;
+    setEditSaving(true);
+    try {
+      await api.put(
+        `/guilds/${guildId}/stream-alerts/${editingAlert.platform}/${editingAlert.creator_username}`,
+        withSync(editForm)
+      );
+      setEditingAlert(null);
+      setEditForm(null);
+      await fetchData();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update alert');
+    }
+    setEditSaving(false);
   };
 
   if (loading) {
@@ -141,14 +174,24 @@ function StreamAlerts() {
               <div>
                 <div className="flex items-center justify-between" style={{ marginBottom: '16px' }}>
                   {getPlatformBadge(alert.platform)}
-                  <button 
-                    onClick={() => handleDeleteAlert(alert.platform, alert.creator_username)} 
-                    className="btn btn-icon btn-ghost" 
-                    style={{ color: 'var(--danger)', padding: '4px', margin: '-8px' }} 
-                    title="Remove Alert"
-                  >
-                    🗑️
-                  </button>
+                  <div style={{ display: 'flex', gap: '2px' }}>
+                    <button
+                      onClick={() => openEditAlert(alert)}
+                      className="btn btn-icon btn-ghost"
+                      style={{ color: 'var(--primary)', padding: '4px', margin: '-8px' }}
+                      title="Edit Alert"
+                    >
+                      ✏️
+                    </button>
+                    <button
+                      onClick={() => handleDeleteAlert(alert.platform, alert.creator_username)}
+                      className="btn btn-icon btn-ghost"
+                      style={{ color: 'var(--danger)', padding: '4px', margin: '-8px' }}
+                      title="Remove Alert"
+                    >
+                      🗑️
+                    </button>
+                  </div>
                 </div>
                 
                 <h4 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '8px', color: 'var(--text-main)', wordBreak: 'break-all' }}>
@@ -172,6 +215,102 @@ function StreamAlerts() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Edit Alert Modal */}
+      {editingAlert && editForm && (
+        <div className="modal-overlay">
+          <form
+            onSubmit={handleSaveEdit}
+            className="card glass-panel animate-fade-in"
+            style={{ width: '100%', maxWidth: '520px', maxHeight: '90vh', overflowY: 'auto', border: '1px solid rgba(88,101,242,0.3)' }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '18px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                ✏️ Edit Alert — {editingAlert.creator_username}
+              </h3>
+              <button
+                type="button"
+                onClick={() => { setEditingAlert(null); setEditForm(null); }}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '20px', cursor: 'pointer', padding: '4px 8px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {error && <div className="alert alert-error">{error}</div>}
+
+            <div className="form-group">
+              <label className="form-label">Notification Channel</label>
+              <select
+                className="input-field"
+                value={editForm.notification_channel_id}
+                onChange={e => setEditForm({ ...editForm, notification_channel_id: e.target.value })}
+                required
+              >
+                <option value="">Select a channel...</option>
+                {channels.map(ch => (
+                  <option key={ch.id} value={ch.id}>#{ch.name}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="toggle-wrapper" style={{ marginBottom: '16px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600 }}>Notify on Live Streams</div>
+              <button
+                type="button"
+                className={`toggle ${editForm.notify_live ? 'active' : ''}`}
+                onClick={() => setEditForm({ ...editForm, notify_live: !editForm.notify_live })}
+                aria-label="Toggle live notifications"
+              ></button>
+            </div>
+
+            <div className="toggle-wrapper" style={{ marginBottom: '16px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 600 }}>Notify on New Videos</div>
+              <button
+                type="button"
+                className={`toggle ${editForm.notify_videos ? 'active' : ''}`}
+                onClick={() => setEditForm({ ...editForm, notify_videos: !editForm.notify_videos })}
+                aria-label="Toggle video notifications"
+              ></button>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Custom Live Message (optional)</label>
+              <textarea
+                className="input-field"
+                rows={2}
+                value={editForm.custom_live_message}
+                onChange={e => setEditForm({ ...editForm, custom_live_message: e.target.value })}
+                placeholder="Leave empty to use the default live message"
+              />
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">Custom Video Message (optional)</label>
+              <textarea
+                className="input-field"
+                rows={2}
+                value={editForm.custom_video_message}
+                onChange={e => setEditForm({ ...editForm, custom_video_message: e.target.value })}
+                placeholder="Leave empty to use the default video message"
+              />
+            </div>
+
+            <div className="flex justify-end gap-3 mt-4">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => { setEditingAlert(null); setEditForm(null); }}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={editSaving}>
+                {editSaving ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </div>

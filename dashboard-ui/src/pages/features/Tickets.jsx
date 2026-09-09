@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../api';
+import { withSync, syncParams } from '../../sync';
 
 function Tickets() {
   const { guildId } = useParams();
@@ -12,9 +13,16 @@ function Tickets() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   const [form, setForm] = useState({
     name: '', button_label: '', button_emoji: '🎫', embed_title: 'New Ticket', embed_description: '',
+    ping_roles: '', admin_roles: '',
   });
+
+  const EMPTY_FORM = {
+    name: '', button_label: '', button_emoji: '🎫', embed_title: 'New Ticket', embed_description: '',
+    ping_roles: '', admin_roles: '',
+  };
 
   const fetchData = useCallback(async () => {
     try {
@@ -38,20 +46,40 @@ function Tickets() {
     setError('');
     setSubmitting(true);
     try {
-      await api.post(`/guilds/${guildId}/tickets`, form);
+      if (editingId) {
+        await api.put(`/guilds/${guildId}/tickets/categories/${editingId}`, withSync(form));
+      } else {
+        await api.post(`/guilds/${guildId}/tickets`, withSync(form));
+      }
       await fetchData();
       setShowForm(false);
-      setForm({ name: '', button_label: '', button_emoji: '🎫', embed_title: 'New Ticket', embed_description: '' });
+      setEditingId(null);
+      setForm(EMPTY_FORM);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to create category');
+      setError(err.response?.data?.error || (editingId ? 'Failed to update category' : 'Failed to create category'));
     }
     setSubmitting(false);
+  };
+
+  const handleEditCategory = (cat) => {
+    setEditingId(cat.id);
+    setForm({
+      name: cat.name || '',
+      button_label: cat.button_label || '',
+      button_emoji: cat.button_emoji || '🎫',
+      embed_title: cat.embed_title || '',
+      embed_description: cat.embed_description || '',
+      ping_roles: cat.ping_roles || '',
+      admin_roles: cat.admin_roles || '',
+    });
+    setShowForm(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleDelete = async (catId, catName) => {
     if (!window.confirm(`Delete ticket category "${catName}"? This cannot be undone.`)) return;
     try {
-      await api.delete(`/guilds/${guildId}/tickets/${catId}`);
+      await api.delete(`/guilds/${guildId}/tickets/${catId}`, { params: syncParams() });
       await fetchData();
     } catch (err) {
       console.error('Failed to delete category', err);
@@ -60,7 +88,7 @@ function Tickets() {
 
   const handleSaveLogChannel = async () => {
     try {
-      await api.post(`/guilds/${guildId}/tickets/log-channel`, { channel_id: logChannelId || null });
+      await api.post(`/guilds/${guildId}/tickets/log-channel`, withSync({ channel_id: logChannelId || null }));
       setLogChannelSaved(true);
       setTimeout(() => setLogChannelSaved(false), 2500);
     } catch (err) {
@@ -122,14 +150,25 @@ function Tickets() {
 
       <div className="section-header" style={{ marginTop: '40px' }}>
         <h2 className="section-title">Ticket Categories <span className="section-count">{categories.length}</span></h2>
-        <button className="btn btn-primary" onClick={() => setShowForm(!showForm)}>
+        <button
+          className="btn btn-primary"
+          onClick={() => {
+            if (showForm) {
+              setEditingId(null);
+              setForm(EMPTY_FORM);
+            }
+            setShowForm(!showForm);
+          }}
+        >
           {showForm ? 'Cancel' : '+ New Category'}
         </button>
       </div>
 
       {showForm && (
         <form onSubmit={handleAddCategory} className="glass-panel animate-fade-in" style={{ padding: '24px', marginBottom: '24px', border: '1px solid var(--primary)' }}>
-          <h3 style={{ marginBottom: '20px', fontSize: '16px' }}>Create New Ticket Category</h3>
+          <h3 style={{ marginBottom: '20px', fontSize: '16px' }}>
+            {editingId ? `✏️ Edit Category (ID: ${editingId})` : 'Create New Ticket Category'}
+          </h3>
           {error && <div className="alert alert-error">{error}</div>}
           
           <div className="grid-2">
@@ -159,10 +198,27 @@ function Tickets() {
             <textarea className="input-field" value={form.embed_description} onChange={e => setForm({...form, embed_description: e.target.value})} placeholder="Welcome to support! Please describe your issue..." required rows={3}></textarea>
           </div>
 
+          <div className="grid-2">
+            <div className="form-group">
+              <label className="form-label">Ping Roles (Role IDs, comma separated — optional)</label>
+              <input type="text" className="input-field" value={form.ping_roles} onChange={e => setForm({...form, ping_roles: e.target.value})} placeholder="e.g. 123456789012345678, 987654321098765432" />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Admin Roles (Role IDs, comma separated — optional)</label>
+              <input type="text" className="input-field" value={form.admin_roles} onChange={e => setForm({...form, admin_roles: e.target.value})} placeholder="e.g. 123456789012345678" />
+            </div>
+          </div>
+
           <div className="flex justify-end gap-3 mt-4">
-            <button type="button" className="btn btn-ghost" onClick={() => setShowForm(false)}>Cancel</button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => { setShowForm(false); setEditingId(null); setForm(EMPTY_FORM); }}
+            >
+              Cancel
+            </button>
             <button type="submit" className="btn btn-primary" disabled={submitting}>
-              {submitting ? 'Creating...' : 'Create Category'}
+              {submitting ? 'Saving...' : (editingId ? 'Save Changes' : 'Create Category')}
             </button>
           </div>
         </form>
@@ -182,9 +238,19 @@ function Tickets() {
               <div>
                 <div className="flex items-center justify-between" style={{ marginBottom: '12px' }}>
                   <span className="badge badge-primary">{cat.button_emoji} {cat.name}</span>
-                  <button onClick={() => handleDelete(cat.id, cat.name)} className="btn btn-icon btn-ghost" style={{ color: 'var(--danger)', padding: '4px' }} title="Delete">
-                    🗑️
-                  </button>
+                  <div style={{ display: 'flex', gap: '4px' }}>
+                    <button
+                      onClick={() => handleEditCategory(cat)}
+                      className="btn btn-icon btn-ghost"
+                      style={{ color: 'var(--primary)', padding: '4px' }}
+                      title="Edit category"
+                    >
+                      ✏️
+                    </button>
+                    <button onClick={() => handleDelete(cat.id, cat.name)} className="btn btn-icon btn-ghost" style={{ color: 'var(--danger)', padding: '4px' }} title="Delete">
+                      🗑️
+                    </button>
+                  </div>
                 </div>
                 <h4 style={{ fontSize: '15px', marginBottom: '8px', color: 'var(--text-main)' }}>{cat.embed_title}</h4>
                 <p style={{ fontSize: '13px', color: 'var(--text-muted)', lineHeight: '1.5', marginBottom: '16px', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>

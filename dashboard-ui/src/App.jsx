@@ -11,6 +11,11 @@ import StreamAlerts from './pages/features/StreamAlerts';
 import Tickets from './pages/features/Tickets';
 import Welcome from './pages/features/Welcome';
 import Music from './pages/features/Music';
+import Security from './pages/features/Security';
+import Moderation from './pages/features/Moderation';
+import StickyMessages from './pages/features/StickyMessages';
+import AutoReactions from './pages/features/AutoReactions';
+import ServerSync from './pages/features/ServerSync';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -48,12 +53,17 @@ function App() {
       <Route path="/dashboard" element={user ? <ServerSelector /> : <Navigate to="/" />} />
       
       <Route path="/dashboard/:guildId" element={user ? <DashboardLayout user={user} /> : <Navigate to="/" />}>
-        {/* Default route inside a guild dashboard */}
-        <Route index element={<div style={{ color: 'var(--text-muted)', padding: '20px' }}>Select a module from the sidebar.</div>} />
+        {/* Default route inside a guild dashboard defaults to Welcome */}
+        <Route index element={<Navigate to="welcome" replace />} />
+        <Route path="welcome" element={<Welcome />} />
         <Route path="stream-alerts" element={<StreamAlerts />} />
         <Route path="tickets" element={<Tickets />} />
-        <Route path="welcome" element={<Welcome />} />
+        <Route path="security" element={<Security />} />
+        <Route path="moderation" element={<Moderation />} />
+        <Route path="sticky" element={<StickyMessages />} />
+        <Route path="auto-reactions" element={<AutoReactions />} />
         <Route path="music" element={<Music />} />
+        <Route path="sync" element={<ServerSync />} />
       </Route>
 
       {/* Fallback route for unknown paths like /undefined */}

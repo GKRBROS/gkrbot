@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../api';
+import SyncModal from './SyncModal';
+import { withSync } from '../../sync';
 
 function Welcome() {
   const { guildId } = useParams();
@@ -9,6 +11,7 @@ function Welcome() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [syncOpen, setSyncOpen] = useState(false);
   const [config, setConfig] = useState({
     enabled: false,
     channel_id: '',
@@ -50,7 +53,7 @@ function Welcome() {
     setError('');
     setSaving(true);
     try {
-      await api.post(`/guilds/${guildId}/welcome`, config);
+      await api.post(`/guilds/${guildId}/welcome`, withSync(config));
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
@@ -77,9 +80,26 @@ function Welcome() {
 
   return (
     <div className="animate-fade-in">
-      <div className="page-header">
-        <h1 className="page-title">👋 Welcome Messages</h1>
-        <p className="page-subtitle">Configure the welcome message sent when a new member joins.</p>
+      <div className="page-header flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px' }}>
+        <div>
+          <h1 className="page-title">👋 Welcome Messages</h1>
+          <p className="page-subtitle">Configure the welcome message sent when a new member joins.</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setSyncOpen(true)}
+          className="btn"
+          style={{
+            background: 'rgba(88,101,242,0.15)',
+            border: '1px solid var(--primary)',
+            color: 'var(--text-main)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px'
+          }}
+        >
+          <span>🔄</span> Sync to Other Servers
+        </button>
       </div>
 
       <form onSubmit={handleSave} className="stagger">
@@ -296,6 +316,15 @@ function Welcome() {
         </div>
 
       </form>
+
+      {/* Sync Modal */}
+      <SyncModal
+        isOpen={syncOpen}
+        onClose={() => setSyncOpen(false)}
+        currentGuildId={guildId}
+        moduleName="welcome"
+        moduleLabel="Welcome & Leave Settings"
+      />
     </div>
   );
 }

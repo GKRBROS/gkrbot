@@ -1,6 +1,7 @@
 import os
 import json
 import uuid
+import sqlite3
 import aiohttp
 from aiohttp import web
 from discord.ext import commands
@@ -195,6 +196,352 @@ async def handle_me(request: web.Request):
         "guilds": mutual_admin_guilds
     })
 
+# --- Auto-Sync Engine: replicate dashboard edits to ALL other servers ---
+
+def _auto_sync_requested(data, request=None):
+    """True when the dashboard asks for an edit to be replicated to all other servers."""
+    if isinstance(data, dict) and data.get("sync_all"):
+        return True
+    if request is not None and request.query.get("sync_all") in ("1", "true"):
+        return True
+    return False
+
+def _target_guilds(bot, source_guild_id):
+    """Every server the bot is in, except the source server."""
+    return [g for g in bot.guilds if g.id != int(source_guild_id)]
+
+def _match_channel(source_guild, target_guild, channel_id):
+    """Find the channel on target_guild matching the source channel by name."""
+    if not source_guild or not target_guild or channel_id in (None, ""):
+        return None
+    try:
+        src_ch = source_guild.get_channel(int(channel_id))
+    except (ValueError, TypeError):
+        return None
+    if not src_ch:
+        return None
+    return discord.utils.get(target_guild.text_channels, name=src_ch.name)
+
+def _replicate_welcome(bot, source_guild_id):
+    try:
+        from welcome import WelcomeDatabase
+        w_db = WelcomeDatabase()
+        src_cfg = w_db.get_config(int(source_guild_id))
+        if not src_cfg:
+            return 0
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            try:
+                tgt_cfg = w_db.get_config(g.id)
+                tgt_cfg.enabled = src_cfg.enabled
+                tgt_cfg.welcome_message = src_cfg.welcome_message
+                tgt_cfg.leave_enabled = src_cfg.leave_enabled
+                tgt_cfg.leave_message = src_cfg.leave_message
+                tgt_cfg.leave_image_url = src_cfg.leave_image_url
+                w_db.save_config(tgt_cfg)
+                count += 1
+            except Exception as e:
+                print(f"[AutoSync] welcome -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] welcome failed: {e}")
+        return 0
+
+def _replicate_security(bot, source_guild_id):
+    try:
+        import security
+        s_db = security.SecurityDatabase()
+        s_db.initialize()
+        count = 0
+        with s_db._conn() as conn:
+            s_row = conn.execute("SELECT * FROM security_config WHERE guild_id = ?", (str(source_guild_id),)).fetchone()
+            if not s_row:
+                return 0
+            for g in _target_guilds(bot, source_guild_id):
+                try:
+                    t_row = conn.execute("SELECT log_channel_id FROM security_config WHERE guild_id = ?", (str(g.id),)).fetchone()
+                    conn.execute("""
+                        INSERT OR REPLACE INTO security_config
+                        (guild_id, anti_spam_enabled, spam_msg_limit, spam_time_sec, mass_mention_limit, log_channel_id, image_scan_enabled)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        str(g.id), s_row["anti_spam_enabled"], s_row["spam_msg_limit"],
+                        s_row["spam_time_sec"], s_row["mass_mention_limit"],
+                        t_row["log_channel_id"] if t_row else None,
+                        s_row["image_scan_enabled"],
+                    ))
+                    count += 1
+                except Exception as e:
+                    print(f"[AutoSync] security -> {g.name}: {e}")
+            conn.commit()
+        return count
+    except Exception as e:
+        print(f"[AutoSync] security failed: {e}")
+        return 0
+
+def _replicate_sticky_set(bot, source_guild_id, channel_id, content):
+    try:
+        import sticky_messages
+        db = sticky_messages.StickyDB()
+        src_guild = bot.get_guild(int(source_guild_id))
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            ch = _match_channel(src_guild, g, channel_id)
+            if ch:
+                try:
+                    db.set_sticky(ch.id, g.id, content)
+                    count += 1
+                except Exception as e:
+                    print(f"[AutoSync] sticky -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] sticky failed: {e}")
+        return 0
+
+def _replicate_sticky_remove(bot, source_guild_id, channel_id):
+    try:
+        import sticky_messages
+        db = sticky_messages.StickyDB()
+        src_guild = bot.get_guild(int(source_guild_id))
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            ch = _match_channel(src_guild, g, channel_id)
+            if ch:
+                try:
+                    db.remove_sticky(ch.id)
+                    count += 1
+                except Exception as e:
+                    print(f"[AutoSync] sticky remove -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] sticky remove failed: {e}")
+        return 0
+
+def _replicate_autoreact_add(bot, source_guild_id, channel_id, emoji):
+    try:
+        import auto_reactions
+        db = auto_reactions.AutoReactDB()
+        src_guild = bot.get_guild(int(source_guild_id))
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            ch = _match_channel(src_guild, g, channel_id)
+            if ch:
+                try:
+                    if db.add_reaction(g.id, ch.id, emoji):
+                        count += 1
+                except Exception as e:
+                    print(f"[AutoSync] autoreact -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] autoreact failed: {e}")
+        return 0
+
+def _replicate_autoreact_remove(bot, source_guild_id, channel_id):
+    try:
+        import auto_reactions
+        db = auto_reactions.AutoReactDB()
+        src_guild = bot.get_guild(int(source_guild_id))
+        count = 0
+        with db._conn() as conn:
+            for g in _target_guilds(bot, source_guild_id):
+                ch = _match_channel(src_guild, g, channel_id)
+                if ch:
+                    cur = conn.execute(
+                        "DELETE FROM auto_reactions WHERE guild_id = ? AND channel_id = ?",
+                        (str(g.id), str(ch.id)),
+                    )
+                    count += cur.rowcount
+            conn.commit()
+        return count
+    except Exception as e:
+        print(f"[AutoSync] autoreact remove failed: {e}")
+        return 0
+
+def _replicate_staff_role_add(bot, source_guild_id, role_id):
+    try:
+        import moderation
+        db = moderation.ModerationDatabase()
+        db.initialize()
+        src_guild = bot.get_guild(int(source_guild_id))
+        src_role = src_guild.get_role(int(role_id)) if src_guild else None
+        if not src_role:
+            return 0
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            tgt_role = discord.utils.get(g.roles, name=src_role.name)
+            if tgt_role:
+                try:
+                    if db.add_staff_role(g.id, tgt_role.id):
+                        count += 1
+                except Exception as e:
+                    print(f"[AutoSync] staff role -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] staff role add failed: {e}")
+        return 0
+
+def _replicate_staff_role_remove(bot, source_guild_id, role_id):
+    try:
+        import moderation
+        db = moderation.ModerationDatabase()
+        db.initialize()
+        src_guild = bot.get_guild(int(source_guild_id))
+        src_role = src_guild.get_role(int(role_id)) if src_guild else None
+        if not src_role:
+            return 0
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            tgt_role = discord.utils.get(g.roles, name=src_role.name)
+            if tgt_role:
+                try:
+                    if db.remove_staff_role(g.id, tgt_role.id):
+                        count += 1
+                except Exception as e:
+                    print(f"[AutoSync] staff role remove -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] staff role remove failed: {e}")
+        return 0
+
+def _replicate_tickets_log_channel(bot, source_guild_id, channel_id):
+    try:
+        cog = bot.get_cog("TicketCog")
+        if not cog:
+            return 0
+        src_guild = bot.get_guild(int(source_guild_id))
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            ch = _match_channel(src_guild, g, channel_id) if channel_id else None
+            try:
+                cog.db.set_log_channel(g.id, ch.id if ch else None)
+                count += 1
+            except Exception as e:
+                print(f"[AutoSync] tickets log -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] tickets log failed: {e}")
+        return 0
+
+def _replicate_ticket_category_upsert(bot, source_guild_id, name, fields):
+    """Create or update a ticket category (matched by name) on every other server."""
+    try:
+        cog = bot.get_cog("TicketCog")
+        if not cog or not name:
+            return 0
+        # Role IDs are guild-specific, so never copy them to other servers
+        safe_fields = dict(fields)
+        safe_fields["ping_roles"] = ""
+        safe_fields["admin_roles"] = ""
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            try:
+                existing = next((c for c in cog.db.get_categories(g.id) if c.name == name), None)
+                if existing:
+                    cog.db.update_category(g.id, existing.id, **safe_fields)
+                else:
+                    cog.db.add_category(
+                        guild_id=g.id, name=name,
+                        button_label=safe_fields.get("button_label", name),
+                        button_emoji=safe_fields.get("button_emoji", "\U0001F3AB"),
+                        ping_roles="", admin_roles="",
+                        embed_title=safe_fields.get("embed_title", "New Ticket"),
+                        embed_desc=safe_fields.get("embed_description", ""),
+                    )
+                count += 1
+            except Exception as e:
+                print(f"[AutoSync] ticket category -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] ticket category failed: {e}")
+        return 0
+
+def _replicate_ticket_category_delete(bot, source_guild_id, name):
+    try:
+        cog = bot.get_cog("TicketCog")
+        if not cog or not name:
+            return 0
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            try:
+                existing = next((c for c in cog.db.get_categories(g.id) if c.name == name), None)
+                if existing and cog.db.delete_category(g.id, existing.id):
+                    count += 1
+            except Exception as e:
+                print(f"[AutoSync] ticket category delete -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] ticket category delete failed: {e}")
+        return 0
+
+def _replicate_stream_alert_add(bot, source_guild_id, platform, username, creator_id, channel_id):
+    try:
+        import stream_alerts
+        db = stream_alerts.StreamAlertsDatabase()
+        db.initialize()
+        src_guild = bot.get_guild(int(source_guild_id))
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            ch = _match_channel(src_guild, g, channel_id)
+            if ch:
+                try:
+                    if db.add_alert(guild_id=g.id, platform=platform, creator_username=username,
+                                    creator_id=creator_id, notification_channel_id=ch.id):
+                        count += 1
+                except Exception as e:
+                    print(f"[AutoSync] stream alert -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] stream alert add failed: {e}")
+        return 0
+
+def _replicate_stream_alert_update(bot, source_guild_id, platform, username, channel_id,
+                                   notify_live, notify_videos, live_msg, video_msg):
+    try:
+        import stream_alerts
+        db = stream_alerts.StreamAlertsDatabase()
+        db.initialize()
+        src_guild = bot.get_guild(int(source_guild_id))
+        count = 0
+        with db._conn() as conn:
+            for g in _target_guilds(bot, source_guild_id):
+                ch = _match_channel(src_guild, g, channel_id)
+                if not ch:
+                    continue
+                row = conn.execute(
+                    "SELECT id FROM stream_alerts WHERE guild_id = ? AND platform = ? AND creator_username = ?",
+                    (str(g.id), platform, username.lower()),
+                ).fetchone()
+                if not row:
+                    continue
+                conn.execute(
+                    """UPDATE stream_alerts SET notification_channel_id = ?, notify_live = ?,
+                       notify_videos = ?, custom_live_message = ?, custom_video_message = ? WHERE id = ?""",
+                    (str(ch.id), 1 if notify_live else 0, 1 if notify_videos else 0,
+                     live_msg, video_msg, row["id"]),
+                )
+                count += 1
+            conn.commit()
+        return count
+    except Exception as e:
+        print(f"[AutoSync] stream alert update failed: {e}")
+        return 0
+
+def _replicate_stream_alert_remove(bot, source_guild_id, platform, username):
+    try:
+        import stream_alerts
+        db = stream_alerts.StreamAlertsDatabase()
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            try:
+                if db.remove_alert(g.id, platform, username.lower()):
+                    count += 1
+            except Exception as e:
+                print(f"[AutoSync] stream alert remove -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] stream alert remove failed: {e}")
+        return 0
+
 # --- Feature Specific Endpoints ---
 
 async def handle_stream_alerts_get(request: web.Request):
@@ -279,6 +626,10 @@ async def handle_stream_alerts_post(request: web.Request):
             except Exception as e:
                 print(f"[DashboardAPI] Failed to subscribe ytnoti: {e}")
                 
+        if _auto_sync_requested(data, request):
+            synced = _replicate_stream_alert_add(bot, guild_id, platform, username.lower(), creator_id, int(channel_id))
+            print(f"[AutoSync] Stream alert replicated to {synced} other server(s)")
+
         return web.json_response({"success": True})
     except sqlite3.IntegrityError:
         return web.json_response({"error": "Alert already exists for this creator on this platform."}, status=400)
@@ -299,8 +650,58 @@ async def handle_stream_alerts_delete(request: web.Request):
     
     deleted = stream_cog.db.remove_alert(guild_id, platform, username)
     if deleted:
+        if _auto_sync_requested(None, request):
+            _replicate_stream_alert_remove(bot, guild_id, platform, username.lower())
         return web.json_response({"success": True})
     return web.json_response({"error": "Alert not found"}, status=404)
+
+async def handle_stream_alerts_put(request: web.Request):
+    """Edit an existing stream alert (notification channel, notify toggles, custom messages)."""
+    session_data = _get_session(request)
+    if not session_data:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    platform = request.match_info["platform"]
+    username = request.match_info["username"].lower()
+    data = await request.json()
+
+    import stream_alerts
+    db = stream_alerts.StreamAlertsDatabase()
+    db.initialize()
+    with db._conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM stream_alerts WHERE guild_id = ? AND platform = ? AND creator_username = ?",
+            (str(guild_id), platform, username),
+        ).fetchone()
+        if not row:
+            return web.json_response({"error": "Alert not found"}, status=404)
+        conn.execute(
+            """UPDATE stream_alerts SET notification_channel_id = ?, notify_live = ?,
+               notify_videos = ?, custom_live_message = ?, custom_video_message = ? WHERE id = ?""",
+            (
+                str(data.get("notification_channel_id", "")),
+                1 if data.get("notify_live", True) else 0,
+                1 if data.get("notify_videos", True) else 0,
+                data.get("custom_live_message", ""),
+                data.get("custom_video_message", ""),
+                row["id"],
+            ),
+        )
+        conn.commit()
+
+    if _auto_sync_requested(data, request):
+        bot: commands.Bot = request.app["bot"]
+        synced = _replicate_stream_alert_update(
+            bot, guild_id, platform, username,
+            data.get("notification_channel_id", ""),
+            bool(data.get("notify_live", True)),
+            bool(data.get("notify_videos", True)),
+            data.get("custom_live_message", ""),
+            data.get("custom_video_message", ""),
+        )
+        print(f"[AutoSync] Stream alert update replicated to {synced} other server(s)")
+
+    return web.json_response({"success": True})
 
 async def handle_bot_channels(request: web.Request):
     session_data = _get_session(request)
@@ -352,15 +753,71 @@ async def handle_tickets_post(request: web.Request):
     ticket_cog = bot.get_cog("TicketCog")
     if not ticket_cog:
         return web.json_response({"error": "Tickets module not loaded"}, status=500)
+    cat_fields = {
+        "button_label": data.get("button_label", name).strip(),
+        "button_emoji": data.get("button_emoji", "🎫").strip(),
+        "ping_roles": data.get("ping_roles", ""),
+        "admin_roles": data.get("admin_roles", ""),
+        "embed_title": data.get("embed_title", "New Ticket").strip(),
+        "embed_description": data.get("embed_description", "").strip(),
+    }
     cat_id = ticket_cog.db.add_category(
         guild_id=guild_id, name=name,
-        button_label=data.get("button_label", name).strip(),
-        button_emoji=data.get("button_emoji", "🎫").strip(),
-        ping_roles="", admin_roles="",
-        embed_title=data.get("embed_title", "New Ticket").strip(),
-        embed_desc=data.get("embed_description", "").strip()
+        button_label=cat_fields["button_label"],
+        button_emoji=cat_fields["button_emoji"],
+        ping_roles=cat_fields["ping_roles"],
+        admin_roles=cat_fields["admin_roles"],
+        embed_title=cat_fields["embed_title"],
+        embed_desc=cat_fields["embed_description"],
     )
+
+    if _auto_sync_requested(data, request):
+        synced = _replicate_ticket_category_upsert(bot, guild_id, name, cat_fields)
+        print(f"[AutoSync] Ticket category replicated to {synced} other server(s)")
+
     return web.json_response({"success": True, "id": cat_id})
+
+async def handle_tickets_category_put(request: web.Request):
+    """Edit an existing ticket category."""
+    session_data = _get_session(request)
+    if not session_data:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    category_id = int(request.match_info["category_id"])
+    data = await request.json()
+
+    bot: commands.Bot = request.app["bot"]
+    ticket_cog = bot.get_cog("TicketCog")
+    if not ticket_cog:
+        return web.json_response({"error": "Tickets module not loaded"}, status=500)
+
+    fields = {}
+    for key in ("name", "button_label", "button_emoji", "embed_title", "embed_description", "ping_roles", "admin_roles"):
+        if key in data:
+            fields[key] = str(data[key]).strip()
+    if not fields:
+        return web.json_response({"error": "No fields to update"}, status=400)
+
+    old_cat = ticket_cog.db.get_category(category_id)
+    if not old_cat:
+        return web.json_response({"error": "Category not found"}, status=404)
+
+    updated = ticket_cog.db.update_category(guild_id, category_id, **fields)
+    if not updated:
+        return web.json_response({"error": "Category not found"}, status=404)
+
+    if _auto_sync_requested(data, request):
+        new_name = fields.get("name", old_cat.name)
+        all_fields = {
+            "button_label": fields.get("button_label", old_cat.button_label),
+            "button_emoji": fields.get("button_emoji", old_cat.button_emoji),
+            "embed_title": fields.get("embed_title", old_cat.embed_title),
+            "embed_description": fields.get("embed_description", old_cat.embed_description),
+        }
+        synced = _replicate_ticket_category_upsert(bot, guild_id, new_name, all_fields)
+        print(f"[AutoSync] Ticket category update replicated to {synced} other server(s)")
+
+    return web.json_response({"success": True})
 
 async def handle_tickets_delete(request: web.Request):
     session_data = _get_session(request)
@@ -372,10 +829,22 @@ async def handle_tickets_delete(request: web.Request):
     ticket_cog = bot.get_cog("TicketCog")
     if not ticket_cog:
         return web.json_response({"error": "Tickets module not loaded"}, status=500)
+    old_cat = ticket_cog.db.get_category(category_id)
     deleted = ticket_cog.db.delete_category(guild_id, category_id)
     if deleted:
+        if _auto_sync_requested(None, request):
+            synced = _replicate_ticket_category_delete(bot, guild_id, old_cat.name if old_cat else "")
+            print(f"[AutoSync] Ticket category delete replicated to {synced} other server(s)")
         return web.json_response({"success": True})
     return web.json_response({"error": "Category not found"}, status=404)
+
+async def get_user_id(request: web.Request):
+    sess = _get_session(request)
+    return sess.get("user_id") if sess else None
+
+async def check_guild_permissions(request: web.Request, guild_id, user_id):
+    sess = _get_session(request)
+    return sess is not None
 
 async def handle_tickets_log_channel(request: web.Request):
     user_id = await get_user_id(request)
@@ -392,6 +861,11 @@ async def handle_tickets_log_channel(request: web.Request):
     if not ticket_cog:
         return web.json_response({"error": "Tickets module not loaded"}, status=500)
     ticket_cog.db.set_log_channel(guild_id, int(channel_id) if channel_id else None)
+
+    if _auto_sync_requested(data, request):
+        synced = _replicate_tickets_log_channel(bot, guild_id, int(channel_id) if channel_id else None)
+        print(f"[AutoSync] Ticket log channel replicated to {synced} other server(s)")
+
     return web.json_response({"success": True})
 
 # --- Welcome Endpoints ---
@@ -450,6 +924,12 @@ async def handle_welcome_post(request: web.Request):
         config.leave_image_url = leave_image_url if leave_image_url else None
         
     db.save_config(config)
+
+    if _auto_sync_requested(data, request):
+        bot: commands.Bot = request.app["bot"]
+        synced = _replicate_welcome(bot, int(guild_id))
+        print(f"[AutoSync] Welcome config replicated to {synced} other server(s)")
+
     return web.json_response({"success": True})
 
 # --- Music ---
@@ -533,43 +1013,426 @@ async def handle_music_control(request: web.Request):
 
     return web.json_response({"success": True})
 
-# --- Welcome Endpoints ---
+# --- Server Roles Endpoint ---
 
-async def handle_welcome_get(request: web.Request):
-    session_data = _get_session(request)
-    if not session_data:
-        return web.json_response({"error": "Unauthorized"}, status=401)
+async def handle_bot_roles(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
     guild_id = int(request.match_info["guild_id"])
     bot: commands.Bot = request.app["bot"]
-    welcome_cog = bot.get_cog("WelcomeCog")
-    if not welcome_cog:
-        return web.json_response({"error": "Welcome module not loaded"}, status=500)
-    cfg = welcome_cog.db.get_config(guild_id)
-    if not cfg:
-        return web.json_response({"config": None})
-    return web.json_response({"config": {
-        "enabled": bool(cfg.enabled),
-        "channel_id": str(cfg.channel_id) if cfg.channel_id else None,
-        "message": cfg.message,
-    }})
+    guild = bot.get_guild(guild_id)
+    if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+    roles = []
+    for r in sorted(guild.roles, key=lambda x: x.position, reverse=True):
+        if r.is_default(): continue
+        roles.append({
+            "id": str(r.id),
+            "name": r.name,
+            "color": f"#{r.color.value:06x}" if r.color.value else "#99aab5"
+        })
+    return web.json_response({"roles": roles})
 
-async def handle_welcome_post(request: web.Request):
-    session_data = _get_session(request)
-    if not session_data:
-        return web.json_response({"error": "Unauthorized"}, status=401)
+# --- Security & Anti-Nuke Endpoints ---
+
+async def handle_security_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import security
+    db = security.SecurityDatabase()
+    db.initialize()
+    with db._conn() as conn:
+        row = conn.execute("SELECT * FROM security_config WHERE guild_id = ?", (str(guild_id),)).fetchone()
+    if not row:
+        cfg = {
+            "anti_spam_enabled": True,
+            "spam_msg_limit": 5,
+            "spam_time_sec": 5,
+            "mass_mention_limit": 5,
+            "log_channel_id": "",
+            "image_scan_enabled": True
+        }
+    else:
+        cfg = {
+            "anti_spam_enabled": bool(row["anti_spam_enabled"]),
+            "spam_msg_limit": row["spam_msg_limit"],
+            "spam_time_sec": row["spam_time_sec"],
+            "mass_mention_limit": row["mass_mention_limit"],
+            "log_channel_id": str(row["log_channel_id"]) if row["log_channel_id"] else "",
+            "image_scan_enabled": bool(row["image_scan_enabled"])
+        }
+    return web.json_response({"config": cfg})
+
+async def handle_security_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
     guild_id = int(request.match_info["guild_id"])
     data = await request.json()
-    bot: commands.Bot = request.app["bot"]
-    welcome_cog = bot.get_cog("WelcomeCog")
-    if not welcome_cog:
-        return web.json_response({"error": "Welcome module not loaded"}, status=500)
-    welcome_cog.db.set_config(
-        guild_id=guild_id,
-        channel_id=int(data["channel_id"]) if data.get("channel_id") else None,
-        message=data.get("message", ""),
-        enabled=data.get("enabled", True),
-    )
+    import security
+    db = security.SecurityDatabase()
+    db.initialize()
+    with db._conn() as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO security_config 
+            (guild_id, anti_spam_enabled, spam_msg_limit, spam_time_sec, mass_mention_limit, log_channel_id, image_scan_enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            str(guild_id),
+            1 if data.get("anti_spam_enabled", True) else 0,
+            int(data.get("spam_msg_limit", 5)),
+            int(data.get("spam_time_sec", 5)),
+            int(data.get("mass_mention_limit", 5)),
+            str(data.get("log_channel_id")) if data.get("log_channel_id") else None,
+            1 if data.get("image_scan_enabled", True) else 0
+        ))
+        conn.commit()
+
+    if _auto_sync_requested(data, request):
+        bot: commands.Bot = request.app["bot"]
+        synced = _replicate_security(bot, guild_id)
+        print(f"[AutoSync] Security config replicated to {synced} other server(s)")
+
     return web.json_response({"success": True})
+
+# --- Sticky Messages Endpoints ---
+
+async def handle_sticky_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import sticky_messages
+    db = sticky_messages.StickyDB()
+    rows = db.get_all_for_guild(guild_id)
+    items = [{"channel_id": str(r["channel_id"]), "content": r["content"]} for r in rows]
+    return web.json_response({"stickies": items})
+
+async def handle_sticky_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    channel_id = data.get("channel_id")
+    content = data.get("content", "").strip()
+    if not channel_id or not content:
+        return web.json_response({"error": "Channel and message content are required"}, status=400)
+    import sticky_messages
+    db = sticky_messages.StickyDB()
+    db.set_sticky(int(channel_id), guild_id, content)
+
+    if _auto_sync_requested(data, request):
+        bot: commands.Bot = request.app["bot"]
+        synced = _replicate_sticky_set(bot, guild_id, int(channel_id), content)
+        print(f"[AutoSync] Sticky message replicated to {synced} other server(s)")
+
+    return web.json_response({"success": True})
+
+async def handle_sticky_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    channel_id = int(request.match_info["channel_id"])
+    import sticky_messages
+    db = sticky_messages.StickyDB()
+    db.remove_sticky(channel_id)
+
+    if _auto_sync_requested(None, request):
+        bot: commands.Bot = request.app["bot"]
+        synced = _replicate_sticky_remove(bot, guild_id, channel_id)
+        print(f"[AutoSync] Sticky removal replicated to {synced} other server(s)")
+
+    return web.json_response({"success": True})
+
+# --- Auto Reactions Endpoints ---
+
+async def handle_autoreact_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import auto_reactions
+    db = auto_reactions.AutoReactDB()
+    with db._conn() as conn:
+        rows = conn.execute("SELECT * FROM auto_reactions WHERE guild_id = ?", (str(guild_id),)).fetchall()
+    items = [{"id": r["id"], "channel_id": str(r["channel_id"]), "emoji": r["emoji"]} for r in rows]
+    return web.json_response({"reactions": items})
+
+async def handle_autoreact_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    channel_id = data.get("channel_id")
+    emoji = data.get("emoji", "").strip()
+    if not channel_id or not emoji:
+        return web.json_response({"error": "Channel and emoji are required"}, status=400)
+    import auto_reactions
+    db = auto_reactions.AutoReactDB()
+    ok = db.add_reaction(guild_id, int(channel_id), emoji)
+    if not ok:
+        return web.json_response({"error": "Reaction already exists for this channel"}, status=400)
+
+    if _auto_sync_requested(data, request):
+        bot: commands.Bot = request.app["bot"]
+        synced = _replicate_autoreact_add(bot, guild_id, int(channel_id), emoji)
+        print(f"[AutoSync] Auto reaction replicated to {synced} other server(s)")
+
+    return web.json_response({"success": True})
+
+async def handle_autoreact_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    rx_id = int(request.match_info["id"])
+    import auto_reactions
+    db = auto_reactions.AutoReactDB()
+    with db._conn() as conn:
+        row = conn.execute("SELECT channel_id FROM auto_reactions WHERE id = ?", (rx_id,)).fetchone()
+        conn.execute("DELETE FROM auto_reactions WHERE id = ?", (rx_id,))
+        conn.commit()
+
+    if row and _auto_sync_requested(None, request):
+        bot: commands.Bot = request.app["bot"]
+        try:
+            synced = _replicate_autoreact_remove(bot, guild_id, int(row["channel_id"]))
+            print(f"[AutoSync] Auto reaction removal replicated to {synced} other server(s)")
+        except (ValueError, TypeError):
+            pass
+
+    return web.json_response({"success": True})
+
+# --- Moderation & Staff Roles Endpoints ---
+
+async def handle_moderation_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import moderation
+    db = moderation.ModerationDatabase()
+    db.initialize()
+    with db._conn() as conn:
+        rows = conn.execute("SELECT role_id FROM staff_roles WHERE guild_id = ?", (str(guild_id),)).fetchall()
+    staff_roles = [str(r["role_id"]) for r in rows]
+    return web.json_response({"staff_roles": staff_roles})
+
+async def handle_moderation_staff_add(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    role_id = data.get("role_id")
+    if not role_id: return web.json_response({"error": "Role ID required"}, status=400)
+    import moderation
+    db = moderation.ModerationDatabase()
+    db.initialize()
+    db.add_staff_role(guild_id, int(role_id))
+
+    if _auto_sync_requested(data, request):
+        bot: commands.Bot = request.app["bot"]
+        synced = _replicate_staff_role_add(bot, guild_id, int(role_id))
+        print(f"[AutoSync] Staff role replicated to {synced} other server(s)")
+
+    return web.json_response({"success": True})
+
+async def handle_moderation_staff_del(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    role_id = int(request.match_info["role_id"])
+    import moderation
+    db = moderation.ModerationDatabase()
+    db.initialize()
+    db.remove_staff_role(guild_id, role_id)
+
+    if _auto_sync_requested(None, request):
+        bot: commands.Bot = request.app["bot"]
+        synced = _replicate_staff_role_remove(bot, guild_id, role_id)
+        print(f"[AutoSync] Staff role removal replicated to {synced} other server(s)")
+
+    return web.json_response({"success": True})
+
+# --- Multi-Server Sync Engine ---
+
+async def handle_guild_sync(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    source_guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    target_guild_ids = data.get("target_guild_ids", [])
+    modules = data.get("modules", [])
+    if not target_guild_ids:
+        return web.json_response({"error": "Please select at least one target server"}, status=400)
+    if not modules:
+        return web.json_response({"error": "Please select at least one module to sync"}, status=400)
+
+    bot: commands.Bot = request.app["bot"]
+    synced_count = 0
+
+    for tgt_id in target_guild_ids:
+        tgt_int = int(tgt_id)
+        if tgt_int == source_guild_id:
+            continue
+
+        # 1. Sync Welcome
+        if "welcome" in modules or "all" in modules:
+            try:
+                from welcome import WelcomeDatabase
+                w_db = WelcomeDatabase()
+                src_cfg = w_db.get_config(source_guild_id)
+                if src_cfg:
+                    tgt_cfg = w_db.get_config(tgt_int)
+                    tgt_cfg.enabled = src_cfg.enabled
+                    tgt_cfg.welcome_message = src_cfg.welcome_message
+                    tgt_cfg.leave_enabled = src_cfg.leave_enabled
+                    tgt_cfg.leave_message = src_cfg.leave_message
+                    tgt_cfg.leave_image_url = src_cfg.leave_image_url
+                    w_db.save_config(tgt_cfg)
+            except Exception as e:
+                print(f"[Sync] Welcome sync error for {tgt_int}: {e}")
+
+        # 2. Sync Security
+        if "security" in modules or "all" in modules:
+            try:
+                import security
+                s_db = security.SecurityDatabase()
+                s_db.initialize()
+                with s_db._conn() as conn:
+                    s_row = conn.execute("SELECT * FROM security_config WHERE guild_id = ?", (str(source_guild_id),)).fetchone()
+                    if s_row:
+                        conn.execute("""
+                            INSERT OR REPLACE INTO security_config
+                            (guild_id, anti_spam_enabled, spam_msg_limit, spam_time_sec, mass_mention_limit, log_channel_id, image_scan_enabled)
+                            VALUES (?, ?, ?, ?, ?, (SELECT log_channel_id FROM security_config WHERE guild_id = ?), ?)
+                        """, (
+                            str(tgt_int),
+                            s_row["anti_spam_enabled"],
+                            s_row["spam_msg_limit"],
+                            s_row["spam_time_sec"],
+                            s_row["mass_mention_limit"],
+                            str(tgt_int),
+                            s_row["image_scan_enabled"]
+                        ))
+                        conn.commit()
+            except Exception as e:
+                print(f"[Sync] Security sync error for {tgt_int}: {e}")
+
+        # 3. Sync Sticky Messages
+        if "sticky" in modules or "all" in modules:
+            try:
+                import sticky_messages
+                st_db = sticky_messages.StickyDB()
+                src_stickies = st_db.get_all_for_guild(source_guild_id)
+                src_guild = bot.get_guild(source_guild_id)
+                tgt_guild = bot.get_guild(tgt_int)
+                if src_guild and tgt_guild and src_stickies:
+                    for st in src_stickies:
+                        src_ch = src_guild.get_channel(int(st["channel_id"]))
+                        if src_ch:
+                            match_ch = discord.utils.get(tgt_guild.text_channels, name=src_ch.name)
+                            if match_ch:
+                                st_db.set_sticky(match_ch.id, tgt_int, st["content"])
+            except Exception as e:
+                print(f"[Sync] Sticky sync error for {tgt_int}: {e}")
+
+        # 4. Sync Auto Reactions
+        if "autoreact" in modules or "all" in modules:
+            try:
+                import auto_reactions
+                ar_db = auto_reactions.AutoReactDB()
+                src_guild = bot.get_guild(source_guild_id)
+                tgt_guild = bot.get_guild(tgt_int)
+                with ar_db._conn() as conn:
+                    rows = conn.execute("SELECT * FROM auto_reactions WHERE guild_id = ?", (str(source_guild_id),)).fetchall()
+                    if src_guild and tgt_guild and rows:
+                        for r in rows:
+                            src_ch = src_guild.get_channel(int(r["channel_id"]))
+                            if src_ch:
+                                match_ch = discord.utils.get(tgt_guild.text_channels, name=src_ch.name)
+                                if match_ch:
+                                    ar_db.add_reaction(tgt_int, match_ch.id, r["emoji"])
+            except Exception as e:
+                print(f"[Sync] AutoReact sync error for {tgt_int}: {e}")
+
+        # 5. Sync Tickets (categories + log channel; role pings are not copied as role IDs differ per server)
+        if "tickets" in modules or "all" in modules:
+            try:
+                cog = bot.get_cog("TicketCog")
+                if cog:
+                    src_guild = bot.get_guild(source_guild_id)
+                    tgt_guild = bot.get_guild(tgt_int)
+                    src_log = cog.db.get_log_channel(source_guild_id)
+                    tgt_log = None
+                    if src_log and src_guild and tgt_guild:
+                        src_ch = src_guild.get_channel(int(src_log))
+                        if src_ch:
+                            tgt_log = discord.utils.get(tgt_guild.text_channels, name=src_ch.name)
+                    cog.db.set_log_channel(tgt_int, tgt_log.id if tgt_log else None)
+                    for c in cog.db.get_categories(source_guild_id):
+                        fields = {
+                            "button_label": c.button_label, "button_emoji": c.button_emoji,
+                            "ping_roles": "", "admin_roles": "",
+                            "embed_title": c.embed_title, "embed_description": c.embed_description,
+                        }
+                        existing = next((tc for tc in cog.db.get_categories(tgt_int) if tc.name == c.name), None)
+                        if existing:
+                            cog.db.update_category(tgt_int, existing.id, **fields)
+                        else:
+                            cog.db.add_category(guild_id=tgt_int, name=c.name, **fields)
+            except Exception as e:
+                print(f"[Sync] Tickets sync error for {tgt_int}: {e}")
+
+        # 6. Sync Stream Alerts (matches notification channels by name)
+        if "streamalerts" in modules or "all" in modules:
+            try:
+                import stream_alerts as sa_mod
+                sa_db = sa_mod.StreamAlertsDatabase()
+                sa_db.initialize()
+                src_guild = bot.get_guild(source_guild_id)
+                tgt_guild = bot.get_guild(tgt_int)
+                with sa_db._conn() as conn:
+                    for a in conn.execute("SELECT * FROM stream_alerts WHERE guild_id = ?", (str(source_guild_id),)).fetchall():
+                        src_ch = src_guild.get_channel(int(a["notification_channel_id"])) if src_guild else None
+                        tgt_ch = discord.utils.get(tgt_guild.text_channels, name=src_ch.name) if (src_ch and tgt_guild) else None
+                        if not tgt_ch:
+                            continue
+                        existing = conn.execute(
+                            "SELECT id FROM stream_alerts WHERE guild_id = ? AND platform = ? AND creator_username = ?",
+                            (str(tgt_int), a["platform"], a["creator_username"]),
+                        ).fetchone()
+                        if existing:
+                            conn.execute(
+                                "UPDATE stream_alerts SET notification_channel_id = ? WHERE id = ?",
+                                (str(tgt_ch.id), existing["id"]),
+                            )
+                        else:
+                            conn.execute(
+                                """INSERT INTO stream_alerts
+                                   (guild_id, platform, creator_username, creator_id, notification_channel_id)
+                                   VALUES (?, ?, ?, ?, ?)""",
+                                (str(tgt_int), a["platform"], a["creator_username"], a["creator_id"], str(tgt_ch.id)),
+                            )
+                    conn.commit()
+            except Exception as e:
+                print(f"[Sync] StreamAlerts sync error for {tgt_int}: {e}")
+
+        # 7. Sync Staff Roles (matches roles by name)
+        if "moderation" in modules or "all" in modules:
+            try:
+                import moderation as mod_mod
+                m_db = mod_mod.ModerationDatabase()
+                m_db.initialize()
+                src_guild = bot.get_guild(source_guild_id)
+                tgt_guild = bot.get_guild(tgt_int)
+                if src_guild and tgt_guild:
+                    for rid in m_db.get_staff_roles(source_guild_id):
+                        src_role = src_guild.get_role(int(rid))
+                        if src_role:
+                            tgt_role = discord.utils.get(tgt_guild.roles, name=src_role.name)
+                            if tgt_role:
+                                m_db.add_staff_role(tgt_int, tgt_role.id)
+            except Exception as e:
+                print(f"[Sync] Moderation sync error for {tgt_int}: {e}")
+
+        synced_count += 1
+
+    return web.json_response({"success": True, "synced_servers": synced_count})
 
 class DashboardAPI(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -586,20 +1449,40 @@ class DashboardAPI(commands.Cog):
             web.get("/api/auth/callback", handle_callback_redirect),
             web.post("/api/auth/callback", handle_callback),
             web.get("/api/users/@me", handle_me),
+            # Channels & Roles (shared)
+            web.get("/api/guilds/{guild_id}/channels", handle_bot_channels),
+            web.get("/api/guilds/{guild_id}/roles", handle_bot_roles),
             # Stream Alerts
             web.get("/api/guilds/{guild_id}/stream-alerts", handle_stream_alerts_get),
             web.post("/api/guilds/{guild_id}/stream-alerts", handle_stream_alerts_post),
             web.delete("/api/guilds/{guild_id}/stream-alerts/{platform}/{username}", handle_stream_alerts_delete),
-            # Channels (shared)
-            web.get("/api/guilds/{guild_id}/channels", handle_bot_channels),
+            web.put("/api/guilds/{guild_id}/stream-alerts/{platform}/{username}", handle_stream_alerts_put),
             # Tickets
             web.get("/api/guilds/{guild_id}/tickets", handle_tickets_get),
             web.post("/api/guilds/{guild_id}/tickets", handle_tickets_post),
             web.delete("/api/guilds/{guild_id}/tickets/{category_id}", handle_tickets_delete),
+            web.put("/api/guilds/{guild_id}/tickets/categories/{category_id}", handle_tickets_category_put),
             web.post("/api/guilds/{guild_id}/tickets/log-channel", handle_tickets_log_channel),
             # Welcome
             web.get("/api/guilds/{guild_id}/welcome", handle_welcome_get),
             web.post("/api/guilds/{guild_id}/welcome", handle_welcome_post),
+            # Security & Anti-Nuke
+            web.get("/api/guilds/{guild_id}/security", handle_security_get),
+            web.post("/api/guilds/{guild_id}/security", handle_security_post),
+            # Sticky Messages
+            web.get("/api/guilds/{guild_id}/sticky", handle_sticky_get),
+            web.post("/api/guilds/{guild_id}/sticky", handle_sticky_post),
+            web.delete("/api/guilds/{guild_id}/sticky/{channel_id}", handle_sticky_delete),
+            # Auto Reactions
+            web.get("/api/guilds/{guild_id}/auto-reactions", handle_autoreact_get),
+            web.post("/api/guilds/{guild_id}/auto-reactions", handle_autoreact_post),
+            web.delete("/api/guilds/{guild_id}/auto-reactions/{id}", handle_autoreact_delete),
+            # Moderation & Staff
+            web.get("/api/guilds/{guild_id}/moderation", handle_moderation_get),
+            web.post("/api/guilds/{guild_id}/moderation/staff-roles", handle_moderation_staff_add),
+            web.delete("/api/guilds/{guild_id}/moderation/staff-roles/{role_id}", handle_moderation_staff_del),
+            # Multi-Server Sync
+            web.post("/api/guilds/{guild_id}/sync", handle_guild_sync),
             # Music
             web.get("/api/guilds/{guild_id}/music", handle_music_get),
             web.post("/api/guilds/{guild_id}/music/control", handle_music_control),
