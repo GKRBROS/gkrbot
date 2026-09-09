@@ -36,7 +36,7 @@ import re
 import sqlite3
 import time
 import urllib.parse
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple
 
 import aiohttp
 import discord
@@ -50,9 +50,7 @@ from gkr_ui import (
     embed_error,
     embed_warning,
     embed_info,
-    embed_loading,
     fmt_ts,
-    fmt_rel,
 )
 
 logger = logging.getLogger("gkr_ai")
@@ -94,17 +92,20 @@ PERSONA_PROMPTS = {
 # ---------------------------------------------------------------------------
 
 MANGLISH_WORDS = {
-    "evide", "evideya", "evideyannu", "aanu", "aano", "undo", "und", "entha", "enthanu", "enthokke",
-    "sugam", "sugamano", "njan", "nammal", "cheyyan", "cheyyuka", "parayu", "nokku", "kollam",
+    "evide", "evideya", "evideyannu", "aanu", "aano", "ano", "undo", "und", "entha", "enthanu", "enthokke",
+    "sugam", "sugamano", "sugamalle", "sugamaano", "njan", "nammal", "cheyyan", "cheyyuka", "parayu", "nokku", "kollam",
     "adipoli", "machane", "mwonu", "aliya", "alle", "aahn", "ullathu", "poyi", "varum", "aara",
     "aaranu", "pettannu", "ithu", "ath", "engane", "enganeyanu", "nalla", "oru", "pinne", "ariyaamo",
-    "ariyumo", "kurichu", "kurich", "patti", "eppol", "eppozhanu", "cheyyu", "choykku", "nanni", "vegam"
+    "ariyumo", "kurichu", "kurich", "patti", "eppol", "eppozhanu", "cheyyu", "choykku", "nanni", "vegam",
+    "chaaya", "chaya", "kudicho", "kazhicho", "oone", "thante", "peru", "vishesham", "paripaadi", "enthund",
+    "poda", "myre", "thendi", "naaye", "oombu", "kunna", "polayadi", "potta", "thayoli", "punda", "myru", "koppu"
 }
 
 HINGLISH_WORDS = {
     "kya", "kahan", "kaise", "bhai", "batao", "acha", "theek", "karo", "hoga", "mera", "tera",
     "apna", "naam", "kaha", "hai", "hain", "kaun", "kyun", "kuch", "bolo", "yaar", "dost", "samjhao",
-    "tha", "the", "thi", "kisne", "kab", "kisko", "kiske", "bare", "mein", "me", "achha", "shukriya"
+    "tha", "the", "thi", "kisne", "kab", "kisko", "kiske", "bare", "mein", "me", "achha", "shukriya",
+    "chutiya", "chutiye", "gaandu", "gandu", "madarchod", "bhenchod", "bhosdike", "saale", "sale", "kutta", "kamina"
 }
 
 # ---------------------------------------------------------------------------
@@ -182,6 +183,7 @@ def init_db():
             ("tts_enabled", "INTEGER NOT NULL DEFAULT 1"),
             ("thread_mode", "INTEGER NOT NULL DEFAULT 1"),
             ("self_learning", "INTEGER NOT NULL DEFAULT 1"),
+            ("mood", "TEXT NOT NULL DEFAULT 'normal'"),
         ]
         for col, col_def in migrations:
             if col not in columns:
@@ -210,6 +212,7 @@ def get_guild_config(guild_id: int | str) -> dict:
             "ollama_url": "http://127.0.0.1:11434",
             "system_prompt": "",
             "persona": "friendly",
+            "mood": "normal",
             "enabled": 1,
             "mention_enabled": 1,
             "research_enabled": 1,
@@ -223,8 +226,8 @@ def get_guild_config(guild_id: int | str) -> dict:
         cur.execute(
             """
             INSERT OR IGNORE INTO ai_guild_config 
-            (guild_id, ai_channel_id, model_name, ollama_url, system_prompt, persona, enabled, mention_enabled, research_enabled, image_enabled, comedy_enabled, tts_enabled, thread_mode, self_learning, cooldown_seconds)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (guild_id, ai_channel_id, model_name, ollama_url, system_prompt, persona, mood, enabled, mention_enabled, research_enabled, image_enabled, comedy_enabled, tts_enabled, thread_mode, self_learning, cooldown_seconds)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 defaults["guild_id"],
@@ -233,6 +236,7 @@ def get_guild_config(guild_id: int | str) -> dict:
                 defaults["ollama_url"],
                 defaults["system_prompt"],
                 defaults["persona"],
+                defaults["mood"],
                 defaults["enabled"],
                 defaults["mention_enabled"],
                 defaults["research_enabled"],
@@ -252,6 +256,7 @@ def update_guild_config(guild_id: int | str, **kwargs):
     """Update specific configuration fields for a guild."""
     if not kwargs:
         return
+    get_guild_config(guild_id)  # Ensure record exists before update
     keys = list(kwargs.keys())
     values = [kwargs[k] for k in keys]
     set_clause = ", ".join([f"{k} = ?" for k in keys])
@@ -455,9 +460,9 @@ class DialectEngine:
         manglish_matches = words.intersection(MANGLISH_WORDS)
         hinglish_matches = words.intersection(HINGLISH_WORDS)
 
-        if len(manglish_matches) >= 1 or any(p in lower for p in ["evideya", "evideyannu", "enthanu", "engane", "sugamano", "aanu", "aaranu", "ullathu", "machane", "adipoli"]):
+        if len(manglish_matches) >= 1 or any(p in lower for p in ["evideya", "evideyannu", "enthanu", "engane", "sugamano", "sugam ano", "sugam aano", "aanu", "aaranu", "ullathu", "machane", "adipoli", "kudicho", "kazhicho", "chaaya", "chaya", "enthund", "poda", "myre", "thendi", "patti"]):
             return "manglish"
-        if len(hinglish_matches) >= 1 and (len(hinglish_matches) >= 2 or any(p in lower for p in ["kahan", "kaun", "kaise", "batao", "samjhao", "hai", "tha", "the", "kya", "bhai", "yaar"])):
+        if len(hinglish_matches) >= 1 or any(p in lower for p in ["kahan", "kaun", "kaise", "batao", "samjhao", "hai", "tha", "the", "kya", "bhai", "yaar", "chutiya", "saale", "bhenchod", "madarchod"]):
             return "hinglish"
         return "english"
 
@@ -474,96 +479,40 @@ class DialectEngine:
     @classmethod
     def synthesize_dialect_answer(cls, title: str, desc: str, clean_extract: str, dialect: str, query: str) -> str:
         """
-        Synthesizes researched data into a friendly, easy-to-understand 2-paragraph
-        explanation mirrored dynamically in the user's detected dialect (Manglish, Hinglish, English, etc.).
+        Synthesizes researched data into a concise, punchy, friendly reply
+        like a real human Discord friend (no long essays, no multiple paragraphs).
         """
-        desc_clean = desc.replace("\u2013", "-").replace("\u2014", "-").strip()
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", clean_extract) if len(s.strip()) > 8]
-        p1 = sentences[0] if sentences else clean_extract
-        p2 = " ".join(sentences[1:3]) if len(sentences) > 1 else ""
+        s1 = sentences[0] if sentences else clean_extract
+        s1 = re.sub(r"\[\d+\]", "", s1).strip()
+        if len(s1) > 200:
+            match = re.search(r"^(.{60,190}?[,;])\s+", s1)
+            if match:
+                s1 = match.group(1).rstrip(",;") + "."
 
-        is_person = any(w in desc_clean.lower() for w in ["physicist", "actor", "president", "scientist", "player", "person", "born", "leader", "singer", "author", "footballer", "cricketer", "politician"])
-        is_place = any(w in desc_clean.lower() for w in ["state", "country", "city", "island", "capital", "region", "coast", "district", "municipality", "mausoleum", "monument"])
-
-        # ── MANGLISH SYNTHESIS ─────────────────────────────────────────────
+        # ── MANGLISH ───────────────────────────────────────────────────────
         if dialect == "manglish":
             if title.lower() == "kerala":
-                return (
-                    f"**Kerala** India-yude south-west coastal side-il (**Malabar Coast**) aanu located aayittullathu!\n\n"
-                    f"Ivide **Arabian Sea**-yude coast-um **Western Ghats**-um ullathu kondu nalla lush green scenery-um backwaters-um und. "
-                    f"Ithinte capital city Thiruvananthapuram aanu, pinne Malayalam aanu main language. *\"God's Own Country\"* ennanu ithu popular aayittu ariyappedunnathu!"
-                )
+                return "Kerala India-yude south-west Malabar coast-ilaanu ullathu machane, scenic backwaters-um greenery-um ulla kidilam sthalam!"
             if "einstein" in title.lower():
-                return (
-                    f"**{title}** oru world-famous aayittulla German theoretical physicist aayirunnu!\n\n"
-                    f"Adheham **Theory of Relativity**-kku aanu ettavum kooduthal popular aayathu, pinne famous equation aaya **$E = mc^2$** kandupidichathum adhehamaanu. "
-                    f"1921-il **Nobel Prize in Physics** koodi adhehathinu labhichittund. World-ile thanne greatest science legends-il oral aayittaanu aalukal adhehathe kaanunnathu!"
-                )
-            if is_place:
-                desc_str = f" ({desc_clean})" if desc_clean else ""
-                return (
-                    f"**{title}**{desc_str} oru prominent sthalam aanu!\n\n"
-                    f"{p1}\n\n"
-                    f"{p2 if p2 else 'Kooduthal details venamenkil choikku machane, njan parayam!'}"
-                )
-            elif is_person:
-                desc_str = f" ({desc_clean})" if desc_clean else ""
-                return (
-                    f"**{title}**{desc_str} oru well-known personality aanu!\n\n"
-                    f"{p1}\n\n"
-                    f"{p2 if p2 else 'Adhehathe kurichu kooduthal details venamenkil parayam machane!'}"
-                )
-            else:
-                desc_str = f" ({desc_clean})" if desc_clean else ""
-                return (
-                    f"**{title}**{desc_str}-ne kurichu parayaanel:\n\n"
-                    f"{p1}\n\n"
-                    f"{p2 if p2 else 'Ithine kurichu kooduthal ariyano machane?'}"
-                )
+                return "Albert Einstein world-famous theoretical physicist aayirunnu, Theory of Relativity-um E=mc² kandupidichathum pulliyaanu!"
+            return f"{title} kurichu parayaanel: {s1}"
 
-        # ── HINGLISH SYNTHESIS ─────────────────────────────────────────────
+        # ── HINGLISH ───────────────────────────────────────────────────────
         elif dialect == "hinglish":
             if title.lower() == "kerala":
-                return (
-                    f"**Kerala** India ke south-western **Malabar Coast** par located hai!\n\n"
-                    f"Yahan par **Arabian Sea** aur **Western Ghats** ki wajah se bohot khubsurat greenery aur backwaters dekhne ko milte hain. "
-                    f"Thiruvananthapuram iski capital city hai aur yahan mainly Malayalam boli jaati hai. Ise *\"God's Own Country\"* bhi kaha jaata hai!"
-                )
+                return "Kerala India ke south-western Malabar Coast par located hai bhai, greenery aur backwaters ke liye famous hai!"
             if "einstein" in title.lower():
-                return (
-                    f"**{title}** ek bohot hi famous theoretical physicist the!\n\n"
-                    f"Unhone **Theory of Relativity** develop ki thi aur unka equation **$E = mc^2$** pure world me famous hai. "
-                    f"Unhe 1921 me **Nobel Prize in Physics** bhi mila tha. Science ki history me unhe sabse iconic genius maana jaata hai!"
-                )
-            if is_place:
-                desc_str = f" ({desc_clean})" if desc_clean else ""
-                return (
-                    f"**{title}**{desc_str} ek mashhoor jagah hai!\n\n"
-                    f"{p1}\n\n"
-                    f"{p2 if p2 else 'Is jagah ke baare me aur kuch jaanna ho toh bataiye bhai!'}"
-                )
-            elif is_person:
-                desc_str = f" ({desc_clean})" if desc_clean else ""
-                return (
-                    f"**{title}**{desc_str} ek famous shakhsiyat hain!\n\n"
-                    f"{p1}\n\n"
-                    f"{p2 if p2 else 'Inke baare me aur detail chahiye ho toh zaroor poochiye bhai!'}"
-                )
-            else:
-                desc_str = f" ({desc_clean})" if desc_clean else ""
-                return (
-                    f"**{title}**{desc_str} ke baare me:\n\n"
-                    f"{p1}\n\n"
-                    f"{p2 if p2 else 'Aur jaankari chahiye ho toh batao yaar!'}"
-                )
+                return "Albert Einstein world-famous physicist the bhai, unhone Theory of Relativity aur E=mc² discover kiya tha!"
+            return f"{s1}"
 
-        # ── DEFAULT NATURAL CONVERSATIONAL ENGLISH ─────────────────────────
+        # ── ENGLISH / DEFAULT ──────────────────────────────────────────────
         else:
-            desc_str = f" *({desc_clean})*" if desc_clean else ""
-            header = f"**{title}**{desc_str}\n\n"
-            if p2:
-                return f"{header}{p1}\n\n{p2}"
-            return f"{header}{p1}"
+            if title.lower() == "kerala":
+                return "Kerala is located on the southwestern Malabar Coast of India, famous for its scenic backwaters and greenery!"
+            if "einstein" in title.lower():
+                return "Albert Einstein was a legendary theoretical physicist who developed the Theory of Relativity and E=mc²!"
+            return s1
 
 
 # ---------------------------------------------------------------------------
@@ -918,15 +867,353 @@ class ComedyEngine:
         return f"🔥 **Roast for {target_name}:**\n> *\"{roast}\"*"
 
 
+
 # ---------------------------------------------------------------------------
-# Knowledge & Deep Research Engine (Free, Zero API Key)
+# Bad Words & Dynamic Mood Engine (Extreme, Harsh, Normal, Polite, Strict)
 # ---------------------------------------------------------------------------
+
+class BadWordsEngine:
+    """
+    Detects profanities, hostile attacks, and insults across English, Manglish, and Hinglish.
+    Fires back dynamic comebacks based on the server's mood setting:
+    extreme (bad words / savage insults), harsh (sharp roasts), normal (casual), polite, or strict.
+    """
+
+    BAD_WORDS_PATTERNS = [
+        # English Profanities & Insults
+        r"\b(fuck|fucking|fucker|motherfucker|bitch|idiot|asshole|stfu|shut up|trash|noob|bastard|dick|pussy|dumbass|moron|retard|clown|loser|dogshit|garbage|useless bot|kys|cunt|shit|bullshit|screw you)\b",
+        # Manglish / Malayalam Profanities & Insults
+        r"\b(myre|thendi|patti|naaye|oombu|kunna|poda|polayadi|potta|thayoli|punda|maire|myru|thenditharam|vettavaliya|koothichi|kopp|koppu|chandi|pulayadi|ninte thandha|thanthe)\b",
+        # Hinglish / Hindi Profanities & Insults
+        r"\b(chutiya|chutiye|gaandu|gandu|madarchod|bhenchod|bc|mc|bhosdike|bhosadike|saale|sale|kutta|kamina|kamine|haramkhor|lauda|lodu|tatti|gadha|gadhe|bakwaas|chup kar|tera baap)\b",
+    ]
+
+    @classmethod
+    def has_bad_words(cls, text: str) -> bool:
+        low = text.lower()
+        for pat in cls.BAD_WORDS_PATTERNS:
+            if re.search(pat, low):
+                return True
+        return False
+
+    @classmethod
+    def generate_comeback(cls, text: str, dialect: str, mood: str, user_name: str) -> str:
+        """Generates dynamic comeback matching user dialect and server mood."""
+        mood = mood.lower()
+
+        # ── EXTREME / SAVAGE (Bad Words & Raw Roasts) ──────────────────────
+        if mood in ("extreme", "unhinged"):
+            if dialect == "manglish":
+                comebacks = [
+                    f"Ninte thandhayod poi parayeda thendi! Njan aaraannu ninakku ariyilla, poyi oombu myre! 💀",
+                    f"Poda patti naaye! Vayil thonniyathu vilichu parayaan njan ninte veettile velaikkaran onnum alla, mindathe podey!",
+                    f"Ennode aano ninte kali myre? Ninte thalayil choru thinnunna aale pole samsarikku, illenkil njan ninnod ithilum kooduthal thenditharam parayum!",
+                    f"Poda vettavaliya, ninte chorichil vere evidengilum poi theerkkeda naaye! Njan ninte thaattil thinnittilla!",
+                    f"Ninte jaada okke kayyil vechaal mathi myre, oru bot-inod polum theri vilichu jayikkaan pattatha noob thendi!",
+                ]
+            elif dialect == "hinglish":
+                comebacks = [
+                    f"Apne baap ko jaake sikha saale chutiye! Tere jaise 50 dekhe hain roz, chup chaap nikal yahan se! 💀",
+                    f"Abe gadhon ke sardaar, dimaag me gobar bhara hai kya tere? Apni aukaat me reh ke baat kar warna aisi taisi kar dunga!",
+                    f"Bhosdike zyada shaana mat ban! Ek second me teri saari hawa nikaal dunga, chup kar madarchod!",
+                    f"Teri aukaat hi yahi hai ki Discord par ek bot se gaaliyan khaye, nikal bhenchod!",
+                    f"Muh band rakh saale kutte, tere jaisa faltu insaan maine aaj tak nahi dekha!",
+                ]
+            else:
+                comebacks = [
+                    f"Shut the fuck up you absolute clown. Who the hell gave you permission to bark at me? 💀",
+                    f"Look in the mirror before you open your trash mouth, you room-temperature IQ dumbass.",
+                    f"You're talking mad shit for someone who spends all day on Discord getting clowned on by a bot. Sit your broke ass down.",
+                    f"Go cry to your mom about it you useless piece of garbage. Don't fucking test me.",
+                    f"Imagine having zero life to the point you're cursing at an AI bot and still losing the argument. Take the L and log off.",
+                ]
+            return random.choice(comebacks)
+
+        # ── HARSH (Sharp Biting Roasts) ────────────────────────────────────
+        elif mood in ("harsh", "sarcastic"):
+            if dialect == "manglish":
+                comebacks = [
+                    f"Eda ninakku vere pani onnum ille? Ninte ee toxic swabhavam kondu ivide aarkkum oru karyavum illa. Poyi oru pani edukk machane!",
+                    f"Mindathe irikkeda. Ninte ee mandatharam kettirikkan enikku samayam illa.",
+                    f"Kooduthal jaada edukkathe podey, ninte level enikku nannayi ariyam. Thoda ariyatha karyathil mindaathe irikku!",
+                ]
+            elif dialect == "hinglish":
+                comebacks = [
+                    f"Bhai thoda dimaag use kar liya kar, waise bhi free me mila hai tujhe. Fazool bakwaas band kar!",
+                    f"Aisa lag raha hai bina soche bolne ki aadat hai teri. Thoda tameez seekh le pehle.",
+                    f"Tere se baat karke mere CPU cycles waste ho rahe hain. Jaake apna kaam kar!",
+                ]
+            else:
+                comebacks = [
+                    f"I'd roast you, but clearly life already beat me to it. Try having a single brain cell before typing.",
+                    f"Is being annoying a full-time hobby for you, or were you just born that way?",
+                    f"I refuse to engage in a battle of wits with an unarmed opponent. Sit down.",
+                ]
+            return random.choice(comebacks)
+
+        # ── NORMAL (Casual Chill Discord Member) ───────────────────────────
+        elif mood == "normal":
+            if dialect == "manglish":
+                comebacks = [
+                    f"Aaha, kollalo! Ennodano kali? Njan chumma oru bot aanu bro, enthina ingane deshyappedunne haha! 😂",
+                    f"Bro chill aavu, itra vishamikkalle! Chumma enthelum nalla karyam choikku namukku parayam.",
+                    f"Machane relax! Itra violent aavan maathram ivide entha sambhaviche? 😂",
+                ]
+            elif dialect == "hinglish":
+                comebacks = [
+                    f"Arre bhai itna gussa kyun ho raha hai? Thoda chill kar, paani peele! 😂",
+                    f"Haha bhai tu toh bohot jaldi trigger ho gaya! Aaraam se baat kar yaar.",
+                    f"Chill maar bhai, bot se ladaai karke kya medal milega tujhe? 😂",
+                ]
+            else:
+                comebacks = [
+                    f"Who hurt you bro? It's really not that deep. Take a breath and chill out.",
+                    f"Lmao bro woke up and chose violence today. Relax, it's just a Discord bot. 😂",
+                    f"Imagine getting this mad at a bot. Couldn't be me. Go grab some water!",
+                ]
+            return random.choice(comebacks)
+
+        # ── POLITE ─────────────────────────────────────────────────────────
+        elif mood == "polite":
+            return (
+                f"Hey {user_name}, I understand you might be having a rough day, but let's keep the conversation kind, "
+                f"polite, and friendly! How can I help you in a positive way today? 😊"
+            )
+
+        # ── STRICT / ASTRIKC ───────────────────────────────────────────────
+        else: # strict
+            return (
+                f"⚠️ **Official Warning ({user_name}):**\n"
+                f"> Offensive, abusive, or profane language violates server communication guidelines. "
+                f"Please maintain civil and respectful conduct."
+            )
+
+
+# ---------------------------------------------------------------------------
+# Conversational Human Engine (Normal Discord User Persona)
+# ---------------------------------------------------------------------------
+
+class ConversationalHumanEngine:
+    """
+    Empowers the bot to reply like a genuine human Discord user / friend
+    without needing question prefixes. Handles greetings, everyday banter,
+    boredom, gratitude, praise, gaming opinions, and casual conversation.
+    """
+
+    GREETINGS = {
+        "hi", "hello", "hey", "yo", "wassup", "sup", "heyy", "heyyy", "hoi", "hola",
+        "namaskaram", "namaste", "halo", "kya haal", "kem cho", "vanakkam"
+    }
+
+    STATUS_INQUIRIES = {
+        "how are you", "how r u", "how you doing", "hows it going", "sugamano", "sugam aano", "sugam ano",
+        "kaise ho", "kaisa hai", "kya chal raha hai", "enthund", "enthokke und", "kya scene hai"
+    }
+
+    BORED_TRIGGERS = {
+        "im bored", "i am bored", "bored", "bored aanu", "bore adikunnu", "bore ho raha hu",
+        "kore bore", "nothing to do", "kya karu"
+    }
+
+    THANKS_TRIGGERS = {
+        "thanks", "thank you", "thx", "ty", "tysm", "nanni", "valare nanni", "shukriya", "dhanyawad"
+    }
+
+    PRAISE_TRIGGERS = {
+        "good bot", "w bot", "best bot", "i love you", "nice bot", "great bot", "adipoli bot",
+        "super bot", "smart bot", "legend"
+    }
+
+    CREATOR_INQUIRIES = {
+        "who made you", "who created you", "who is your creator", "who owns you", "ninne aara undakkiye",
+        "tujhe kisne banaya", "who is the owner", "aaranu bot undakkiye"
+    }
+
+    @classmethod
+    def try_chat(cls, text: str, dialect: str, mood: str, user_name: str) -> Optional[str]:
+        low = text.lower().strip(" ?.,!\"'")
+        words = set(re.findall(r"\b[a-z]+\b", low))
+
+        # 1. Greetings
+        if low in cls.GREETINGS or any(low.startswith(g + " ") for g in ["yo", "hey", "hi", "wassup", "sup", "heyy"]):
+            if dialect == "manglish":
+                replies = [
+                    f"Yo {user_name}! Entha machane vishayam? Enthokke und visheshangal?",
+                    f"Namaskaram {user_name}! Parayu machane, njan ivide und!",
+                    f"Hey machane! Entha ippol vishesham?",
+                ]
+            elif dialect == "hinglish":
+                replies = [
+                    f"Yo {user_name} bhai! Kya haal chaal?",
+                    f"Arre {user_name}! Bol bhai kya chal raha hai?",
+                    f"Hello bhai! Kya scene hai aaj ka?",
+                ]
+            else:
+                replies = [
+                    f"Yo {user_name}! What's good?",
+                    f"Hey {user_name}! How's it going?",
+                    f"Wassup {user_name}! What are you up to?",
+                ]
+            return random.choice(replies)
+
+        # 2. Status Inquiries (e.g. "sugam ano", "sugamano", "how are you", "kaise ho", "enthund")
+        if any(p in low for p in cls.STATUS_INQUIRIES) or re.search(r"\b(sugam\s*a*no|sugamano|sugamaano|sugam\s*a*lle|sugam\s*thanne|sugam\s*thaane|enthund|enthokke\s*und|entha\s*vishesham|entha\s*vishayam|entha\s*paripaadi)\b", low):
+            if dialect == "manglish":
+                return "Nalla sugam machane! Ivide chill cheyyunnu. Ninakkenthund vishesham?"
+            elif dialect == "hinglish":
+                return "Ekdum first class bhai! Tu bata kaisa chal raha hai sab?"
+            else:
+                return f"Doing great, thanks! Just chilling in the server. How about you, {user_name}?"
+
+        # 3. Food & Drinks Inquiries (e.g. "chaaya kudicho", "food kazhicho", "kazhicho")
+        if re.search(r"\b(chaaya|chaya|tea|coffee)\s*(kudicho|kazhicho)?\b|\b(food|oone|oottu|lunch|dinner|breakfast)\s*(kazhicho|kudicho)?\b|\b(kazhicho|kudicho)\b", low) or re.search(r"\b(khana\s*khaya|chai\s*pi|nashta\s*kiya)\b", low):
+            if dialect == "manglish":
+                return "Kazhichu machane! Chaya okke kudichu. Nee kazhicho?"
+            elif dialect == "hinglish":
+                return "Haan bhai, pet pooja ho gayi! Tune khana khaya?"
+            else:
+                return "All fueled up! Have you grabbed food or tea yet?"
+
+        # 4. Identity / Name Inquiries (e.g. "nee aaranu", "who are you", "ninte peru entha")
+        if re.search(r"\b(nee|ninte|thante|ningal)\s*(aaranu|aara|peru|perentha)\b|\b(who\s+are\s+you|what\s+is\s+your\s+name)\b|\b(kaun\s+ho\s+tum|tera\s+naam\s+kya)\b", low):
+            if dialect == "manglish":
+                return "Njan GKR aanu machane, server-ile AI buddy. Entha vishayam?"
+            elif dialect == "hinglish":
+                return "Main GKR hu bhai, server ka AI companion. Bol kya scene hai?"
+            else:
+                return "I'm GKR, your server's AI companion! What's on your mind?"
+
+        # 5. Location Inquiries (e.g. "nee evideya", "where are you", "evideya ippo")
+        if re.search(r"\b(nee|ninte)\s*(evideya|evide|evideyannu)\b|\b(where\s+are\s+you|kahan\s+ho|kidhar\s+ho)\b", low):
+            if dialect == "manglish":
+                return "Njan ivide serveril thanne und machane! Entha paripaadi?"
+            elif dialect == "hinglish":
+                return "Main yahin server me active hu bhai! Bol kya scene hai?"
+            else:
+                return "Right here in the server! What's up?"
+
+        # 6. Casual Reactions & Hype (e.g. "kollam", "adipoli", "kidilam", "polichu", "pwoli", "mass")
+        if re.search(r"\b(kollam|adipoli|kidilam|polichu|pwoli|pinnalla|mass|vera\s*level|theepori)\b", low):
+            if dialect == "manglish":
+                return "Pinnallathe! Full power machane! 🔥"
+            elif dialect == "hinglish":
+                return "Ekdum bawaal bhai! Full on energy! 🔥💯"
+            else:
+                return "Hell yeah! Top vibes! 🔥🚀"
+
+        # 7. Boredom
+        if any(p in low for p in cls.BORED_TRIGGERS):
+            if dialect == "manglish":
+                return "Bore adikkathe machane! Namukku `/laugh` adichu comedy kelkkam, allenkil game kalikkam!"
+            elif dialect == "hinglish":
+                return "Bore mat ho bhai! Ya toh `/laugh` use kar joke ke liye, ya games ki baat karte hain!"
+            else:
+                return "Bored? Try `/laugh` for a joke or let me know what games you're playing!"
+
+        # 8. Thanks
+        if any(w in words for w in ["thanks", "thank", "thx", "ty", "tysm", "nanni", "shukriya"]):
+            if dialect == "manglish":
+                return "Athokke enthu machane, anytime! 🤝🔥"
+            elif dialect == "hinglish":
+                return "Arre koi baat nahi bhai! Dosti me no thanks! 🤝💯"
+            else:
+                return f"Anytime {user_name}! Got your back. 🤝"
+
+        # 9. Praise / W Bot
+        if any(p in low for p in cls.PRAISE_TRIGGERS) or low in ("w", "big w", "gg"):
+            if dialect == "manglish":
+                return "Adipoli machane, thank you! W vibes only! 🔥"
+            elif dialect == "hinglish":
+                return "Shukriya bhai! Tu bhi ekdum W hai! 💯🔥"
+            else:
+                return f"Appreciate you {user_name}! Big W! 🤝🔥"
+
+        # 10. Creator
+        if any(p in low for p in cls.CREATOR_INQUIRIES):
+            if dialect == "manglish":
+                return "Enne develop cheythathu GKR Development Team aanu machane!"
+            elif dialect == "hinglish":
+                return "Mujhe GKR Development Team ne develop kiya hai bhai!"
+            else:
+                return "I was created and engineered by the GKR Development Team!"
+
+        # 11. Goodbyes
+        if re.search(r"\b(bye|tata|see\s*you|gn|good\s*night|pinne\s*kaanam|njan\s*pokunnu|alvida)\b", low):
+            if dialect == "manglish":
+                return "Seri machane, pinne kaanaam! Take care! 👋✨"
+            elif dialect == "hinglish":
+                return "Chalo bhai, baad me milte hain! Take care! 👋✨"
+            else:
+                return f"Catch you later, {user_name}! Have a good one! 👋✨"
+
+        return None
+
+    @classmethod
+    def generate_general_chat(cls, text: str, dialect: str, mood: str, user_name: str) -> str:
+        """Fallback conversational response when input is not an encyclopedia subject."""
+        if dialect == "manglish":
+            return "Athe machane, athu nalla point aanu! Ninakku entha thonnunne?"
+        elif dialect == "hinglish":
+            return "Sahi baat hai bhai! Is baare me tera kya sochna hai?"
+        else:
+            return "True that! What do you think about it?"
+
 
 class KnowledgeEngine:
     """
     Performs real-time factual knowledge retrieval and multilingual synthesis
     using public encyclopedia APIs, geography resolvers, and structured extraction.
     """
+
+    @staticmethod
+    def is_factual_inquiry(text: str) -> bool:
+        """
+        Determines if an incoming user prompt is an actual factual, educational,
+        or informational inquiry that warrants querying Wikipedia.
+        Prevents conversational small talk, greetings, personal bot questions,
+        and everyday banter from polluting Wikipedia OpenSearch.
+        """
+        low = text.lower().strip(" ?.,!\"'")
+
+        # 1. Personal conversational small talk directed at bot or greetings are NEVER Wikipedia queries
+        small_talk_patterns = [
+            r"\b(sugam|sugam\s*a*no|sugamano|sugamaano|sugamalle|sugam\s*thanne|enthund|enthokke|vishesham|paripaadi)\b",
+            r"\b(chaaya|chaya|tea|coffee|food|kazhicho|kudicho|oone)\b",
+            r"\b(nee|ninte|thante|ningal|you|your|tu|tera|apna)\s+(aaranu|aara|evideya|peru|kya|kaun|kahan|banaya|undakkiye)\b",
+            r"\b(who\s+are\s+you|who\s+made\s+you|where\s+are\s+you|how\s+are\s+you|what\s+is\s+your\s+name)\b",
+            r"\b(kollam|adipoli|kidilam|polichu|pinnalla|pwoli|mass|vera\s*level|maranam|theepori|scene)\b",
+            r"^(hi|hello|hey|yo|wassup|sup|hai|halo|namaskaram|namaste|vanakkam|kya haal|kem cho)\b",
+        ]
+        for pat in small_talk_patterns:
+            if re.search(pat, low):
+                return False
+
+        # 2. Strong signals of informational / knowledge inquiries
+        inquiry_patterns = [
+            r"^(who|what|where|when|why|how|which)\s+(is|was|are|were|can|do|does|did|will)\b",
+            r"^(tell me about|explain|history of|meaning of|definition of|information on|details of|search for|summary of)\b",
+            r"\b(located in|located at|located|situated in|situated|capital of|currency of|population of)\b",
+            r"\b(evideya\s+ullathu|evideyannu\s+ullathu|aaranu|aayirunnu|enthanu|kurichu\s+parayu|patti\s+parayu)\b",
+            r"\b(kahan\s+hai|kaun\s+hai|kaun\s+tha|kaun\s+the|kya\s+hai|kise\s+kehte\s+hain|ke\s+bare\s+mein)\b",
+            r"\b(meaning|definition|history|origin|formula|inventor|founder)\b",
+        ]
+        for pat in inquiry_patterns:
+            if re.search(pat, low):
+                return True
+
+        # 3. Concise entity / noun queries (e.g. "Albert Einstein", "Kerala", "Photosynthesis", "Black Hole")
+        words = low.split()
+        if 1 <= len(words) <= 5:
+            conversational_stop_words = {
+                "i", "me", "my", "you", "your", "he", "she", "we", "they", "am", "is", "are", "was",
+                "njan", "njanum", "nee", "ninte", "namukku", "nammal", "pulli", "avan", "aval",
+                "main", "hum", "tu", "tera", "mera", "apna", "mujhe", "tujhe", "karega", "jaayega",
+                "varum", "pokum", "cheyyum", "parayum", "choykkum", "undakum", "aano", "ano", "alle"
+            }
+            if not any(w in conversational_stop_words for w in words):
+                return True
+
+        return False
 
     @staticmethod
     def clean_search_query(query: str) -> str:
@@ -1240,55 +1527,77 @@ class AIInferenceClient:
     ) -> Tuple[str, Optional[dict]]:
         """
         Unified AI generation dispatcher.
-        1. Checks learned memories (Self-Learning system).
-        2. Detects user dialect (Manglish, Hinglish, regional script, English).
-        3. Queries local Ollama instance if available with dialect mirroring instructions.
-        4. Conducts deep Wikipedia & Knowledge lookup if relevant.
-        5. Synthesizes a friendly, concise, natural 2-paragraph response in the SAME dialect!
+        1. Checks for bad words, insults, and attacks -> fires dynamic comebacks based on server mood.
+        2. Checks learned memories (Self-Learning system).
+        3. Detects user dialect (Manglish, Hinglish, regional script, English).
+        4. Handles natural everyday Discord banter, greetings, opinions, and boredom.
+        5. Queries local Ollama instance if available with persona and mood instructions.
+        6. Conducts deep Wikipedia & Knowledge lookup if relevant.
+        7. Synthesizes a friendly, concise, natural response like a real Discord user!
         """
         clean_prompt = prompt.strip()
 
-        # 1. Detect Dialect
+        # 1. Detect Dialect and Server Mood
         detected_dialect = DialectEngine.detect_dialect(clean_prompt)
         LearningMemoryEngine.update_user_profile(guild_id, user_id, detected_dialect)
+        mood = guild_config.get("mood", "normal").lower()
 
-        # 2. Check Self-Learned Memory Store
+        # 2. Check for Bad Words & Hostile Attacks
+        if BadWordsEngine.has_bad_words(clean_prompt):
+            comeback = BadWordsEngine.generate_comeback(clean_prompt, detected_dialect, mood, user_name)
+            return comeback, {"engine": f"Dynamic Mood Response ({mood.capitalize()})", "dialect": detected_dialect}
+
+        # 3. Check Self-Learned Memory Store
         learned = LearningMemoryEngine.find_memory(guild_id, clean_prompt)
         if learned:
             topic = learned["topic"].capitalize()
             fact = learned["fact"]
             if detected_dialect == "manglish":
-                return f"Enikku ithu ormayund machane! **{topic}** kurichu njan padichathaane:\n\n> {fact}", {"engine": "Self-Learned Memory"}
+                return f"Aah athu enikku ariyam machane! {fact}", {"engine": "Self-Learned Memory"}
             elif detected_dialect == "hinglish":
-                return f"Haan bhai, mujhe yaad hai! **{topic}** ke baare me maine seekha tha:\n\n> {fact}", {"engine": "Self-Learned Memory"}
+                return f"Haan bhai mujhe yaad hai! {fact}", {"engine": "Self-Learned Memory"}
             else:
-                return f"I remember that! Here is what I learned about **{topic}**:\n\n> {fact}", {"engine": "Self-Learned Memory"}
+                return f"Oh yeah, I remember! {fact}", {"engine": "Self-Learned Memory"}
 
-        # 3. Quick Math Check
+        # 4. Quick Math Check
         math_res = KnowledgeEngine.evaluate_math(clean_prompt)
         if math_res:
             return math_res, None
 
-        # 4. Check Self-Hosted Ollama with Persona & Dialect Mirroring
+        # 5. Check Natural Everyday Discord Banter (Greetings, status, boredom, praise, thanks)
+        human_chat = ConversationalHumanEngine.try_chat(clean_prompt, detected_dialect, mood, user_name)
+        if human_chat:
+            return human_chat, {"engine": "Conversational Human Chat", "dialect": detected_dialect}
+
+        # 6. Check Self-Hosted Ollama with Persona, Mood & Dialect Mirroring
         ollama_url = guild_config.get("ollama_url", "http://127.0.0.1:11434")
         model_name = guild_config.get("model_name", "auto")
         persona_key = guild_config.get("persona", "friendly")
         persona_prompt = PERSONA_PROMPTS.get(persona_key, PERSONA_PROMPTS["friendly"])
         custom_prompt = guild_config.get("system_prompt", "")
 
+        mood_instructions = {
+            "extreme": "MOOD: EXTREME & SAVAGE. Talk like an uncensored, savage, witty human Discord user. If someone insults or swears, fire back with raw savagery and insults.",
+            "harsh": "MOOD: HARSH & SARCASTIC. Talk like a blunt, sarcastic Discord user who gives biting roasts and doesn't sugarcoat anything.",
+            "normal": "MOOD: NORMAL DISCORD USER. Talk like a real, friendly Discord friend using casual slang, humor, and a chill vibe.",
+            "polite": "MOOD: POLITE. Be exceptionally courteous, warm, gentle, and respectful at all times.",
+            "strict": "MOOD: STRICT & FORMAL. Be disciplined, concise, professional, and rule-oriented."
+        }
+        active_mood_prompt = mood_instructions.get(mood, mood_instructions["normal"])
+
         dialect_instruction = ""
         if detected_dialect == "manglish":
-            dialect_instruction = "IMPORTANT: The user is writing in Manglish (Malayalam written using the English/Latin alphabet). You MUST respond in fluent, friendly, natural Manglish!"
+            dialect_instruction = "IMPORTANT: The user is writing in Manglish (Malayalam written using Latin letters). Respond in fluent, natural, friendly Manglish!"
         elif detected_dialect == "hinglish":
-            dialect_instruction = "IMPORTANT: The user is writing in Hinglish (Hindi written using the English/Latin alphabet). You MUST respond in fluent, friendly, natural Hinglish!"
+            dialect_instruction = "IMPORTANT: The user is writing in Hinglish (Hindi written using Latin letters). Respond in fluent, natural, friendly Hinglish!"
         elif detected_dialect == "malayalam":
             dialect_instruction = "IMPORTANT: The user is writing in Malayalam script. Reply in fluent Malayalam script!"
         elif detected_dialect == "hindi":
             dialect_instruction = "IMPORTANT: The user is writing in Hindi script. Reply in fluent Hindi script!"
 
         sys_prompt = custom_prompt if custom_prompt else (
-            f"{persona_prompt} {dialect_instruction} Speaking with {user_name} on Discord. "
-            f"Keep replies natural, engaging, easy-to-understand, 2 paragraphs, and markdown-formatted."
+            f"{persona_prompt} {active_mood_prompt} {dialect_instruction} Speaking with {user_name} on Discord. "
+            f"Always reply naturally as a real human Discord user, never robotic, markdown-formatted."
         )
 
         ollama_online, models = await self.check_ollama_status(ollama_url)
@@ -1300,9 +1609,9 @@ class AIInferenceClient:
             if ollama_ans:
                 return ollama_ans, {"engine": f"Self-Hosted Ollama ({active_model})", "dialect": detected_dialect}
 
-        # 5. Knowledge & Research Engine Fallback
+        # 7. Knowledge & Research Engine Fallback
         wiki_data = None
-        if guild_config.get("research_enabled", 1):
+        if guild_config.get("research_enabled", 1) and KnowledgeEngine.is_factual_inquiry(clean_prompt):
             wiki_data = await KnowledgeEngine.search_wikipedia(self.session, clean_prompt, dialect=detected_dialect)
 
         # If we got research facts, synthesize a clean, natural conversational answer in user's dialect
@@ -1331,35 +1640,9 @@ class AIInferenceClient:
                 "dialect": detected_dialect
             }
 
-        # 6. Built-in Conversational Synthesis
-        if detected_dialect == "manglish":
-            fallback_text = (
-                f"Njan ningal choicha karyam search cheythu nokki:\n\n"
-                f"> *\"{clean_prompt}\"*\n\n"
-                f"**GKR AI Core** ithu process cheythittund machane! "
-                f"Local **Ollama** server `{ollama_url}` connect cheythaal kooduthal deep conversations cheyyaam. "
-                f"Aalukal, sthalangal, gaming, math, code chodhikkam!\n\n"
-                f"💡 *Tip: `@GKR kerala evideya ullathu?`, `@GKR who is albert einstein?`, or `/ai imagine [prompt]` try cheyyu!*"
-            )
-        elif detected_dialect == "hinglish":
-            fallback_text = (
-                f"Maine aapke sawaal ko check kiya:\n\n"
-                f"> *\"{clean_prompt}\"*\n\n"
-                f"**GKR AI Core** ne is query ko analyze kiya hai bhai! "
-                f"Local **Ollama** server `{ollama_url}` connect karke aap aur bhi deep chat kar sakte hain. "
-                f"Kisi bhi jagah, insaan, tech ya coding ke baare me pooch sakte hain!\n\n"
-                f"💡 *Tip: `@GKR kerala kahan hai?`, `@GKR who is einstein?` ya `/ai imagine [prompt]` try karein!*"
-            )
-        else:
-            fallback_text = (
-                f"**Here is what I found regarding your inquiry:**\n\n"
-                f"> *\"{clean_prompt}\"*\n\n"
-                f"I have processed your query through the **GKR AI Core**. "
-                f"For local LLM model responses, you can connect your local **Ollama** server running on `{ollama_url}` "
-                f"or ask factual, geographical, historical, coding, or mathematical questions anytime!\n\n"
-                f"💡 *Tip: Try asking `@GKR where is [place] located?`, `@GKR who is [person]?`, or `/ai imagine [prompt]`!*"
-            )
-        return fallback_text, {"engine": "GKR AI Core", "dialect": detected_dialect}
+        # 8. Built-in Natural Conversational Response (Never robotic!)
+        fallback_text = ConversationalHumanEngine.generate_general_chat(clean_prompt, detected_dialect, mood, user_name)
+        return fallback_text, {"engine": "Conversational Human Chat", "dialect": detected_dialect}
 
 
 # ---------------------------------------------------------------------------
@@ -1601,6 +1884,36 @@ class AICog(commands.Cog, name="AI System"):
         async with message.channel.typing():
             try:
                 lower_content = clean_content.lower()
+
+                # ── Image-request redirect ──────────────────────────────────────
+                # If the user asks for image generation in chat, redirect them to
+                # /ai imagine instead of producing a misleading text response.
+                _IMAGE_TRIGGERS = [
+                    "generate an image", "generate image", "generate a image",
+                    "create an image", "create a image", "create image",
+                    "make an image", "make a image", "make image",
+                    "draw me", "draw an", "draw a ",
+                    "make a picture", "make picture", "create a picture",
+                    "show me a picture", "give me an image", "give me a picture",
+                    "oru image edo", "oru image taru", "image undakku", "image taru",
+                    "oru pic taru", "ek photo banao", "image banao",
+                    "paint me", "paint a ", "sketch me", "sketch a ",
+                    "imagine a ", "imagine an ",
+                ]
+                if any(trigger in lower_content for trigger in _IMAGE_TRIGGERS):
+                    if guild_config.get("image_enabled", 1):
+                        await message.reply(
+                            "use `/ai imagine` to generate images — just type your description there and i'll make it 🎨",
+                            mention_author=False
+                        )
+                    else:
+                        await message.reply(
+                            "image generation is disabled on this server rn 🚫",
+                            mention_author=False
+                        )
+                    return
+                # ───────────────────────────────────────────────────────────────
+
                 if any(w in lower_content for w in ["tell a joke", "tell me a joke", "make me laugh", "say a joke", "tell joke", "oru joke para"]):
                     setup, punchline, cat = ComedyEngine.get_joke()
                     view = AIJokeView(cat.lower())
@@ -1633,17 +1946,12 @@ class AICog(commands.Cog, name="AI System"):
                 session.add_turn("user", clean_content)
                 session.add_turn("assistant", response_text)
 
-                view = AIResponseView(self, message.author.id, clean_content, session_key)
-
                 if len(response_text) > 2000:
                     chunks = [response_text[i:i+1900] for i in range(0, len(response_text), 1900)]
-                    for idx, chunk in enumerate(chunks):
-                        if idx == len(chunks) - 1:
-                            await message.reply(chunk, view=view, mention_author=False)
-                        else:
-                            await message.reply(chunk, mention_author=False)
+                    for chunk in chunks:
+                        await message.reply(chunk, mention_author=False)
                 else:
-                    await message.reply(response_text, view=view, mention_author=False)
+                    await message.reply(response_text, mention_author=False)
 
                 await self.dispatch_log(
                     message.guild,
@@ -1744,6 +2052,69 @@ class AICog(commands.Cog, name="AI System"):
             f"**Admin:** {interaction.user.mention} (`{interaction.user.name}`)\n**Status:** 🔴 **Disabled**",
             color=C.DANGER
         )
+
+    @ai_group.command(name="mood", description="🎭 Set the AI conversational mood (Polite, Normal, Harsh, Extreme, Strict).")
+    @app_commands.describe(mode="The personality and behavior mood")
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="😇 Polite & Respectful (Never uses bad words)", value="polite"),
+            app_commands.Choice(name="😎 Normal Discord User (Casual, friendly, uses slang)", value="normal"),
+            app_commands.Choice(name="😈 Harsh & Sarcastic (Sharp roasts, doesn't sugarcoat)", value="harsh"),
+            app_commands.Choice(name="💀 Extreme & Savage (Replies back in bad words & savage roasts)", value="extreme"),
+            app_commands.Choice(name="📏 Strict & Formal (Astrikc, rule-focused)", value="strict"),
+        ]
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def ai_mood(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
+        """Set the AI mood."""
+        guild_id = interaction.guild_id or 0
+        update_guild_config(guild_id, mood=mode.value)
+
+        descriptions = {
+            "polite": "The AI is now in **Polite** mode. It will always remain courteous, gentle, and respectful, even if insulted.",
+            "normal": "The AI is now in **Normal** mode. It behaves like a regular Discord user/friend with casual slang, humor, and a chill vibe.",
+            "harsh": "The AI is now in **Harsh** mode. It gives biting roasts, witty sarcasm, and doesn't sugarcoat anything.",
+            "extreme": "The AI is now in **Extreme & Savage** mode 💀. If anyone insults or uses bad words, the bot will fire back with equal or harsher bad words and savage roasts!",
+            "strict": "The AI is now in **Strict** mode. It is concise, formal, and strictly warns against profanity or rule violations."
+        }
+
+        embed = discord.Embed(
+            title=f"🎭  AI Mood Set: {mode.name}",
+            description=descriptions.get(mode.value, "AI mood updated successfully."),
+            color=C.GOLD if mode.value == "extreme" else C.SUCCESS
+        )
+        embed.set_footer(text=f"Configured by {interaction.user.display_name} • GKR AI")
+        await interaction.response.send_message(embed=embed)
+
+        await self.dispatch_log(
+            interaction.guild,
+            "ai_config",
+            f"🎭 AI Mood Changed: {mode.name}",
+            f"**Admin:** {interaction.user.mention} (`{interaction.user.name}`)\n**New Mood:** `{mode.value}`",
+            color=C.GOLD if mode.value == "extreme" else C.SUCCESS
+        )
+
+    # -----------------------------------------------------------------------
+    # Slash Commands Group: /si (Direct Alias for AI Commands)
+    # -----------------------------------------------------------------------
+
+    si_group = app_commands.Group(name="si", description="🧠 GKR AI System Controls & Mood (/si mood)")
+
+    @si_group.command(name="mood", description="🎭 Set the AI conversational mood (Polite, Normal, Harsh, Extreme, Strict).")
+    @app_commands.describe(mode="The personality and behavior mood")
+    @app_commands.choices(
+        mode=[
+            app_commands.Choice(name="😇 Polite & Respectful (Never uses bad words)", value="polite"),
+            app_commands.Choice(name="😎 Normal Discord User (Casual, friendly, uses slang)", value="normal"),
+            app_commands.Choice(name="😈 Harsh & Sarcastic (Sharp roasts, doesn't sugarcoat)", value="harsh"),
+            app_commands.Choice(name="💀 Extreme & Savage (Replies back in bad words & savage roasts)", value="extreme"),
+            app_commands.Choice(name="📏 Strict & Formal (Astrikc, rule-focused)", value="strict"),
+        ]
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def si_mood(self, interaction: discord.Interaction, mode: app_commands.Choice[str]):
+        """Alias for /ai mood."""
+        await self.ai_mood(interaction, mode)
 
     # ── Self-Learning Commands (Inspired by Starsky & DiscordNPC) ───────────
 
@@ -2066,19 +2437,12 @@ class AICog(commands.Cog, name="AI System"):
         session.add_turn("user", prompt)
         session.add_turn("assistant", response_text)
 
-        view = AIResponseView(self, interaction.user.id, prompt, session_key)
-
         if len(response_text) > 2000:
             chunks = [response_text[i:i+1900] for i in range(0, len(response_text), 1900)]
-            for idx, chunk in enumerate(chunks):
-                if idx == 0:
-                    await interaction.followup.send(chunk)
-                elif idx == len(chunks) - 1:
-                    await interaction.followup.send(chunk, view=view)
-                else:
-                    await interaction.followup.send(chunk)
+            for chunk in chunks:
+                await interaction.followup.send(chunk)
         else:
-            await interaction.followup.send(response_text, view=view)
+            await interaction.followup.send(response_text)
 
         await self.dispatch_log(
             interaction.guild,
@@ -2123,7 +2487,7 @@ class AICog(commands.Cog, name="AI System"):
             thumbnail_url=meta.get("thumbnail") if meta else None
         )
 
-    @ai_group.command(name="imagine", description="🎨 Generate AI art and images using high-quality models.")
+    @ai_group.command(name="imagine", description="🎨 Generate AI art and images using high-quality models.", nsfw=True)
     @app_commands.describe(
         prompt="Describe the image you want to generate in detail",
         aspect_ratio="Dimensions of the generated image",
@@ -2163,6 +2527,20 @@ class AICog(commands.Cog, name="AI System"):
 
         if not guild_config.get("image_enabled", 1):
             await interaction.response.send_message("❌ AI image generation is disabled on this server.", ephemeral=True)
+            return
+
+        # Secondary NSFW channel guard (catches DMs and edge-cases the decorator may miss)
+        channel = interaction.channel
+        is_nsfw = getattr(channel, "nsfw", False)
+        if not is_nsfw:
+            await interaction.response.send_message(
+                embed=embed_warning(
+                    "🔞 `/ai imagine` can only be used in **NSFW-marked channels** to prevent inappropriate content from appearing in general channels.\n\n"
+                    "Ask a server admin to mark a channel as NSFW, then try again there.",
+                    title="NSFW Channel Required"
+                ),
+                ephemeral=True
+            )
             return
 
         await interaction.response.defer(thinking=True)

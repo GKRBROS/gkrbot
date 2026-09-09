@@ -267,7 +267,7 @@ async def resolve_youtube_channel_id(session: aiohttp.ClientSession, username: s
     # Try handle first (@ form)
     handle = username.lstrip("@")
     params = {"part": "id", "forHandle": handle, "key": YOUTUBE_API_KEY}
-    async with session.get(YOUTUBE_CHANNEL_URL, params=params) as resp:
+    async with session.get(YOUTUBE_CHANNEL_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
         if resp.status == 200:
             data = await resp.json()
             items = data.get("items", [])
@@ -275,7 +275,7 @@ async def resolve_youtube_channel_id(session: aiohttp.ClientSession, username: s
                 return items[0]["id"]
     # Fallback: search by name
     params = {"part": "snippet", "q": handle, "type": "channel", "maxResults": 1, "key": YOUTUBE_API_KEY}
-    async with session.get(YOUTUBE_SEARCH_URL, params=params) as resp:
+    async with session.get(YOUTUBE_SEARCH_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)) as resp:
         if resp.status == 200:
             data = await resp.json()
             items = data.get("items", [])
@@ -517,7 +517,7 @@ async def resolve_twitch_user_id(session: aiohttp.ClientSession, login: str) -> 
         return None
     token = await _twitch_auth.get_token(session)
     headers = {"Client-Id": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"}
-    async with session.get(TWITCH_USERS_URL, params={"login": login}, headers=headers) as resp:
+    async with session.get(TWITCH_USERS_URL, params={"login": login}, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
         if resp.status == 200:
             data = await resp.json()
             users = data.get("data", [])
@@ -532,7 +532,7 @@ async def get_twitch_stream(session: aiohttp.ClientSession, user_id: str) -> Opt
     try:
         token = await _twitch_auth.get_token(session)
         headers = {"Client-Id": TWITCH_CLIENT_ID, "Authorization": f"Bearer {token}"}
-        async with session.get(TWITCH_STREAMS_URL, params={"user_id": user_id}, headers=headers) as resp:
+        async with session.get(TWITCH_STREAMS_URL, params={"user_id": user_id}, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
             if resp.status == 200:
                 data = await resp.json()
                 streams = data.get("data", [])
@@ -546,7 +546,7 @@ async def get_twitch_stream(session: aiohttp.ClientSession, user_id: str) -> Opt
                     # Fetch creator profile avatar
                     avatar_url = ""
                     try:
-                        async with session.get(TWITCH_USERS_URL, params={"id": user_id}, headers=headers) as u_resp:
+                        async with session.get(TWITCH_USERS_URL, params={"id": user_id}, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as u_resp:
                             if u_resp.status == 200:
                                 u_data = await u_resp.json()
                                 u_list = u_data.get("data", [])

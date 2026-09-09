@@ -242,7 +242,7 @@ async def download_fonts() -> None:
             if not os.path.exists(path):
                 print(f"[Welcome] Downloading font from {url}...")
                 try:
-                    async with session.get(url) as resp:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                         if resp.status == 200:
                             with open(path, "wb") as f:
                                 f.write(await resp.read())
@@ -1164,7 +1164,7 @@ class WelcomeCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
                     if resp.status != 200:
                         await interaction.followup.send(embed=embed_error("Failed to download image from URL."), ephemeral=True)
                         return

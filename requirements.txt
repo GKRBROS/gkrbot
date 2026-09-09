@@ -45,3 +45,9 @@ curl_cffi>=0.16.0
 
 # Ticket Transcripts
 chat-exporter>=2.8.0
+
+# AI System & Multilingual Conversational Engine
+# Core engines use aiohttp, Pillow, and Python standard libraries (sqlite3, urllib, colorsys)
+
+# Dev tools – static analysis / dead-code detection (https://github.com/duriantaco/skylos)
+skylos>=0.1.0

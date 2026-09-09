@@ -16,13 +16,17 @@ function AuthCallback({ setUser }) {
 
     const exchangeCode = async () => {
       try {
-        const res = await api.post('/auth/callback', { code });
+        const res = await api.post('/auth/callback', {
+          code,
+          redirect_uri: window.location.origin + '/auth/callback'
+        });
         localStorage.setItem('bot_dashboard_token', res.data.token);
         setUser(res.data.user);
         navigate('/dashboard');
       } catch (err) {
         console.error(err);
-        setError('Authentication failed. Please try again.');
+        const msg = err.response?.data?.error || 'Authentication failed. Please verify your Discord Developer Portal settings.';
+        setError(msg);
       }
     };
     exchangeCode();

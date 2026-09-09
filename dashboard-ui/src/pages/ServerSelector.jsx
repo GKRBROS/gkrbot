@@ -4,13 +4,17 @@ import api from '../api';
 
 function ServerSelector() {
   const [guilds, setGuilds] = useState([]);
+  const [botClientId, setBotClientId] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchGuilds = async () => {
       try {
         const res = await api.get('/users/@me');
-        setGuilds(res.data.guilds);
+        setGuilds(res.data.guilds || []);
+        if (res.data.bot_client_id) {
+          setBotClientId(res.data.bot_client_id);
+        }
       } catch (err) {
         console.error('Failed to fetch guilds', err);
       }
@@ -44,11 +48,13 @@ function ServerSelector() {
             Make sure the bot is invited to a server where you have<br/>
             <strong>Administrator</strong> permissions.
           </p>
-          <a href="https://discord.com/api/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=8&scope=bot%20applications.commands" 
-             target="_blank" rel="noreferrer" 
-             className="btn btn-primary" style={{ marginTop: '20px' }}>
-            Invite Bot
-          </a>
+          {botClientId && (
+            <a href={`https://discord.com/api/oauth2/authorize?client_id=${botClientId}&permissions=8&scope=bot%20applications.commands`} 
+               target="_blank" rel="noreferrer" 
+               className="btn btn-primary" style={{ marginTop: '20px' }}>
+              Invite Bot
+            </a>
+          )}
         </div>
       ) : (
         <div className="grid-auto stagger">

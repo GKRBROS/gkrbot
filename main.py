@@ -268,6 +268,10 @@ bot = commands.Bot(**bot_kwargs)
 # Add app_commands tree for slash commands
 tree = bot.tree
 
+# Register global error handling (uncaught exceptions, event errors, slash command errors)
+from dev_global_logs import setup_global_error_handlers, register_async_exception_handler
+setup_global_error_handlers(bot)
+
 
 # ── Graceful Shutdown System for Pterodactyl (SIGTERM / SIGINT) ───────────────
 _is_shutting_down = False
@@ -377,6 +381,7 @@ async def setup_hook():
     try:
         loop = asyncio.get_running_loop()
         setup_signal_handlers(loop)
+        register_async_exception_handler(loop, bot)
     except Exception as e:
         print(f"⚠️ Warning: Could not register signal handlers in setup_hook: {e}")
 
@@ -441,6 +446,170 @@ async def setup_hook():
         print(f"⚠️ Command sync warning: {e}")
 
 bot.setup_hook = setup_hook
+
+# ── /help command (required for top.gg listing) ───────────────────────────────
+@tree.command(name="help", description="📖 Show all GKR Bot commands and features")
+@app_commands.describe(category="Filter by a specific feature category (optional)")
+@app_commands.choices(category=[
+    app_commands.Choice(name="🤖 AI System", value="ai"),
+    app_commands.Choice(name="🎵 Music", value="music"),
+    app_commands.Choice(name="🎟️ Tickets", value="tickets"),
+    app_commands.Choice(name="🛡️ Moderation & Security", value="mod"),
+    app_commands.Choice(name="🎉 Community & Fun", value="community"),
+    app_commands.Choice(name="⚙️ Server Setup", value="setup"),
+    app_commands.Choice(name="📊 Analytics & Stats", value="stats"),
+    app_commands.Choice(name="💰 Economy", value="economy"),
+])
+async def help_cmd(interaction: discord.Interaction, category: str = None):
+    """Show an overview of all GKR Bot features and commands."""
+
+    CATEGORIES = {
+        "ai": {
+            "title": "🤖 AI System",
+            "color": 0x9B59B6,
+            "commands": [
+                ("`/ai chat`", "Chat with the built-in AI assistant"),
+                ("`/ai imagine`", "🔞 Generate AI art (NSFW channels only)"),
+                ("`/ai summarize`", "Summarize a long piece of text"),
+                ("`/ai translate`", "Translate text into another language"),
+                ("`/ai code`", "AI code writing, debugging & analysis"),
+                ("`/ai roast`", "Get hilariously roasted by the AI"),
+                ("`/ai enable` / `/ai disable`", "Toggle AI features for this server"),
+            ],
+        },
+        "music": {
+            "title": "🎵 Music",
+            "color": 0x1ABC9C,
+            "commands": [
+                ("`/play`", "Play a song from YouTube / Spotify / SoundCloud"),
+                ("`/pause` / `/resume`", "Pause or resume playback"),
+                ("`/skip`", "Skip the current track"),
+                ("`/queue`", "View the current music queue"),
+                ("`/nowplaying`", "Show the currently playing track"),
+                ("`/volume`", "Adjust the playback volume"),
+                ("`/stop`", "Stop music and clear the queue"),
+            ],
+        },
+        "tickets": {
+            "title": "🎟️ Tickets",
+            "color": 0xF39C12,
+            "commands": [
+                ("`/ticket setup`", "Set up the ticket system for this server"),
+                ("`/ticket create`", "Open a support ticket"),
+                ("`/ticket close`", "Close the current ticket"),
+                ("`/ticket add`", "Add a member to a ticket"),
+                ("`/ticket remove`", "Remove a member from a ticket"),
+            ],
+        },
+        "mod": {
+            "title": "🛡️ Moderation & Security",
+            "color": 0xE74C3C,
+            "commands": [
+                ("`/ban` / `/unban`", "Ban or unban a member"),
+                ("`/kick`", "Kick a member from the server"),
+                ("`/mute` / `/unmute`", "Mute or unmute a member"),
+                ("`/warn`", "Issue a warning to a member"),
+                ("`/purge`", "Bulk-delete messages in a channel"),
+                ("`/security`", "Configure anti-nuke & security settings"),
+                ("`/lockdown`", "Lock a channel in an emergency"),
+            ],
+        },
+        "community": {
+            "title": "🎉 Community & Fun",
+            "color": 0x2ECC71,
+            "commands": [
+                ("`/giveaway`", "Start a giveaway with a prize and duration"),
+                ("`/poll`", "Create an interactive poll"),
+                ("`/birthday set`", "Register your birthday for reminders"),
+                ("`/profile`", "View your server profile & achievements"),
+                ("`/economy`", "Earn, spend, and trade coins"),
+                ("`/event`", "Create and manage server events"),
+                ("`/suggest`", "Submit a suggestion to server admins"),
+            ],
+        },
+        "setup": {
+            "title": "⚙️ Server Setup",
+            "color": 0x3498DB,
+            "commands": [
+                ("`/welcome setup`", "Configure join/leave welcome messages"),
+                ("`/logs setup`", "Set up audit log channels"),
+                ("`/autoroles`", "Configure automatic roles on join"),
+                ("`/selfroles`", "Set up self-assignable roles"),
+                ("`/dev setup_logs`", "Set up developer crash/error log channels"),
+                ("`/announcement`", "Post a formatted announcement embed"),
+                ("`/rules`", "Post your server rules as a styled embed"),
+            ],
+        },
+        "stats": {
+            "title": "📊 Analytics & Stats",
+            "color": 0xE67E22,
+            "commands": [
+                ("`/voicestats`", "View your voice channel XP and time"),
+                ("`/leaderboard`", "Show the server activity leaderboard"),
+                ("`/serverinfo`", "Display detailed server information"),
+                ("`/userinfo`", "Display information about a member"),
+                ("`/invites`", "View your invite statistics"),
+                ("`/ping bot`", "Check the bot's current latency"),
+            ],
+        },
+        "economy": {
+            "title": "💰 Economy",
+            "color": 0xF1C40F,
+            "commands": [
+                ("`/balance`", "Check your coin balance"),
+                ("`/daily`", "Claim your daily coin reward"),
+                ("`/work`", "Work to earn coins"),
+                ("`/shop`", "Browse the server shop"),
+                ("`/pay`", "Transfer coins to another member"),
+                ("`/leaderboard economy`", "View the richest members"),
+            ],
+        },
+    }
+
+    if category and category in CATEGORIES:
+        cat = CATEGORIES[category]
+        embed = discord.Embed(
+            title=cat["title"],
+            color=cat["color"],
+            description="\n".join(f"{cmd} — {desc}" for cmd, desc in cat["commands"])
+        )
+        embed.set_footer(text="GKR Bot • Use /help to see all categories")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+        return
+
+    # Overview embed — all categories
+    embed = discord.Embed(
+        title="📖  GKR Bot — Command Guide",
+        description=(
+            "GKR Bot is a **feature-rich, all-in-one** Discord bot built for gaming communities.\n"
+            "Use the `category` option to dive into a specific feature area.\n\n"
+            "**Quick Start:** Try `/ai chat`, `/play`, or `/ticket create`!"
+        ),
+        color=0x8A2BE2,
+    )
+
+    for key, cat in CATEGORIES.items():
+        cmd_names = " • ".join(c[0] for c in cat["commands"][:3])
+        embed.add_field(
+            name=cat["title"],
+            value=f"{cmd_names} *and more…*",
+            inline=False,
+        )
+
+    embed.add_field(
+        name="🔗 Links",
+        value=(
+            "[Invite GKR Bot](https://discord.com/oauth2/authorize?client_id="
+            f"{APPLICATION_ID or 'YOUR_CLIENT_ID'}&permissions=8&scope=bot%20applications.commands) • "
+            "[Support Server](https://discord.gg/gkr) • "
+            "[top.gg](https://top.gg)"
+        ),
+        inline=False,
+    )
+    embed.set_footer(text="GKR Bot • All commands are slash commands (/)")
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 @tree.command(name="sync-commands", description="Sync the bot's slash commands to this server")
 async def sync_commands(interaction: discord.Interaction):
@@ -2323,6 +2492,7 @@ async def main():
     async with bot:
         loop = asyncio.get_running_loop()
         setup_signal_handlers(loop)
+        register_async_exception_handler(loop, bot)
         await bot.start(TOKEN)
 
 # Run the bot

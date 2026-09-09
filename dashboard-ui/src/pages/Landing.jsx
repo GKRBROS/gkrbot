@@ -7,11 +7,13 @@ function Landing() {
   const handleLogin = async () => {
     setLoading(true);
     try {
-      const res = await api.get('/auth/discord');
+      const redirectUri = window.location.origin + '/auth/callback';
+      const res = await api.get(`/auth/discord?redirect_uri=${encodeURIComponent(redirectUri)}`);
       window.location.href = res.data.url;
     } catch (err) {
       console.error(err);
-      alert('Failed to initialize login. Is the bot running?');
+      const msg = err.response?.data?.error || 'Failed to initialize login. Is the bot running?';
+      alert(msg);
       setLoading(false);
     }
   };

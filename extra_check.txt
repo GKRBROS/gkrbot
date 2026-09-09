@@ -1,0 +1,10 @@
+﻿python :   File "<string>", line 20
+At line:1 char:1
++ python -c "
++ ~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (  File "<string>", line 20:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    if 'name=" help\'
+       ^
+SyntaxError: unterminated string literal (detected at line 20)

@@ -7,15 +7,29 @@ from discord.ext import commands
 import discord
 from gkr_ui import embed_success, embed_error, embed_info, C
 
-# Load credentials from environment (they were added to .env by user)
-CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
+import urllib.parse
+
+# Load credentials from environment (DISCORD_CLIENT_ID / CLIENT_ID / APPLICATION_ID)
+CLIENT_ID = os.getenv("DISCORD_CLIENT_ID") or os.getenv("APPLICATION_ID") or os.getenv("CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
 REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "http://localhost:5173/auth/callback")
+
+def _resolve_client_id(bot: commands.Bot = None) -> str:
+    """Gets client ID from environment or active bot instance."""
+    cid = os.getenv("DISCORD_CLIENT_ID") or os.getenv("APPLICATION_ID") or os.getenv("CLIENT_ID")
+    if cid:
+        return str(cid).strip()
+    if bot and bot.user:
+        return str(bot.user.id)
+    return ""
+
+def _resolve_client_secret() -> str:
+    return (os.getenv("DISCORD_CLIENT_SECRET") or os.getenv("CLIENT_SECRET") or "").strip()
 
 # Session store: token -> dict of user data
 SESSIONS = {}
 
-# CORS Middleware to allow requests from Vite dev server (localhost:3000)
+# CORS Middleware to allow requests from Vite dev server or separate origins
 @web.middleware
 async def cors_middleware(request: web.Request, handler):
     # Handle preflight OPTIONS request
@@ -39,14 +53,26 @@ async def cors_middleware(request: web.Request, handler):
     return response
 
 async def handle_login(request: web.Request):
-    """Redirects to Discord OAuth2."""
-    oauth_url = (
-        f"https://discord.com/api/oauth2/authorize"
-        f"?client_id={CLIENT_ID}"
-        f"&redirect_uri={REDIRECT_URI}"
-        f"&response_type=code"
-        f"&scope=identify%20guilds"
-    )
+    """Redirects to Discord OAuth2 with dynamic redirect_uri."""
+    bot: commands.Bot = request.app.get("bot")
+    client_id = _resolve_client_id(bot)
+    
+    if not client_id:
+        return web.json_response({
+            "error": "Missing DISCORD_CLIENT_ID. Please set DISCORD_CLIENT_ID in your .env file."
+        }, status=500)
+
+    # Dynamic redirect URI from query param or fallback
+    redirect_uri = request.query.get("redirect_uri") or os.getenv("DISCORD_REDIRECT_URI", "http://localhost:5173/auth/callback")
+    
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "identify guilds",
+        "prompt": "consent"
+    }
+    oauth_url = f"https://discord.com/api/oauth2/authorize?{urllib.parse.urlencode(params)}"
     return web.json_response({"url": oauth_url})
 
 async def handle_callback_redirect(request: web.Request):
@@ -60,15 +86,27 @@ async def handle_callback(request: web.Request):
     code = data.get("code")
     if not code:
         return web.json_response({"error": "No code provided"}, status=400)
+
+    bot: commands.Bot = request.app.get("bot")
+    client_id = _resolve_client_id(bot)
+    client_secret = _resolve_client_secret()
+    
+    if not client_id or not client_secret:
+        return web.json_response({
+            "error": "Missing DISCORD_CLIENT_ID or DISCORD_CLIENT_SECRET in .env"
+        }, status=500)
+
+    # Must exactly match the redirect_uri used during the authorization request
+    redirect_uri = data.get("redirect_uri") or os.getenv("DISCORD_REDIRECT_URI", "http://localhost:5173/auth/callback")
     
     # Exchange code for token
     token_url = "https://discord.com/api/oauth2/token"
     payload = {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
+        "client_id": client_id,
+        "client_secret": client_secret,
         "grant_type": "authorization_code",
         "code": code,
-        "redirect_uri": REDIRECT_URI,
+        "redirect_uri": redirect_uri,
     }
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     
@@ -76,18 +114,25 @@ async def handle_callback(request: web.Request):
         async with session.post(token_url, data=payload, headers=headers) as resp:
             if resp.status != 200:
                 resp_text = await resp.text()
-                print(f"[Dashboard API] Token exchange failed: {resp_text}")
-                return web.json_response({"error": "Failed to exchange code"}, status=400)
+                print(f"[Dashboard API] Token exchange failed ({resp.status}): {resp_text}")
+                try:
+                    err_data = json.loads(resp_text)
+                    err_msg = err_data.get("error_description", err_data.get("error", "Failed to exchange code"))
+                except Exception:
+                    err_msg = f"Discord rejected authorization code (HTTP {resp.status})"
+                return web.json_response({"error": err_msg}, status=400)
             token_data = await resp.json()
     
     access_token = token_data.get("access_token")
+    if not access_token:
+        return web.json_response({"error": "No access token received from Discord"}, status=400)
     
     # Get user profile
     async with aiohttp.ClientSession() as session:
         headers = {"Authorization": f"Bearer {access_token}"}
         async with session.get("https://discord.com/api/users/@me", headers=headers) as resp:
             if resp.status != 200:
-                return web.json_response({"error": "Failed to fetch user"}, status=400)
+                return web.json_response({"error": "Failed to fetch Discord user profile"}, status=400)
             user_data = await resp.json()
 
     # Generate session token
@@ -146,6 +191,7 @@ async def handle_me(request: web.Request):
             "username": session_data["username"],
             "avatar": f"https://cdn.discordapp.com/avatars/{session_data['user_id']}/{session_data['avatar']}.png" if session_data["avatar"] else None,
         },
+        "bot_client_id": _resolve_client_id(bot),
         "guilds": mutual_admin_guilds
     })
 
@@ -559,14 +605,58 @@ class DashboardAPI(commands.Cog):
             web.post("/api/guilds/{guild_id}/music/control", handle_music_control),
         ])
         
+        # Static file serving if dashboard-ui/dist exists
+        dist_path = os.path.join(os.path.dirname(__file__), "dashboard-ui", "dist")
+        if os.path.exists(dist_path):
+            assets_path = os.path.join(dist_path, "assets")
+            if os.path.exists(assets_path):
+                app.router.add_static("/assets", assets_path, name="assets")
+
+            async def spa_handler(request: web.Request):
+                if request.path.startswith("/api"):
+                    raise web.HTTPNotFound()
+                rel = request.match_info.get("tail", "").lstrip("/")
+                target = os.path.normpath(os.path.join(dist_path, rel))
+                # Prevent directory traversal
+                if rel and os.path.isfile(target) and target.startswith(dist_path):
+                    return web.FileResponse(target)
+                index_path = os.path.join(dist_path, "index.html")
+                if os.path.exists(index_path):
+                    return web.FileResponse(index_path)
+                return web.Response(text="Dashboard UI index.html not found.", status=404)
+
+            app.router.add_get("/{tail:.*}", spa_handler)
+            print(f"📦 Dashboard website enabled! Serving build from: {dist_path}")
+        else:
+            async def dev_index(request: web.Request):
+                if request.path.startswith("/api"):
+                    raise web.HTTPNotFound()
+                return web.Response(
+                    text="""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>GKR Bot Dashboard</title>
+<style>body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}
+.card{background:#1e293b;padding:32px;border-radius:16px;border:1px solid #334155;max-width:480px;text-align:center;}
+h1{margin-top:0;color:#60a5fa;font-size:22px;}p{color:#94a3b8;font-size:14px;line-height:1.6;}
+code{background:#090d16;padding:2px 6px;border-radius:4px;color:#38bdf8;}
+</style></head>
+<body><div class="card">
+<h1>🤖 GKR Bot Dashboard API Running</h1>
+<p>To serve the full website directly from this port, run:<br><code>npm run build</code> inside the <code>dashboard-ui</code> directory and restart the bot.</p>
+<p>For development with hot reload, run <code>npm run dev</code> inside <code>dashboard-ui</code> (port 5173).</p>
+</div></body></html>""",
+                    content_type="text/html"
+                )
+            app.router.add_get("/", dev_index)
+            print(f"💡 Dashboard UI 'dist' not found. Run 'npm run build' in dashboard-ui to enable unified web hosting.")
+
         self.runner = web.AppRunner(app)
         await self.runner.setup()
         
-        # Use port 8085 for API to avoid collisions
-        port = int(os.getenv("DASHBOARD_PORT", "8085"))
+        # Auto-detect port (Pterodactyl uses SERVER_PORT, cloud hosts use PORT, fallback to DASHBOARD_PORT or 8085)
+        port = int(os.getenv("SERVER_PORT") or os.getenv("DASHBOARD_PORT") or os.getenv("PORT", "8085"))
         site = web.TCPSite(self.runner, "0.0.0.0", port)
         self.bot.loop.create_task(site.start())
-        print(f"🌐 Dashboard API running on http://localhost:{port}")
+        print(f"🌐 GKR Dashboard & API running on 0.0.0.0:{port}")
 
     async def cog_unload(self):
         if self.runner:

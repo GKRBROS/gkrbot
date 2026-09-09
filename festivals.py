@@ -112,7 +112,7 @@ class FestivalsCog(commands.GroupCog, name="festivals"):
             async with aiohttp.ClientSession() as session:
                 # 1. Scrape Tenor for GIF
                 query_gif = f"{festival_name} festival wishes".replace(' ', '-')
-                async with session.get(f"https://tenor.com/search/{query_gif}-gifs", headers={"User-Agent": "Mozilla/5.0"}) as resp:
+                async with session.get(f"https://tenor.com/search/{query_gif}-gifs", headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         html = await resp.text()
                         gifs = re.findall(r'src="(https://media\.tenor\.com/[^"]+\.gif)"', html)
@@ -121,7 +121,7 @@ class FestivalsCog(commands.GroupCog, name="festivals"):
                             
                 # 2. Scrape DuckDuckGo HTML for a quote
                 query_text = f"{festival_name} festival wishes quotes in english"
-                async with session.get(f"https://html.duckduckgo.com/html/?q={query_text}", headers={"User-Agent": "Mozilla/5.0"}) as resp:
+                async with session.get(f"https://html.duckduckgo.com/html/?q={query_text}", headers={"User-Agent": "Mozilla/5.0"}, timeout=aiohttp.ClientTimeout(total=10)) as resp:
                     if resp.status == 200:
                         html = await resp.text()
                         soup = BeautifulSoup(html, "html.parser")

@@ -70,6 +70,7 @@ CATEGORY_SPECS: List[Tuple[str, str, str, str]] = [
     ("commands", "⌨️・ᴄᴏᴍᴍᴀɴᴅ-ʟᴏɢꜱ",   "⌨️ Commands",   "Slash commands used, bot messages, and AutoMod triggers"),
     ("security", "🛡️・ꜱᴇᴄᴜʀɪᴛʏ-ʟᴏɢꜱ", "🛡️ Security",   "Warnings, auto-punishments, anti-spam, anti-raid, honeypot, and image scan actions"),
     ("ai",       "🧠・ᴀɪ-ʟᴏɢꜱ",       "🧠 AI System",  "AI chat queries, deep research, generated images, animated GIF banners, and settings"),
+    ("errors",   "🚨・ᴇʀʀᴏʀ-ᴀɴᴅ-ᴄʀᴀꜱʜᴇꜱ", "🚨 Errors & Crashes", "Unhandled exceptions, command failures, and bot crash logs"),
 ]
 
 
