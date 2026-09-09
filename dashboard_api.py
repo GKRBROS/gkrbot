@@ -405,7 +405,7 @@ def _replicate_staff_role_remove(bot, source_guild_id, role_id):
 
 def _replicate_tickets_log_channel(bot, source_guild_id, channel_id):
     try:
-        cog = bot.get_cog("TicketCog")
+        cog = bot.get_cog("TicketsCog")
         if not cog:
             return 0
         src_guild = bot.get_guild(int(source_guild_id))
@@ -425,7 +425,7 @@ def _replicate_tickets_log_channel(bot, source_guild_id, channel_id):
 def _replicate_ticket_category_upsert(bot, source_guild_id, name, fields):
     """Create or update a ticket category (matched by name) on every other server."""
     try:
-        cog = bot.get_cog("TicketCog")
+        cog = bot.get_cog("TicketsCog")
         if not cog or not name:
             return 0
         # Role IDs are guild-specific, so never copy them to other servers
@@ -457,7 +457,7 @@ def _replicate_ticket_category_upsert(bot, source_guild_id, name, fields):
 
 def _replicate_ticket_category_delete(bot, source_guild_id, name):
     try:
-        cog = bot.get_cog("TicketCog")
+        cog = bot.get_cog("TicketsCog")
         if not cog or not name:
             return 0
         count = 0
@@ -727,7 +727,7 @@ async def handle_tickets_get(request: web.Request):
         return web.json_response({"error": "Unauthorized"}, status=401)
     guild_id = int(request.match_info["guild_id"])
     bot: commands.Bot = request.app["bot"]
-    ticket_cog = bot.get_cog("TicketCog")
+    ticket_cog = bot.get_cog("TicketsCog")
     if not ticket_cog:
         return web.json_response({"error": "Tickets module not loaded (check bot console)"}, status=500)
     try:
@@ -754,7 +754,7 @@ async def handle_tickets_post(request: web.Request):
     if not name:
         return web.json_response({"error": "Category name is required"}, status=400)
     bot: commands.Bot = request.app["bot"]
-    ticket_cog = bot.get_cog("TicketCog")
+    ticket_cog = bot.get_cog("TicketsCog")
     if not ticket_cog:
         return web.json_response({"error": "Tickets module not loaded"}, status=500)
     cat_fields = {
@@ -791,7 +791,7 @@ async def handle_tickets_category_put(request: web.Request):
     data = await request.json()
 
     bot: commands.Bot = request.app["bot"]
-    ticket_cog = bot.get_cog("TicketCog")
+    ticket_cog = bot.get_cog("TicketsCog")
     if not ticket_cog:
         return web.json_response({"error": "Tickets module not loaded"}, status=500)
 
@@ -830,7 +830,7 @@ async def handle_tickets_delete(request: web.Request):
     guild_id = int(request.match_info["guild_id"])
     category_id = int(request.match_info["category_id"])
     bot: commands.Bot = request.app["bot"]
-    ticket_cog = bot.get_cog("TicketCog")
+    ticket_cog = bot.get_cog("TicketsCog")
     if not ticket_cog:
         return web.json_response({"error": "Tickets module not loaded"}, status=500)
     old_cat = ticket_cog.db.get_category(category_id)
@@ -861,7 +861,7 @@ async def handle_tickets_log_channel(request: web.Request):
     data = await request.json()
     channel_id = data.get("channel_id")
     bot: commands.Bot = request.app["bot"]
-    ticket_cog = bot.get_cog("TicketCog")
+    ticket_cog = bot.get_cog("TicketsCog")
     if not ticket_cog:
         return web.json_response({"error": "Tickets module not loaded"}, status=500)
     ticket_cog.db.set_log_channel(guild_id, int(channel_id) if channel_id else None)
@@ -1572,7 +1572,7 @@ async def handle_guild_sync(request: web.Request):
         # 5. Sync Tickets (categories + log channel; role pings are not copied as role IDs differ per server)
         if "tickets" in modules or "all" in modules:
             try:
-                cog = bot.get_cog("TicketCog")
+                cog = bot.get_cog("TicketsCog")
                 if cog:
                     src_guild = bot.get_guild(source_guild_id)
                     tgt_guild = bot.get_guild(tgt_int)
@@ -1745,6 +1745,7 @@ class DashboardAPI(commands.Cog):
             app.router.add_get("/{tail:.*}", spa_handler)
             print(f"📦 Dashboard website enabled! Serving build from: {dist_path}")
         else:
+            print(f"[DashboardAPI] Checked for UI build at: {dist_path} (exists={os.path.exists(dist_path)})")
             async def dev_index(request: web.Request):
                 if request.path.startswith("/api"):
                     raise web.HTTPNotFound()

@@ -8,9 +8,9 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
 dist-ssr
 *.local
+# NOTE: 'dist' is intentionally tracked so the built dashboard ships with the bot.
 
 # Editor directories and files
 .vscode/*

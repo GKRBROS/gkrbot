@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../api';
 import { withSync, syncParams } from '../../sync';
-import { MultiSelect } from '../../components/Select';
+import { Select, MultiSelect } from '../../components/Select';
 
 function Tickets() {
   const { guildId } = useParams();
