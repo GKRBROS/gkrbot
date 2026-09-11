@@ -962,7 +962,7 @@ class DynamicChunkModal(discord.ui.Modal):
             txt_in = discord.ui.TextInput(
                 label=q["question"][:45],
                 style=style,
-                placeholder=q["placeholder"][:100] if q["placeholder"] else "",
+                placeholder=q["placeholder"][:100] if q["placeholder"] else None,
                 required=bool(q["required"]),
                 min_length=q["min_length"] if q["min_length"] else None,
                 max_length=q["max_length"] if q["max_length"] else 4000
@@ -1013,7 +1013,10 @@ async def send_step_interactive_message(interaction: discord.Interaction, sessio
     if interaction.response.is_done():
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
     else:
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        if interaction.type == discord.InteractionType.component:
+            await interaction.response.edit_message(embed=embed, view=view)
+        else:
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 class StepInteractiveView(discord.ui.View):
@@ -1064,24 +1067,31 @@ class StepInteractiveView(discord.ui.View):
                     opts = json.loads(q["options"] or "[]")
                 except Exception:
                     opts = []
-                select_options = [discord.SelectOption(label=opt[:100], value=opt[:100]) for opt in opts[:25]]
-                if not select_options:
-                    select_options = [discord.SelectOption(label="Default", value="Default")]
+                if not opts:
+                    opts = ["Default"]
 
-                max_vals = len(select_options) if f_type == "multiple_select" else 1
-                select_menu = discord.ui.Select(
-                    placeholder=q["question"][:100],
-                    min_values=1 if q["required"] else 0,
-                    max_values=max_vals,
-                    options=select_options
-                )
-                def bind_select(target_id: str):
-                    async def select_cb(sel_inter: discord.Interaction):
-                        self.temp_answers[target_id] = ", ".join(select_menu.values)
-                        await self.advance(sel_inter)
-                    return select_cb
-                select_menu.callback = bind_select(q_id)
-                self.add_item(select_menu)
+                chunk_size = 25
+                opt_chunks = [opts[i:i + chunk_size] for i in range(0, len(opts), chunk_size)]
+
+                for c_idx, chunk in enumerate(opt_chunks):
+                    select_options = [discord.SelectOption(label=opt[:100], value=opt[:100]) for opt in chunk]
+                    max_vals = len(select_options) if f_type == "multiple_select" else 1
+                    label_suffix = f" (Part {c_idx+1})" if len(opt_chunks) > 1 else ""
+                    placeholder = f"{q['question']}{label_suffix}"[:100]
+
+                    select_menu = discord.ui.Select(
+                        placeholder=placeholder,
+                        min_values=1 if (q["required"] and len(opt_chunks) == 1) else 0,
+                        max_values=max_vals,
+                        options=select_options
+                    )
+                    def bind_select(target_id: str, s_menu: discord.ui.Select):
+                        async def select_cb(sel_inter: discord.Interaction):
+                            self.temp_answers[target_id] = ", ".join(s_menu.values)
+                            await self.advance(sel_inter)
+                        return select_cb
+                    select_menu.callback = bind_select(q_id, select_menu)
+                    self.add_item(select_menu)
 
             elif f_type == "user_select":
                 user_select = discord.ui.UserSelect(placeholder=q["question"][:100], min_values=1 if q["required"] else 0, max_values=1)
@@ -1162,7 +1172,10 @@ async def show_review_confirmation(interaction: discord.Interaction, session_id:
     if interaction.response.is_done():
         await interaction.followup.send(embed=embed, view=view, ephemeral=True)
     else:
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        if interaction.type == discord.InteractionType.component:
+            await interaction.response.edit_message(embed=embed, view=view)
+        else:
+            await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
 class ReviewConfirmationView(discord.ui.View):
@@ -1257,6 +1270,69 @@ class RegistrationCog(commands.Cog):
     async def cog_load(self) -> None:
         self.bot.add_view(RegistrationPublicView())
         self.bot.add_view(RegistrationStaffReviewView())
+        try:
+            with self.db._conn() as conn:
+                forms = conn.execute("SELECT * FROM registration_configs").fetchall()
+                for f in forms:
+                    self.bot.add_view(build_panel_view(f))
+            print(f"📝 [Registration] Registered {len(forms)} persistent panel views")
+        except Exception as e:
+            print(f"[Registration] Warning registering form views: {e}")
+
+    @commands.Cog.listener()
+    async def on_interaction(self, interaction: discord.Interaction):
+        """
+        Universal fallback handler for registration button clicks:
+          • 'jade:reg:start:<form_id>'
+          • 'jade:reg:appr:<sub_id>'
+          • 'jade:reg:rejt:<sub_id>'
+          • 'jade:reg:view:<sub_id>'
+        Ensures buttons always respond immediately even if published after bot start.
+        """
+        if interaction.type != discord.InteractionType.component:
+            return
+        custom_id = interaction.data.get("custom_id", "")
+        if not custom_id:
+            return
+
+        if custom_id.startswith("jade:reg:start:") or custom_id.startswith("registration:start:"):
+            try:
+                parts = custom_id.split(":")
+                form_id = int(parts[-1])
+                await handle_start_registration(interaction, form_id)
+            except discord.InteractionResponded:
+                pass
+            except Exception as e:
+                print(f"[Registration] Error in start handler: {e}")
+                try:
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message(embed=embed_error("Error", f"Failed to start registration: {e}"), ephemeral=True)
+                except Exception:
+                    pass
+
+        elif custom_id.startswith("jade:reg:appr:") or custom_id.startswith("registration:appr:"):
+            try:
+                await handle_staff_action(interaction, "approve")
+            except discord.InteractionResponded:
+                pass
+            except Exception as e:
+                print(f"[Registration] Error in approve handler: {e}")
+
+        elif custom_id.startswith("jade:reg:rejt:") or custom_id.startswith("registration:rejt:"):
+            try:
+                await handle_staff_action(interaction, "reject")
+            except discord.InteractionResponded:
+                pass
+            except Exception as e:
+                print(f"[Registration] Error in reject handler: {e}")
+
+        elif custom_id.startswith("jade:reg:view:") or custom_id.startswith("registration:view:"):
+            try:
+                await handle_staff_action(interaction, "view")
+            except discord.InteractionResponded:
+                pass
+            except Exception as e:
+                print(f"[Registration] Error in view handler: {e}")
 
     reg_group = app_commands.Group(name="registration", description=f"Configure and manage {BOT_NAME} registration forms")
 
