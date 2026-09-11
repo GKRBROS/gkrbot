@@ -2035,6 +2035,30 @@ async def handle_registration_submission_review(request: web.Request):
 
     return web.json_response({"error": "Invalid action"}, status=400)
 
+async def handle_registration_submission_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    sub_id = int(request.match_info["sub_id"])
+    revoke_roles = request.query.get("revoke_roles", "false").lower() in ("true", "1", "yes")
+
+    import registration
+    db = registration.db
+    sub = db.get_submission(sub_id)
+    if not sub:
+        return web.json_response({"error": "Submission not found"}, status=404)
+
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(int(sub["guild_id"]))
+    member = guild.get_member(int(sub["user_id"])) if guild else None
+    config = db.get_form(sub["registration_id"])
+
+    revoked_info = []
+    if revoke_roles and sub["status"] == "approved" and member and config:
+        revoked_info = await registration.revoke_post_registration_actions(bot, guild, member, config)
+
+    success = db.delete_submission(sub_id)
+    return web.json_response({"success": success, "revoked_roles": revoked_info})
+
 async def handle_registration_logs_get(request: web.Request):
     sess = _get_session(request)
     if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
@@ -2137,6 +2161,7 @@ class DashboardAPI(commands.Cog):
             web.delete("/api/guilds/{guild_id}/registration/{form_id}/questions/{question_id}", handle_registration_question_delete),
             web.get("/api/guilds/{guild_id}/registration/{form_id}/submissions", handle_registration_submissions_get),
             web.post("/api/guilds/{guild_id}/registration/submissions/{sub_id}/review", handle_registration_submission_review),
+            web.delete("/api/guilds/{guild_id}/registration/submissions/{sub_id}", handle_registration_submission_delete),
         ])
         
         # Static file serving if dashboard-ui/dist exists

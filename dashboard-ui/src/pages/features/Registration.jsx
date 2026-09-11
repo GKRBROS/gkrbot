@@ -340,6 +340,27 @@ function Registration() {
     }
   };
 
+  // Handle Delete / Remove Submission (Pending, Approved, or Rejected)
+  const handleDeleteSubmission = async (sub) => {
+    const isApproved = sub.status === 'approved';
+    const confirmPrompt = isApproved
+      ? `Permanently delete Application #${sub.id} for user ${sub.user_id}?\n\nThis will also revoke and remove any server roles assigned upon approval.\n\nClick OK to confirm.`
+      : `Permanently delete Application #${sub.id} for user ${sub.user_id}?`;
+
+    if (!window.confirm(confirmPrompt)) return;
+
+    try {
+      await api.delete(`/guilds/${guildId}/registration/submissions/${sub.id}?revoke_roles=true`);
+      setSuccess(`Application #${sub.id} deleted successfully.${isApproved ? ' Assigned roles revoked.' : ''}`);
+      if (selectedFormForSubmissions) {
+        await loadSubmissions(selectedFormForSubmissions);
+      }
+      setTimeout(() => setSuccess(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to delete application.');
+    }
+  };
+
   if (loading) {
     return (
       <div className="animate-fade-in stagger">

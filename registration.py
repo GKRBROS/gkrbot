@@ -415,6 +415,19 @@ class RegistrationDatabase:
             conn.commit()
         return True
 
+    def delete_submission(self, submission_id: int) -> bool:
+        sub = self.get_submission(submission_id)
+        if not sub:
+            return False
+        with self._conn() as conn:
+            conn.execute("DELETE FROM registration_answers WHERE submission_id = ?", (submission_id,))
+            conn.execute("DELETE FROM registration_submissions WHERE id = ?", (submission_id,))
+            conn.commit()
+        self.log_event(sub["guild_id"], "submission_deleted",
+                       f"Deleted submission #{submission_id} (Status: {sub['status']}) for user <@{sub['user_id']}>",
+                       registration_id=sub["registration_id"], submission_id=submission_id, target_user_id=sub["user_id"])
+        return True
+
     # -----------------------------------------------------------------------
     # Active Multi-step Sessions
     # -----------------------------------------------------------------------
@@ -682,6 +695,43 @@ async def execute_post_registration_actions(bot: commands.Bot, guild: discord.Gu
     return logs
 
 
+async def revoke_post_registration_actions(bot: commands.Bot, guild: discord.Guild,
+                                         member: discord.Member, config: sqlite3.Row) -> List[str]:
+    """
+    Revokes roles assigned to member during registration approval.
+    """
+    logs = []
+    bot_member = guild.me
+    can_manage_roles = bot_member.guild_permissions.manage_roles
+
+    if config["auto_role_enabled"] and can_manage_roles:
+        try:
+            add_ids = json.loads(config["add_role_ids"] or "[]")
+        except Exception:
+            add_ids = []
+
+        roles_to_remove = []
+        for rid in add_ids:
+            try:
+                role = guild.get_role(int(rid))
+                if role and role in member.roles and role < bot_member.top_role:
+                    roles_to_remove.append(role)
+            except Exception:
+                pass
+
+        if roles_to_remove:
+            try:
+                await member.remove_roles(*roles_to_remove, reason=f"{BOT_NAME} Registration revoked: {config['name']}")
+                role_names = ", ".join(r.name for r in roles_to_remove)
+                logs.append(f"🛡️ Revoked roles: **{role_names}** from {member.mention}")
+                db.log_event(str(guild.id), "roles_revoked", f"Revoked roles [{role_names}] from {member}",
+                             registration_id=config["id"], target_user_id=str(member.id))
+            except Exception as e:
+                logs.append(f"❌ Failed to revoke roles: {e}")
+
+    return logs
+
+
 # ---------------------------------------------------------------------------
 # Persistent Registration Panel View
 # ---------------------------------------------------------------------------
@@ -743,6 +793,10 @@ class RegistrationStaffReviewView(discord.ui.View):
     async def view_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await handle_staff_action(interaction, "view")
 
+    @discord.ui.button(label="Delete", style=discord.ButtonStyle.danger, emoji="🗑️", custom_id="jade:reg:delt:default")
+    async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await handle_staff_action(interaction, "delete")
+
 
 async def handle_staff_action(interaction: discord.Interaction, action: str) -> None:
     custom_id = interaction.data.get("custom_id", "")
@@ -782,6 +836,37 @@ async def handle_staff_action(interaction: discord.Interaction, action: str) -> 
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
+    if action == "delete":
+        await interaction.response.defer(ephemeral=True)
+        revoked_info = []
+        if sub["status"] == "approved" and member and config:
+            revoked_info = await revoke_post_registration_actions(interaction.client, guild, member, config)
+
+        db.delete_submission(sub_id)
+
+        try:
+            orig_embed = interaction.message.embeds[0]
+            orig_embed.color = C.DANGER
+            orig_embed.set_field_at(
+                0,
+                name="Status",
+                value=f"🗑️ **Deleted** by {interaction.user.mention} ({fmt_rel(discord.utils.utcnow())})",
+                inline=False
+            )
+            await interaction.message.edit(embed=orig_embed, view=None)
+        except Exception:
+            pass
+
+        rev_summary = ("\n" + "\n".join(revoked_info)) if revoked_info else ""
+        await interaction.followup.send(
+            embed=embed_success(
+                "Submission Deleted",
+                f"Application **#{sub_id}** for <@{sub['user_id']}> (Status was `{sub['status'].upper()}`) has been permanently deleted from the database.{rev_summary}"
+            ),
+            ephemeral=True
+        )
+        return
+
     if sub["status"] != "pending":
         await interaction.response.send_message(embed=embed_warning("Already Processed", f"This application has already been marked as **{sub['status'].upper()}** by <@{sub['reviewed_by']}>."), ephemeral=True)
         return
@@ -817,7 +902,9 @@ async def handle_staff_action(interaction: discord.Interaction, action: str) -> 
             )
             disabled_view = discord.ui.View()
             view_full_btn = discord.ui.Button(label="View Full Registration", style=discord.ButtonStyle.secondary, emoji="📋", custom_id=f"jade:reg:view:{sub_id}")
+            delete_btn = discord.ui.Button(label="Delete Application", style=discord.ButtonStyle.danger, emoji="🗑️", custom_id=f"jade:reg:delt:{sub_id}")
             disabled_view.add_item(view_full_btn)
+            disabled_view.add_item(delete_btn)
             await interaction.message.edit(embed=orig_embed, view=disabled_view)
         except Exception:
             pass
@@ -865,7 +952,9 @@ async def handle_staff_action(interaction: discord.Interaction, action: str) -> 
                     )
                     disabled_view = discord.ui.View()
                     view_full_btn = discord.ui.Button(label="View Full Registration", style=discord.ButtonStyle.secondary, emoji="📋", custom_id=f"jade:reg:view:{sub_id}")
+                    delete_btn = discord.ui.Button(label="Delete Application", style=discord.ButtonStyle.danger, emoji="🗑️", custom_id=f"jade:reg:delt:{sub_id}")
                     disabled_view.add_item(view_full_btn)
+                    disabled_view.add_item(delete_btn)
                     await interaction.message.edit(embed=orig_embed, view=disabled_view)
                 except Exception:
                     pass
@@ -1334,6 +1423,14 @@ class RegistrationCog(commands.Cog):
             except Exception as e:
                 print(f"[Registration] Error in view handler: {e}")
 
+        elif custom_id.startswith("jade:reg:delt:") or custom_id.startswith("registration:delt:"):
+            try:
+                await handle_staff_action(interaction, "delete")
+            except discord.InteractionResponded:
+                pass
+            except Exception as e:
+                print(f"[Registration] Error in delete handler: {e}")
+
     reg_group = app_commands.Group(name="registration", description=f"Configure and manage {BOT_NAME} registration forms")
 
     @reg_group.command(name="create", description="Create a new registration form and open the interactive builder")
@@ -1479,6 +1576,41 @@ class RegistrationCog(commands.Cog):
 
         self.db.delete_form(form_id)
         await interaction.response.send_message(embed=embed_success("Form Deleted", f"Registration form **{config['name']}** (#{form_id}) and all associated submissions have been removed."), ephemeral=True)
+
+    @reg_group.command(name="delete_submission", description="Delete an application submission (pending, approved, or rejected)")
+    @app_commands.describe(
+        submission_id="ID of the application to delete",
+        revoke_roles="Whether to remove roles granted during approval (Default: True)"
+    )
+    @app_commands.default_permissions(manage_guild=True)
+    async def reg_delete_submission(self, interaction: discord.Interaction, submission_id: int, revoke_roles: Optional[bool] = True):
+        if not interaction.user.guild_permissions.manage_guild and not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message(embed=embed_error("Permission Denied", "You need Manage Server permissions to delete applications."), ephemeral=True)
+            return
+
+        sub = self.db.get_submission(submission_id)
+        if not sub or sub["guild_id"] != str(interaction.guild_id):
+            await interaction.response.send_message(embed=embed_error("Not Found", f"Application #{submission_id} does not exist in this server."), ephemeral=True)
+            return
+
+        config = self.db.get_form(sub["registration_id"])
+        guild = interaction.guild
+        member = guild.get_member(int(sub["user_id"])) if guild else None
+
+        revoked_info = []
+        if revoke_roles and sub["status"] == "approved" and member and config:
+            revoked_info = await revoke_post_registration_actions(self.bot, guild, member, config)
+
+        self.db.delete_submission(submission_id)
+
+        rev_summary = ("\n" + "\n".join(revoked_info)) if revoked_info else ""
+        await interaction.response.send_message(
+            embed=embed_success(
+                "Application Deleted",
+                f"Application **#{submission_id}** for <@{sub['user_id']}> (Status was `{sub['status'].upper()}`) has been permanently deleted from the database.{rev_summary}"
+            ),
+            ephemeral=True
+        )
 
     # -----------------------------------------------------------------------
     # Member Commands
