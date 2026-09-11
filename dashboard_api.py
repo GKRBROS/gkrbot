@@ -1907,6 +1907,59 @@ async def handle_registration_question_delete(request: web.Request):
     success = db.delete_question(q_id)
     return web.json_response({"success": success})
 
+async def handle_registration_question_put(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    q_id = int(request.match_info["question_id"])
+    data = await request.json()
+    import registration
+    db = registration.db
+
+    update_kwargs = {}
+    if "question" in data:
+        update_kwargs["question"] = str(data["question"]).strip()
+    if "field_type" in data:
+        update_kwargs["field_type"] = str(data["field_type"]).strip()
+    if "required" in data:
+        update_kwargs["required"] = 1 if data["required"] else 0
+    if "placeholder" in data:
+        update_kwargs["placeholder"] = str(data.get("placeholder") or "").strip()
+    if "options" in data:
+        opts = data["options"]
+        if isinstance(opts, list):
+            update_kwargs["options"] = json.dumps([str(o).strip() for o in opts if str(o).strip()])
+        elif isinstance(opts, str):
+            parts = [s.strip() for s in opts.split(",") if s.strip()]
+            update_kwargs["options"] = json.dumps(parts)
+    if "min_length" in data:
+        val = data["min_length"]
+        update_kwargs["min_length"] = int(val) if val is not None and str(val).strip() != "" else None
+    if "max_length" in data:
+        val = data["max_length"]
+        update_kwargs["max_length"] = int(val) if val is not None and str(val).strip() != "" else None
+    if "min_value" in data:
+        val = data["min_value"]
+        update_kwargs["min_value"] = float(val) if val is not None and str(val).strip() != "" else None
+    if "max_value" in data:
+        val = data["max_value"]
+        update_kwargs["max_value"] = float(val) if val is not None and str(val).strip() != "" else None
+    if "position" in data:
+        update_kwargs["position"] = int(data["position"])
+
+    success = db.update_question(q_id, **update_kwargs)
+    return web.json_response({"success": success})
+
+async def handle_registration_questions_reorder(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    form_id = int(request.match_info["form_id"])
+    data = await request.json()
+    ordered_ids = data.get("ordered_ids", [])
+    import registration
+    db = registration.db
+    db.reorder_questions(form_id, [int(x) for x in ordered_ids])
+    return web.json_response({"success": True})
+
 async def handle_registration_submissions_get(request: web.Request):
     sess = _get_session(request)
     if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
@@ -2079,6 +2132,8 @@ class DashboardAPI(commands.Cog):
             web.delete("/api/guilds/{guild_id}/registration/{form_id}", handle_registration_delete),
             web.post("/api/guilds/{guild_id}/registration/{form_id}/publish", handle_registration_publish),
             web.post("/api/guilds/{guild_id}/registration/{form_id}/questions", handle_registration_questions_post),
+            web.put("/api/guilds/{guild_id}/registration/{form_id}/questions/{question_id}", handle_registration_question_put),
+            web.put("/api/guilds/{guild_id}/registration/{form_id}/questions/reorder", handle_registration_questions_reorder),
             web.delete("/api/guilds/{guild_id}/registration/{form_id}/questions/{question_id}", handle_registration_question_delete),
             web.get("/api/guilds/{guild_id}/registration/{form_id}/submissions", handle_registration_submissions_get),
             web.post("/api/guilds/{guild_id}/registration/submissions/{sub_id}/review", handle_registration_submission_review),

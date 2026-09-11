@@ -55,8 +55,9 @@ function Registration() {
   // Question builder
   const [selectedFormForQuestions, setSelectedFormForQuestions] = useState(null);
   const [questions, setQuestions] = useState([]);
-  const [showAddQuestionModal, setShowAddQuestionModal] = useState(false);
-  const [newQuestion, setNewQuestion] = useState({
+  const [showQuestionModal, setShowQuestionModal] = useState(false);
+  const [editingQuestion, setEditingQuestion] = useState(null);
+  const [questionFormData, setQuestionFormData] = useState({
     question: '',
     field_type: 'short_text',
     required: true,
@@ -213,40 +214,99 @@ function Registration() {
     setPublishing(false);
   };
 
-  // Handle Add Question
-  const handleAddQuestion = async (e) => {
+  // Handle Open Add Question Modal
+  const handleOpenAddQuestion = () => {
+    setEditingQuestion(null);
+    setQuestionFormData({
+      question: '',
+      field_type: 'short_text',
+      required: true,
+      placeholder: '',
+      options: '',
+      min_length: '',
+      max_length: '',
+      min_value: '',
+      max_value: '',
+    });
+    setShowQuestionModal(true);
+  };
+
+  // Handle Open Edit Question Modal
+  const handleOpenEditQuestion = (q) => {
+    setEditingQuestion(q);
+    const optsStr = Array.isArray(q.options)
+      ? q.options.join(', ')
+      : (typeof q.options === 'string' ? q.options : '');
+    setQuestionFormData({
+      question: q.question || '',
+      field_type: q.field_type || 'short_text',
+      required: Boolean(q.required),
+      placeholder: q.placeholder || '',
+      options: optsStr,
+      min_length: q.min_length != null ? q.min_length : '',
+      max_length: q.max_length != null ? q.max_length : '',
+      min_value: q.min_value != null ? q.min_value : '',
+      max_value: q.max_value != null ? q.max_value : '',
+    });
+    setShowQuestionModal(true);
+  };
+
+  // Handle Save Question (Add or Edit)
+  const handleSaveQuestion = async (e) => {
     e.preventDefault();
     try {
-      const optsArray = newQuestion.options
-        ? newQuestion.options.split(',').map(s => s.trim()).filter(Boolean)
+      const optsArray = questionFormData.options
+        ? questionFormData.options.split(',').map(s => s.trim()).filter(Boolean)
         : [];
       const payload = {
-        question: newQuestion.question,
-        field_type: newQuestion.field_type,
-        required: newQuestion.required,
-        placeholder: newQuestion.placeholder,
+        question: questionFormData.question.trim(),
+        field_type: questionFormData.field_type,
+        required: questionFormData.required,
+        placeholder: questionFormData.placeholder.trim(),
         options: optsArray,
-        min_length: newQuestion.min_length ? parseInt(newQuestion.min_length) : null,
-        max_length: newQuestion.max_length ? parseInt(newQuestion.max_length) : null,
-        min_value: newQuestion.min_value ? parseFloat(newQuestion.min_value) : null,
-        max_value: newQuestion.max_value ? parseFloat(newQuestion.max_value) : null,
+        min_length: questionFormData.min_length !== '' && questionFormData.min_length != null ? parseInt(questionFormData.min_length) : null,
+        max_length: questionFormData.max_length !== '' && questionFormData.max_length != null ? parseInt(questionFormData.max_length) : null,
+        min_value: questionFormData.min_value !== '' && questionFormData.min_value != null ? parseFloat(questionFormData.min_value) : null,
+        max_value: questionFormData.max_value !== '' && questionFormData.max_value != null ? parseFloat(questionFormData.max_value) : null,
       };
-      await api.post(`/guilds/${guildId}/registration/${selectedFormForQuestions.id}/questions`, payload);
+
+      if (editingQuestion) {
+        await api.put(`/guilds/${guildId}/registration/${selectedFormForQuestions.id}/questions/${editingQuestion.id}`, payload);
+        setSuccess(`Question #${editingQuestion.id} updated successfully!`);
+      } else {
+        await api.post(`/guilds/${guildId}/registration/${selectedFormForQuestions.id}/questions`, payload);
+        setSuccess('New question added to form!');
+      }
+
       await loadQuestions(selectedFormForQuestions.id);
-      setShowAddQuestionModal(false);
-      setNewQuestion({
-        question: '',
-        field_type: 'short_text',
-        required: true,
-        placeholder: '',
-        options: '',
-        min_length: '',
-        max_length: '',
-        min_value: '',
-        max_value: '',
-      });
+      setShowQuestionModal(false);
+      setEditingQuestion(null);
+      setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
-      setError('Failed to add question.');
+      setError(err.response?.data?.error || 'Failed to save question.');
+    }
+  };
+
+  // Handle Move Question Up / Down
+  const handleMoveQuestion = async (index, direction) => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= questions.length) return;
+
+    const reordered = [...questions];
+    const [moved] = reordered.splice(index, 1);
+    reordered.splice(targetIndex, 0, moved);
+    setQuestions(reordered);
+
+    try {
+      const orderedIds = reordered.map(q => q.id);
+      await api.put(`/guilds/${guildId}/registration/${selectedFormForQuestions.id}/questions/reorder`, {
+        ordered_ids: orderedIds,
+      });
+      setSuccess('Question order saved.');
+      setTimeout(() => setSuccess(''), 2000);
+    } catch (err) {
+      setError('Failed to save question reordering.');
+      await loadQuestions(selectedFormForQuestions.id);
     }
   };
 
@@ -379,7 +439,7 @@ function Registration() {
                   <h2 className="text-xl font-bold">Questions for "{selectedFormForQuestions.name}"</h2>
                   <p className="text-muted text-sm">Configure fields presented in the dynamic Discord form & modal.</p>
                 </div>
-                <button className="btn btn-primary" onClick={() => setShowAddQuestionModal(true)}>
+                <button className="btn btn-primary" onClick={handleOpenAddQuestion}>
                   ➕ Add Question
                 </button>
               </div>
@@ -392,27 +452,69 @@ function Registration() {
                 <div className="flex flex-col gap-3">
                   {questions.map((q, idx) => (
                     <div key={q.id} className="card bg-surface flex justify-between items-center p-4 border border-border">
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-bold text-accent">#{idx + 1}</span>
-                          <span className="font-semibold">{q.question}</span>
-                          {q.required ? (
-                            <span className="badge badge-danger text-xs">Required</span>
-                          ) : (
-                            <span className="badge badge-secondary text-xs">Optional</span>
-                          )}
+                      <div className="flex items-center gap-3">
+                        {/* Reorder Buttons */}
+                        <div className="flex flex-col gap-1">
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-xs p-1"
+                            style={{ lineHeight: 1, minHeight: 'auto', height: '22px', width: '22px' }}
+                            disabled={idx === 0}
+                            onClick={() => handleMoveQuestion(idx, 'up')}
+                            title="Move Up"
+                          >
+                            ▲
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-xs p-1"
+                            style={{ lineHeight: 1, minHeight: 'auto', height: '22px', width: '22px' }}
+                            disabled={idx === questions.length - 1}
+                            onClick={() => handleMoveQuestion(idx, 'down')}
+                            title="Move Down"
+                          >
+                            ▼
+                          </button>
                         </div>
-                        <div className="text-sm text-muted">
-                          Type: <span className="text-foreground">{FIELD_TYPES.find(t => t.value === q.field_type)?.label || q.field_type}</span>
-                          {q.placeholder && <span> • Placeholder: "{q.placeholder}"</span>}
-                          {q.options && q.options.length > 0 && <span> • Choices: [{q.options.join(', ')}]</span>}
-                          {q.min_value != null && <span> • Min: {q.min_value}</span>}
-                          {q.max_value != null && <span> • Max: {q.max_value}</span>}
+
+                        <div>
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-bold text-accent">#{idx + 1}</span>
+                            <span className="font-semibold text-base">{q.question}</span>
+                            {q.required ? (
+                              <span className="badge badge-danger text-xs">Required</span>
+                            ) : (
+                              <span className="badge badge-secondary text-xs">Optional</span>
+                            )}
+                          </div>
+                          <div className="text-sm text-muted">
+                            Format: <strong className="text-primary font-mono">{FIELD_TYPES.find(t => t.value === q.field_type)?.label || q.field_type}</strong>
+                            {q.placeholder && <span> • Placeholder: "{q.placeholder}"</span>}
+                            {q.options && q.options.length > 0 && <span> • Choices ({q.options.length}): [{q.options.slice(0, 5).join(', ')}{q.options.length > 5 ? ` +${q.options.length - 5} more` : ''}]</span>}
+                            {q.min_length != null && <span> • Min Length: {q.min_length}</span>}
+                            {q.max_length != null && <span> • Max Length: {q.max_length}</span>}
+                            {q.min_value != null && <span> • Min: {q.min_value}</span>}
+                            {q.max_value != null && <span> • Max: {q.max_value}</span>}
+                          </div>
                         </div>
                       </div>
-                      <button className="btn btn-danger btn-sm" onClick={() => handleDeleteQuestion(q.id)}>
-                        🗑️ Delete
-                      </button>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleOpenEditQuestion(q)}
+                          title="Edit Question & Format"
+                        >
+                          ✏️ Edit
+                        </button>
+                        <button
+                          className="btn btn-danger btn-sm"
+                          onClick={() => handleDeleteQuestion(q.id)}
+                          title="Delete Question"
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -921,44 +1023,53 @@ function Registration() {
         </div>
       )}
 
-      {/* MODAL: ADD QUESTION */}
-      {showAddQuestionModal && (
+      {/* MODAL: ADD / EDIT QUESTION */}
+      {showQuestionModal && (
         <div className="modal-backdrop">
-          <div className="modal card" style={{ maxWidth: '550px' }}>
+          <div className="modal card" style={{ maxWidth: '580px', width: '100%' }}>
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-lg font-bold">Add Question to Form</h3>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowAddQuestionModal(false)}>✕</button>
+              <div>
+                <h3 className="text-lg font-bold">
+                  {editingQuestion ? `✏️ Edit Question #${editingQuestion.id}` : '➕ Add Question to Form'}
+                </h3>
+                <p className="text-xs text-muted">
+                  {editingQuestion
+                    ? 'Modify the question text, response format, choices, and validation constraints.'
+                    : 'Create a new dynamic field for this registration form.'}
+                </p>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowQuestionModal(false)}>✕</button>
             </div>
 
-            <form onSubmit={handleAddQuestion}>
+            <form onSubmit={handleSaveQuestion}>
               <div className="form-group mb-3">
-                <label className="label">Question Text</label>
+                <label className="label">Question Text / Title *</label>
                 <input
                   type="text"
                   className="input"
                   required
-                  placeholder="e.g. What is your real name / age / department?"
-                  value={newQuestion.question}
-                  onChange={(e) => setNewQuestion({ ...newQuestion, question: e.target.value })}
+                  placeholder="e.g. In-Game Name (IGN) & Tagline"
+                  value={questionFormData.question}
+                  onChange={(e) => setQuestionFormData({ ...questionFormData, question: e.target.value })}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3 mb-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                 <div>
-                  <label className="label">Question Type</label>
+                  <label className="label">Format / Question Type *</label>
                   <Select
-                    value={newQuestion.field_type}
-                    onChange={(val) => setNewQuestion({ ...newQuestion, field_type: val })}
+                    value={questionFormData.field_type}
+                    onChange={(val) => setQuestionFormData({ ...questionFormData, field_type: val })}
                     options={FIELD_TYPES}
                   />
                 </div>
                 <div>
-                  <label className="label">Is Required?</label>
+                  <label className="label">Is Required? *</label>
                   <Select
-                    value={newQuestion.required ? 'yes' : 'no'}
-                    onChange={(val) => setNewQuestion({ ...newQuestion, required: val === 'yes' })}
+                    value={questionFormData.required ? 'yes' : 'no'}
+                    onChange={(val) => setQuestionFormData({ ...questionFormData, required: val === 'yes' })}
                     options={[
-                      { value: 'yes', label: 'Yes (Required)' },
+                      { value: 'yes', label: 'Yes (Mandatory)' },
                       { value: 'no', label: 'No (Optional)' },
                     ]}
                   />
@@ -966,58 +1077,92 @@ function Registration() {
               </div>
 
               <div className="form-group mb-3">
-                <label className="label">Placeholder Text (Optional)</label>
+                <label className="label">Placeholder / Help Text (Optional)</label>
                 <input
                   type="text"
                   className="input"
-                  placeholder="Help text shown in input..."
-                  value={newQuestion.placeholder}
-                  onChange={(e) => setNewQuestion({ ...newQuestion, placeholder: e.target.value })}
+                  placeholder="e.g. PlayerName#1234..."
+                  value={questionFormData.placeholder}
+                  onChange={(e) => setQuestionFormData({ ...questionFormData, placeholder: e.target.value })}
                 />
               </div>
 
-              {(newQuestion.field_type === 'single_select' || newQuestion.field_type === 'multiple_select') && (
-                <div className="form-group mb-3">
-                  <label className="label">Choices (Comma-separated)</label>
-                  <input
-                    type="text"
+              {/* Options for Select dropdowns */}
+              {(questionFormData.field_type === 'single_select' || questionFormData.field_type === 'multiple_select') && (
+                <div className="form-group mb-3 bg-surface p-3 rounded-lg border border-border">
+                  <label className="label font-semibold">Choices / Options (Comma-separated) *</label>
+                  <textarea
                     className="input"
-                    placeholder="Police, EMS, Mechanic, Civilian"
-                    value={newQuestion.options}
-                    onChange={(e) => setNewQuestion({ ...newQuestion, options: e.target.value })}
+                    rows={3}
+                    placeholder="Iron 1, Iron 2, Bronze 1, Silver 1, Gold 1, Platinum 1, Diamond 1, Ascendant 1, Immortal 1, Radiant"
+                    value={questionFormData.options}
+                    onChange={(e) => setQuestionFormData({ ...questionFormData, options: e.target.value })}
+                    required
                   />
+                  <span className="text-xs text-muted mt-1 block">
+                    Separate each selectable choice with a comma. Discord supports up to 25 choices per component (larger lists are automatically partitioned).
+                  </span>
                 </div>
               )}
 
-              {newQuestion.field_type === 'number' && (
-                <div className="grid grid-cols-2 gap-3 mb-3">
+              {/* Numeric Constraints */}
+              {questionFormData.field_type === 'number' && (
+                <div className="grid grid-cols-2 gap-3 mb-3 bg-surface p-3 rounded-lg border border-border">
                   <div>
-                    <label className="label">Min Value</label>
+                    <label className="label">Minimum Value</label>
                     <input
                       type="number"
                       className="input"
-                      value={newQuestion.min_value}
-                      onChange={(e) => setNewQuestion({ ...newQuestion, min_value: e.target.value })}
+                      placeholder="e.g. 1"
+                      value={questionFormData.min_value}
+                      onChange={(e) => setQuestionFormData({ ...questionFormData, min_value: e.target.value })}
                     />
                   </div>
                   <div>
-                    <label className="label">Max Value</label>
+                    <label className="label">Maximum Value</label>
                     <input
                       type="number"
                       className="input"
-                      value={newQuestion.max_value}
-                      onChange={(e) => setNewQuestion({ ...newQuestion, max_value: e.target.value })}
+                      placeholder="e.g. 100"
+                      value={questionFormData.max_value}
+                      onChange={(e) => setQuestionFormData({ ...questionFormData, max_value: e.target.value })}
                     />
                   </div>
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-border">
-                <button type="button" className="btn btn-ghost" onClick={() => setShowAddQuestionModal(false)}>
+              {/* Text Length Constraints */}
+              {(questionFormData.field_type === 'short_text' || questionFormData.field_type === 'paragraph') && (
+                <div className="grid grid-cols-2 gap-3 mb-3 bg-surface p-3 rounded-lg border border-border">
+                  <div>
+                    <label className="label">Minimum Characters (Optional)</label>
+                    <input
+                      type="number"
+                      className="input"
+                      placeholder="e.g. 3"
+                      value={questionFormData.min_length}
+                      onChange={(e) => setQuestionFormData({ ...questionFormData, min_length: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Maximum Characters (Optional)</label>
+                    <input
+                      type="number"
+                      className="input"
+                      placeholder="e.g. 100"
+                      value={questionFormData.max_length}
+                      onChange={(e) => setQuestionFormData({ ...questionFormData, max_length: e.target.value })}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-border mt-4">
+                <button type="button" className="btn btn-ghost" onClick={() => setShowQuestionModal(false)}>
                   Cancel
                 </button>
                 <button type="submit" className="btn btn-primary">
-                  Add Question
+                  {editingQuestion ? '💾 Save Question Changes' : '➕ Add Question'}
                 </button>
               </div>
             </form>

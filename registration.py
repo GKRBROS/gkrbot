@@ -1695,18 +1695,128 @@ class AddQuestionModal(discord.ui.Modal, title="Add Question to Form"):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
+class EditQuestionModal(discord.ui.Modal):
+    def __init__(self, cog: RegistrationCog, form_id: int, question: sqlite3.Row):
+        super().__init__(title=f"Edit Question #{question['id']}"[:45])
+        self.cog = cog
+        self.form_id = form_id
+        self.q_id = question["id"]
+
+        self.q_text = discord.ui.TextInput(
+            label="Question Text",
+            default=question["question"],
+            required=True,
+            max_length=150
+        )
+        self.type_code = discord.ui.TextInput(
+            label="Format (text/paragraph/select/yes_no/num)",
+            placeholder="short_text | paragraph | number | single_select | yes_no | url | date",
+            default=question["field_type"],
+            required=True
+        )
+        try:
+            opts = json.loads(question["options"] or "[]")
+            opts_str = ", ".join(opts)
+        except Exception:
+            opts_str = ""
+        self.choices_str = discord.ui.TextInput(
+            label="Choices (Comma-separated if dropdown)",
+            default=opts_str,
+            required=False
+        )
+        self.is_required = discord.ui.TextInput(
+            label="Required? (yes / no)",
+            default="yes" if question["required"] else "no",
+            required=True,
+            max_length=5
+        )
+        self.placeholder = discord.ui.TextInput(
+            label="Placeholder Text (Optional)",
+            default=question["placeholder"] or "",
+            required=False,
+            max_length=100
+        )
+
+        self.add_item(self.q_text)
+        self.add_item(self.type_code)
+        self.add_item(self.choices_str)
+        self.add_item(self.is_required)
+        self.add_item(self.placeholder)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        q_text = self.q_text.value.strip()
+        raw_type = self.type_code.value.strip().lower()
+
+        field_type = "short_text"
+        for k in FIELD_TYPES.keys():
+            if raw_type in (k, k.replace("_", " "), k.replace("_", "")):
+                field_type = k
+                break
+        if "select" in raw_type and field_type == "short_text":
+            field_type = "single_select"
+        elif "number" in raw_type:
+            field_type = "number"
+        elif "paragraph" in raw_type or "long" in raw_type:
+            field_type = "paragraph"
+        elif "yes" in raw_type:
+            field_type = "yes_no"
+
+        req = self.is_required.value.strip().lower() in ("yes", "y", "true", "1")
+        choices = [c.strip() for c in self.choices_str.value.split(",") if c.strip()]
+        placeholder_val = self.placeholder.value.strip()
+
+        self.cog.db.update_question(
+            self.q_id,
+            question=q_text,
+            field_type=field_type,
+            required=1 if req else 0,
+            options=json.dumps(choices),
+            placeholder=placeholder_val
+        )
+        embed, view = self.cog.build_questions_panel(self.form_id)
+        await interaction.response.edit_message(embed=embed, view=view)
+
+
 class AdminQuestionsView(discord.ui.View):
     def __init__(self, cog: RegistrationCog, form_id: int):
         super().__init__(timeout=300)
         self.cog = cog
         self.form_id = form_id
 
-    @discord.ui.button(label="Add Question", style=discord.ButtonStyle.primary, emoji="➕")
+        questions = self.cog.db.get_questions(self.form_id)
+        if questions:
+            select_opts = []
+            for idx, q in enumerate(questions[:25]):
+                label = f"#{idx + 1} {q['question']}"[:95]
+                desc = f"Type: {q['field_type']} • {'Req' if q['required'] else 'Opt'}"[:50]
+                select_opts.append(discord.SelectOption(label=label, value=str(q["id"]), description=desc, emoji="✏️"))
+
+            edit_select = discord.ui.Select(
+                placeholder="Select a question to edit...",
+                min_values=1,
+                max_values=1,
+                options=select_opts,
+                row=0
+            )
+
+            async def edit_select_cb(inter: discord.Interaction):
+                qid = int(edit_select.values[0])
+                target_q = self.cog.db.get_question(qid)
+                if not target_q:
+                    await inter.response.send_message(embed=embed_error("Not Found", "Question not found."), ephemeral=True)
+                    return
+                modal = EditQuestionModal(self.cog, self.form_id, target_q)
+                await inter.response.send_modal(modal)
+
+            edit_select.callback = edit_select_cb
+            self.add_item(edit_select)
+
+    @discord.ui.button(label="Add Question", style=discord.ButtonStyle.primary, emoji="➕", row=1)
     async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = AddQuestionModal(self.cog, self.form_id)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Remove Last Question", style=discord.ButtonStyle.danger, emoji="🗑️")
+    @discord.ui.button(label="Remove Last Question", style=discord.ButtonStyle.danger, emoji="🗑️", row=1)
     async def del_last_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         questions = self.cog.db.get_questions(self.form_id)
         if questions:
@@ -1714,7 +1824,7 @@ class AdminQuestionsView(discord.ui.View):
         embed, view = self.cog.build_questions_panel(self.form_id)
         await interaction.response.edit_message(embed=embed, view=view)
 
-    @discord.ui.button(label="Back to Builder", style=discord.ButtonStyle.secondary, emoji="⬅️")
+    @discord.ui.button(label="Back to Builder", style=discord.ButtonStyle.secondary, emoji="⬅️", row=1)
     async def back_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         embed, view = self.cog.build_admin_builder_panel(self.form_id)
         await interaction.response.edit_message(embed=embed, view=view)
