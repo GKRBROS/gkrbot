@@ -707,22 +707,32 @@ function Registration() {
                       </div>
                     </div>
 
-                    {sub.status === 'pending' && (
-                      <div className="flex gap-2">
-                        <button
-                          className="btn btn-success btn-sm"
-                          onClick={() => handleReviewSubmission(sub.id, 'approve')}
-                        >
-                          ✅ Approve
-                        </button>
-                        <button
-                          className="btn btn-danger btn-sm"
-                          onClick={() => setRejectingSubId(sub.id)}
-                        >
-                          ❌ Reject
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex gap-2 items-center">
+                      {sub.status === 'pending' && (
+                        <>
+                          <button
+                            className="btn btn-success btn-sm"
+                            onClick={() => handleReviewSubmission(sub.id, 'approve')}
+                          >
+                            ✅ Approve
+                          </button>
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={() => setRejectingSubId(sub.id)}
+                          >
+                            ❌ Reject
+                          </button>
+                        </>
+                      )}
+                      <button
+                        className="btn btn-danger btn-sm"
+                        title="Delete this application permanently"
+                        onClick={() => handleDeleteSubmission(sub)}
+                        style={{ opacity: 0.85 }}
+                      >
+                        🗑️ Delete
+                      </button>
+                    </div>
                   </div>
 
                   {/* Answers Accordion / Content */}
