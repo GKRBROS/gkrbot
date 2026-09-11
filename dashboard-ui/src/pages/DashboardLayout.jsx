@@ -152,7 +152,7 @@ function DashboardLayout({ user }) {
           </div>
           <button
             onClick={() => {
-              localStorage.removeItem('session_token');
+              localStorage.removeItem('bot_dashboard_token');
               window.location.href = '/';
             }}
             style={{

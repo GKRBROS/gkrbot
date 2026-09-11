@@ -23,6 +23,10 @@ pip-delete-this-directory.txt
 reaction_message_id.txt
 cookies.txt
 
+# Dashboard session store (contains access tokens - never commit)
+dashboard_sessions.json
+dashboard_sessions.json.tmp
+
 # VS Code / IDE
 .vscode/
 .idea/

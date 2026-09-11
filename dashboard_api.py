@@ -29,6 +29,28 @@ def _resolve_client_secret() -> str:
 
 # Session store: token -> dict of user data
 SESSIONS = {}
+SESSIONS_FILE = os.path.join(os.path.dirname(__file__), "dashboard_sessions.json")
+
+def _load_sessions():
+    """Restore dashboard sessions from disk so logins survive bot restarts."""
+    global SESSIONS
+    try:
+        if os.path.exists(SESSIONS_FILE):
+            with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
+                SESSIONS = json.load(f)
+            print(f"[DashboardAPI] Restored {len(SESSIONS)} dashboard session(s) from disk")
+    except Exception as e:
+        print(f"[DashboardAPI] Failed to load sessions: {e}")
+
+def _save_sessions():
+    """Persist dashboard sessions to disk (atomic write)."""
+    try:
+        tmp = SESSIONS_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(SESSIONS, f)
+        os.replace(tmp, SESSIONS_FILE)
+    except Exception as e:
+        print(f"[DashboardAPI] Failed to save sessions: {e}")
 
 # CORS Middleware to allow requests from Vite dev server or separate origins
 @web.middleware
@@ -144,6 +166,7 @@ async def handle_callback(request: web.Request):
         "avatar": user_data.get("avatar"),
         "access_token": access_token
     }
+    _save_sessions()
 
     return web.json_response({"token": session_id, "user": SESSIONS[session_id]})
 
@@ -164,6 +187,12 @@ async def handle_me(request: web.Request):
     async with aiohttp.ClientSession() as session:
         headers = {"Authorization": f"Bearer {session_data['access_token']}"}
         async with session.get("https://discord.com/api/users/@me/guilds", headers=headers) as resp:
+            if resp.status == 401:
+                # Discord token expired - kill the session so the UI re-authenticates
+                token = request.headers.get("Authorization", "").split(" ")[-1]
+                SESSIONS.pop(token, None)
+                _save_sessions()
+                return web.json_response({"error": "Session expired, please log in again"}, status=401)
             if resp.status != 200:
                 return web.json_response({"error": "Failed to fetch guilds"}, status=400)
             user_guilds = await resp.json()
@@ -1659,6 +1688,7 @@ class DashboardAPI(commands.Cog):
         self.runner = None
 
     async def cog_load(self):
+        _load_sessions()
         app = web.Application(middlewares=[cors_middleware])
         app["bot"] = self.bot
         
