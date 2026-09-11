@@ -177,7 +177,7 @@ class SecurityDatabase:
 # Cog
 # ---------------------------------------------------------------------------
 
-from gkr_ui import C, embed_error, embed_success, embed_info, embed_warning, embed_action  # noqa: E402
+from gkr_ui import C, embed_error, embed_success, embed_info, embed_warning, embed_action, BOT_NAME  # noqa: E402
 
 class SecurityCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -441,12 +441,12 @@ class SecurityCog(commands.Cog):
         embed = discord.Embed(
             title="🚨  Flagged Image Removed",
             description=(
-                f"{message.author.mention}'s image was **automatically deleted** by GKR Security.\n\n"
+                f"{message.author.mention}'s image was **automatically deleted** by {BOT_NAME} Security.\n\n"
                 f"**Reason(s):**\n{reasons_str}"
             ),
             color=0xFF0000
         )
-        embed.set_footer(text=f"GKR Security  •  Warning #{len(warns)} issued  •  PIL/EXIF Scanner")
+        embed.set_footer(text=f"{BOT_NAME} Security  •  Warning #{len(warns)} issued  •  PIL/EXIF Scanner")
         try:
             await message.channel.send(embed=embed, delete_after=15)
         except Exception:
@@ -509,7 +509,7 @@ class SecurityCog(commands.Cog):
             embed = discord.Embed(title=title, description=description, color=color, timestamp=discord.utils.utcnow())
             if thumbnail_url:
                 embed.set_thumbnail(url=thumbnail_url)
-            embed.set_footer(text="GKR Security  •  Audit & Defense Log")
+            embed.set_footer(text=f"{BOT_NAME} Security  •  Audit & Defense Log")
             try:
                 await channel.send(embed=embed)
             except Exception as e:
@@ -717,7 +717,7 @@ class SecurityCog(commands.Cog):
                     description=f"{message.author.mention} was warned for attempting an unauthorized `@everyone` or `@here` ping. (Warning #{len(warns)})",
                     color=C.DANGER
                 )
-                embed.set_footer(text="GKR Security  •  Anti-Raid Protection")
+                embed.set_footer(text=f"{BOT_NAME} Security  •  Anti-Raid Protection")
                 try:
                     await message.channel.send(embed=embed, delete_after=10)
                 except Exception:
@@ -767,7 +767,7 @@ class SecurityCog(commands.Cog):
                             description=f"{message.author.mention} has been muted for 5 minutes for flooding the chat.",
                             color=C.DANGER
                         )
-                        embed.set_footer(text="GKR Security")
+                        embed.set_footer(text=f"{BOT_NAME} Security")
                         await message.channel.send(embed=embed, delete_after=10)
                         await self.log_security_action(
                             message.guild,
@@ -1021,11 +1021,11 @@ class SecurityCog(commands.Cog):
         ]
 
         embed = discord.Embed(
-            title=f"🛡️  GKR Security Status — {interaction.guild.name}",
+            title=f"🛡️  {BOT_NAME} Security Status — {interaction.guild.name}",
             description="\n".join(status_lines),
             color=C.BRAND
         )
-        embed.set_footer(text="GKR Security  •  Advanced Server Protection")
+        embed.set_footer(text=f"{BOT_NAME} Security  •  Advanced Server Protection")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 

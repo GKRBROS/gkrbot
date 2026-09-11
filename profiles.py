@@ -19,7 +19,7 @@ from typing import Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
-from gkr_ui import C, embed_error, embed_success, embed_info, embed_warning, Paginator, paginate_leaderboard  # noqa: E402
+from gkr_ui import C, embed_error, embed_success, embed_info, embed_warning, Paginator, paginate_leaderboard, BOT_NAME  # noqa: E402
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "profiles.sqlite3")
 
@@ -143,7 +143,7 @@ class ProfilesCog(commands.Cog):
                             description=f"{member.mention} earned **{ach['name']}**\n*{ach['desc']}*",
                             color=C.GOLD
                         )
-                        embed.set_footer(text="GKR Achievements")
+                        embed.set_footer(text=f"{BOT_NAME} Achievements")
                         await ch.send(embed=embed)
         except Exception:
             pass
@@ -336,7 +336,7 @@ class ProfilesCog(commands.Cog):
                 value=f"*{ach['desc']}*\n{val}",
                 inline=True
             )
-        embed.set_footer(text="GKR Achievements")
+        embed.set_footer(text=f"{BOT_NAME} Achievements")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(name="leaderboard", description="View the server leaderboard")
@@ -398,7 +398,7 @@ class ProfilesCog(commands.Cog):
             await interaction.followup.send(embed=embed_info("Leaderboard Empty", "No data yet for this category."), ephemeral=True)
             return
 
-        pages = paginate_leaderboard(title, lb, fmt, color=C.GOLD, footer=f"GKR Leaderboard • {guild.name}")
+        pages = paginate_leaderboard(title, lb, fmt, color=C.GOLD, footer=f"{BOT_NAME} Leaderboard • {guild.name}")
         await interaction.followup.send(embed=pages[0], view=Paginator(pages, interaction.user.id))
 
 

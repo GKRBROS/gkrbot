@@ -20,6 +20,7 @@ import asyncio
 import sqlite3
 import os
 import datetime
+from bot_config import BOT_NAME
 from typing import Optional, List, Dict, Union, Tuple
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "gkr_bot.db")
@@ -783,7 +784,7 @@ def _build_panel_embed(member: discord.Member, vc: discord.VoiceChannel) -> disc
     embed.add_field(name="👑  Owner", value=member.mention, inline=True)
     embed.add_field(name="⭐  Co-Hosts", value=cohost_str, inline=True)
     embed.set_thumbnail(url=member.display_avatar.url)
-    embed.set_footer(text="GKR Temp VC  •  Your channel, your rules")
+    embed.set_footer(text=f"{BOT_NAME} Temp VC  •  Your channel, your rules")
     return embed
 
 
@@ -897,7 +898,7 @@ class TempVCCog(commands.Cog):
             color=0x57F287,
             timestamp=discord.utils.utcnow(),
         )
-        embed.set_footer(text="GKR Temp VC System")
+        embed.set_footer(text=f"{BOT_NAME} Temp VC System")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @tempvc_group.command(name="sethub", description="Mark an existing voice channel as the Temp VC hub")
@@ -942,7 +943,7 @@ class TempVCCog(commands.Cog):
             color=0x57F287,
             timestamp=discord.utils.utcnow(),
         )
-        embed.set_footer(text="GKR Temp VC System")
+        embed.set_footer(text=f"{BOT_NAME} Temp VC System")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
     @tempvc_group.command(name="list", description="List all active temporary voice channels")
@@ -969,7 +970,7 @@ class TempVCCog(commands.Cog):
             color=0x5865F2,
             timestamp=discord.utils.utcnow(),
         )
-        embed.set_footer(text=f"GKR Temp VC System  •  {len(rows)} active channel(s)")
+        embed.set_footer(text=f"{BOT_NAME} Temp VC System  •  {len(rows)} active channel(s)")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @tempvc_group.command(name="panel", description="Get the control panel for your current temporary voice channel")
@@ -1006,7 +1007,7 @@ class TempVCCog(commands.Cog):
             color=0x5865F2,
             timestamp=discord.utils.utcnow(),
         )
-        embed.set_footer(text="GKR Temp VC System  •  Your channel, your rules")
+        embed.set_footer(text=f"{BOT_NAME} Temp VC System  •  Your channel, your rules")
         await interaction.channel.send(embed=embed, view=TempVCControlPanel())
         await interaction.response.send_message("✅  Master control panel deployed.", ephemeral=True)
 

@@ -19,6 +19,7 @@ import ServerSync from './pages/features/ServerSync';
 import CustomCommands from './pages/features/CustomCommands';
 import Economy from './pages/features/Economy';
 import TempVC from './pages/features/TempVC';
+import Registration from './pages/features/Registration';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -61,6 +62,7 @@ function App() {
         <Route path="welcome" element={<Welcome />} />
         <Route path="stream-alerts" element={<StreamAlerts />} />
         <Route path="tickets" element={<Tickets />} />
+        <Route path="registration" element={<Registration />} />
         <Route path="security" element={<Security />} />
         <Route path="moderation" element={<Moderation />} />
         <Route path="sticky" element={<StickyMessages />} />

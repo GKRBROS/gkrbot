@@ -30,6 +30,7 @@ from discord.ext import commands
 
 from gkr_ui import (
     C,
+    BOT_NAME,
     create_audit_embed,
     embed_success,
     embed_error,
@@ -296,7 +297,7 @@ class ServerLogger:
         )
         if thumbnail_url:
             embed.set_thumbnail(url=thumbnail_url)
-        embed.set_footer(text="GKR Security  •  Audit & Defense Log")
+        embed.set_footer(text=f"{BOT_NAME} Security  •  Audit & Defense Log")
         await self._send(guild, event, embed)
 
     async def dispatch_ai(
@@ -320,7 +321,7 @@ class ServerLogger:
             embed.set_thumbnail(url=thumbnail_url)
         if image_url:
             embed.set_image(url=image_url)
-        embed.set_footer(text="GKR AI System  •  Audit & Activity Log")
+        embed.set_footer(text=f"{BOT_NAME} AI System  •  Audit & Activity Log")
         await self._send(guild, event, embed)
 
 
@@ -1452,7 +1453,7 @@ class ServerLogsCog(commands.Cog):
                 category = await guild.create_category(
                     category_name,
                     overwrites=overwrites,
-                    reason="Auto-created GKR Server Logs Category"
+                    reason=f"Auto-created {BOT_NAME} Server Logs Category"
                 )
             except Exception as exc:
                 await interaction.followup.send(
@@ -1489,7 +1490,7 @@ class ServerLogsCog(commands.Cog):
                     new_ch = await guild.create_text_channel(
                         name=ch_name,
                         category=category,
-                        topic=f"GKR Server Audit Log: {desc}",
+                        topic=f"{BOT_NAME} Server Audit Log: {desc}",
                         reason="Auto-created category log channel"
                     )
                     cfg["category_channels"][cat_key] = new_ch.id

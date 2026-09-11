@@ -3,6 +3,7 @@ import subprocess
 import traceback
 import os
 import shutil
+from bot_config import BOT_NAME
 
 # Self-healing dependency check (e.g. for spotipy, ytnoti)
 required_packages = {
@@ -31,7 +32,7 @@ except ImportError:
     print("⚠️ PyNaCl voice components are missing. (Not required if exclusively using Lavalink)")
 
 # Detailed voice diagnostic checks
-print("=== GKR Voice Diagnostics ===")
+print(f"=== {BOT_NAME} Voice Diagnostics ===")
 print(f"Python version: {sys.version}")
 print(f"Platform: {sys.platform}")
 
@@ -100,7 +101,7 @@ def validate_environment():
         'DISCORD_TOKEN': 'Bot token from Discord Developer Portal',
         'DISCORD_APPLICATION_ID': 'Bot Application ID from Discord Developer Portal',
         'DISCORD_GUILD_ID': 'The target Discord Server ID',
-        'BOT_ROLE_ID': 'The role ID used to enforce the "GKR" nickname',
+        'BOT_ROLE_ID': f'The role ID used to enforce the "{BOT_NAME}" nickname',
         'MEMBER_ROLE_ID': 'The role ID for member count tracking (MEMBER_ROLE_ID or memeber_role_id)',
         'REACTION_CHANNEL_ID': 'The channel ID where reaction roles are setup'
     }
@@ -428,6 +429,7 @@ async def setup_hook():
         "festivals",         # New: Festival Announcements
         "poll",              # New: Advanced Interactive Polling System
         "ai_system",         # New: Central Self-Hosted & Zero-API AI System
+        "registration",      # New: Dynamic Registration & Application System
     ]
     for ext in extensions:
         try:
@@ -448,7 +450,7 @@ async def setup_hook():
 bot.setup_hook = setup_hook
 
 # ── /help command (required for top.gg listing) ───────────────────────────────
-@tree.command(name="help", description="📖 Show all GKR Bot commands and features")
+@tree.command(name="help", description=f"📖 Show all {BOT_NAME} Bot commands and features")
 @app_commands.describe(category="Filter by a specific feature category (optional)")
 @app_commands.choices(category=[
     app_commands.Choice(name="🤖 AI System", value="ai"),
@@ -459,9 +461,10 @@ bot.setup_hook = setup_hook
     app_commands.Choice(name="⚙️ Server Setup", value="setup"),
     app_commands.Choice(name="📊 Analytics & Stats", value="stats"),
     app_commands.Choice(name="💰 Economy", value="economy"),
+    app_commands.Choice(name="📝 Registration & Forms", value="registration"),
 ])
 async def help_cmd(interaction: discord.Interaction, category: str = None):
-    """Show an overview of all GKR Bot features and commands."""
+    """Show an overview of all bot features and commands."""
 
     CATEGORIES = {
         "ai": {
@@ -564,6 +567,20 @@ async def help_cmd(interaction: discord.Interaction, category: str = None):
                 ("`/leaderboard economy`", "View the richest members"),
             ],
         },
+        "registration": {
+            "title": "📝 Registration & Applications",
+            "color": 0x57F287,
+            "commands": [
+                ("`/registration create`", "Create a new registration form and open the builder"),
+                ("`/registration panel`", "Publish a registration panel to a Discord channel"),
+                ("`/registration questions`", "Manage, add, and configure questions for a form"),
+                ("`/registration config`", "Configure auto-roles, nickname change, and review channels"),
+                ("`/registration submissions`", "View and filter member applications"),
+                ("`/registration logs`", "View registration audit and automation logs"),
+                ("`/registration status`", "Check the status of your submitted applications"),
+                ("`/registration cancel`", "Cancel your pending registration application"),
+            ],
+        },
     }
 
     if category and category in CATEGORIES:
@@ -573,15 +590,15 @@ async def help_cmd(interaction: discord.Interaction, category: str = None):
             color=cat["color"],
             description="\n".join(f"{cmd} — {desc}" for cmd, desc in cat["commands"])
         )
-        embed.set_footer(text="GKR Bot • Use /help to see all categories")
+        embed.set_footer(text=f"{BOT_NAME} Bot • Use /help to see all categories")
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
     # Overview embed — all categories
     embed = discord.Embed(
-        title="📖  GKR Bot — Command Guide",
+        title=f"📖  {BOT_NAME} Bot — Command Guide",
         description=(
-            "GKR Bot is a **feature-rich, all-in-one** Discord bot built for gaming communities.\n"
+            f"{BOT_NAME} Bot is a **feature-rich, all-in-one** Discord bot built for gaming communities.\n"
             "Use the `category` option to dive into a specific feature area.\n\n"
             "**Quick Start:** Try `/ai chat`, `/play`, or `/ticket create`!"
         ),
@@ -599,14 +616,14 @@ async def help_cmd(interaction: discord.Interaction, category: str = None):
     embed.add_field(
         name="🔗 Links",
         value=(
-            "[Invite GKR Bot](https://discord.com/oauth2/authorize?client_id="
+            f"[Invite {BOT_NAME} Bot](https://discord.com/oauth2/authorize?client_id="
             f"{APPLICATION_ID or 'YOUR_CLIENT_ID'}&permissions=8&scope=bot%20applications.commands) • "
             "[Support Server](https://discord.gg/gkr) • "
             "[top.gg](https://top.gg)"
         ),
         inline=False,
     )
-    embed.set_footer(text="GKR Bot • All commands are slash commands (/)")
+    embed.set_footer(text=f"{BOT_NAME} Bot • All commands are slash commands (/)")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -669,7 +686,7 @@ async def testemojis(interaction: discord.Interaction):
 command_sync_succeeded = False
 
 # Diagnostics command
-@tree.command(name="botdiagnostics", description="Display system and diagnostic info for GKR Bot")
+@tree.command(name="botdiagnostics", description=f"Display system and diagnostic info for {BOT_NAME} Bot")
 async def botdiagnostics(interaction: discord.Interaction):
     """Display system diagnostics (slash command)"""
     if not interaction.user.guild_permissions.manage_guild:
@@ -692,8 +709,8 @@ async def botdiagnostics(interaction: discord.Interaction):
         sync_status = "✅ Succeeded" if command_sync_succeeded else "❌ Failed / Pending"
 
         embed = discord.Embed(
-            title="🤖 GKR Bot Diagnostics",
-            description="Diagnostic overview and status details for GKR Bot.",
+            title=f"🤖 {BOT_NAME} Bot Diagnostics",
+            description=f"Diagnostic overview and status details for {BOT_NAME} Bot.",
             color=0x8A2BE2  # Vibrant purple
         )
         embed.add_field(name="🤖 Bot Name", value=f"`{bot.user}`", inline=True)
@@ -1045,7 +1062,7 @@ async def rules_cmd(
     await interaction.response.send_modal(RulesModal(target_channel, ping, ping_role))
 
 
-@tree.command(name="say", description="Make GKR Bot send a message in a channel")
+@tree.command(name="say", description=f"Make {BOT_NAME} Bot send a message in a channel")
 @app_commands.default_permissions(manage_messages=True)
 @app_commands.describe(
     channel="The channel to send the message in (optional)",
@@ -1228,7 +1245,7 @@ async def auto_setup_reaction_roles():
                 )
     
     # Add footer with timestamp
-    embed.set_footer(text="Powered by GKR Bot • Select your roles below")
+    embed.set_footer(text=f"Powered by {BOT_NAME} Bot • Select your roles below")
     embed.timestamp = datetime.datetime.now()
 
     try:
@@ -1284,7 +1301,7 @@ async def auto_setup_reaction_roles():
         print(f"❌ Error setting up auto reaction roles: {e}")
 
 def has_gkr_role(member: discord.Member) -> bool:
-    """Check if a member has a GKR role by ID or by role name GKR."""
+    """Check if a member has a bot role by ID or by role name matching BOT_NAME."""
     # 1. Home guild check
     if member.guild.id == GUILD_ID:
         role = member.guild.get_role(BOT_ROLE_ID)
@@ -1292,8 +1309,9 @@ def has_gkr_role(member: discord.Member) -> bool:
             return True
             
     # 2. Case-insensitive role name check for any guild
+    target_names = {BOT_NAME.upper(), "GKR"}
     for r in member.roles:
-        if r.name.upper() == "GKR":
+        if r.name.upper() in target_names:
             return True
             
     return False
@@ -1301,12 +1319,12 @@ def has_gkr_role(member: discord.Member) -> bool:
 
 @tasks.loop(minutes=10)
 async def nickname_sync_task():
-    """Background task to sync nicknames for GKR role members — HOME GUILD ONLY."""
+    """Background task to sync nicknames for bot role members — HOME GUILD ONLY."""
     total_changed = 0
     total_failed = 0
     
     for guild in bot.guilds:
-        # ── GKR nickname sync only runs in the home GKR server ──────────────
+        # ── Nickname sync only runs in the home server ──────────────
         if guild.id != GUILD_ID:
             continue
 
@@ -1314,9 +1332,10 @@ async def nickname_sync_task():
         br = guild.get_role(BOT_ROLE_ID)
         if br:
             roles.append(br)
-        # Also catch any role literally named "GKR" in the home guild
+        # Also catch any role matching BOT_NAME in the home guild
+        target_names = {BOT_NAME.upper(), "GKR"}
         for r in guild.roles:
-            if r.name.upper() == "GKR" and r not in roles:
+            if r.name.upper() in target_names and r not in roles:
                 roles.append(r)
                 
         if not roles:
@@ -1331,9 +1350,9 @@ async def nickname_sync_task():
                 if member.id in synced_members or member.bot:
                     continue
                 synced_members.add(member.id)
-                if member.nick != "GKR":
+                if member.nick != BOT_NAME:
                     try:
-                        await member.edit(nick="GKR")
+                        await member.edit(nick=BOT_NAME)
                         changed += 1
                     except discord.Forbidden:
                         failed += 1
@@ -1346,7 +1365,7 @@ async def nickname_sync_task():
         total_failed += failed
         
     if total_changed > 0:
-        print(f"🎯 GKR Nickname sync complete: {total_changed} changed, {total_failed} failed")
+        print(f"🎯 {BOT_NAME} Nickname sync complete: {total_changed} changed, {total_failed} failed")
         print('='*50)
 
 
@@ -1453,12 +1472,12 @@ async def on_member_join(member):
     except Exception:
         pass
 
-    # ── GKR nickname sync: home guild only ──────────────────────────────────
+    # ── Nickname sync: home guild only ──────────────────────────────────
     if guild.id == GUILD_ID and has_gkr_role(member) and not member.bot:
-        if member.nick != "GKR":
+        if member.nick != BOT_NAME:
             try:
-                await member.edit(nick="GKR")
-                print(f"🎉 Welcome! Changed {member.display_name}'s nickname to GKR in {guild.name} ✨")
+                await member.edit(nick=BOT_NAME)
+                print(f"🎉 Welcome! Changed {member.display_name}'s nickname to {BOT_NAME} in {guild.name} ✨")
             except discord.Forbidden:
                 print(f"❌ No permission to change nickname for {member.display_name} in {guild.name}")
             except discord.HTTPException as e:
@@ -1473,16 +1492,17 @@ async def on_member_update(before, after):
         if br and br in before.roles:
             had_gkr = True
     if not had_gkr:
-        had_gkr = any(r.name.upper() == "GKR" for r in before.roles)
+        target_names = {BOT_NAME.upper(), "GKR"}
+        had_gkr = any(r.name.upper() in target_names for r in before.roles)
 
     has_gkr = has_gkr_role(after)
 
-    # ── GKR nickname sync: home guild only ──────────────────────────────────
+    # ── Nickname sync: home guild only ──────────────────────────────────
     if after.guild.id == GUILD_ID and has_gkr and not had_gkr and not after.bot:
-        if after.nick != "GKR":
+        if after.nick != BOT_NAME:
             try:
-                await after.edit(nick="GKR")
-                print(f"👑 Role upgrade! Changed {after.display_name} to GKR in {after.guild.name} (role added) 🚀")
+                await after.edit(nick=BOT_NAME)
+                print(f"👑 Role upgrade! Changed {after.display_name} to {BOT_NAME} in {after.guild.name} (role added) 🚀")
             except discord.Forbidden:
                 print(f"❌ No permission to change nickname for {after.display_name} in {after.guild.name}")
             except discord.HTTPException as e:
@@ -1521,10 +1541,10 @@ async def rotate_activity():
     
     activities = [
         discord.Activity(type=discord.ActivityType.watching, name=f"{total_members:,} Members 👥"),
-        discord.Activity(type=discord.ActivityType.playing, name="GKR ⚡ | /help"),
-        discord.Activity(type=discord.ActivityType.competing, name="GKR Leaderboards 🏆"),
+        discord.Activity(type=discord.ActivityType.playing, name=f"{BOT_NAME} ⚡ | /help"),
+        discord.Activity(type=discord.ActivityType.competing, name=f"{BOT_NAME} Leaderboards 🏆"),
         discord.Activity(type=discord.ActivityType.listening, name="Slash Commands Only 💬"),
-        discord.Activity(type=discord.ActivityType.watching, name="Over The GKR Family 🛡️")
+        discord.Activity(type=discord.ActivityType.watching, name=f"Over The {BOT_NAME} Family 🛡️")
     ]
     
     activity = random.choice(activities)
@@ -1538,7 +1558,7 @@ async def rotate_activity():
 async def periodic_nickname_sync():
     """Periodically sync nicknames — HOME GUILD ONLY."""
     for guild in bot.guilds:
-        # ── Only run in the home GKR server ─────────────────────────────────
+        # ── Only run in the home server ─────────────────────────────────
         if guild.id != GUILD_ID:
             continue
 
@@ -1546,8 +1566,9 @@ async def periodic_nickname_sync():
         br = guild.get_role(BOT_ROLE_ID)
         if br:
             roles.append(br)
+        target_names = {BOT_NAME.upper(), "GKR"}
         for r in guild.roles:
-            if r.name.upper() == "GKR" and r not in roles:
+            if r.name.upper() in target_names and r not in roles:
                 roles.append(r)
                 
         if not roles:
@@ -1561,11 +1582,11 @@ async def periodic_nickname_sync():
                 if member.id in synced_members or member.bot:
                     continue
                 synced_members.add(member.id)
-                if member.nick != "GKR":
+                if member.nick != BOT_NAME:
                     try:
-                        await member.edit(nick="GKR")
+                        await member.edit(nick=BOT_NAME)
                         changed += 1
-                        print(f"🔄 Periodic sync: {member.display_name} → GKR in {guild.name}")
+                        print(f"🔄 Periodic sync: {member.display_name} → {BOT_NAME} in {guild.name}")
                         await asyncio.sleep(0.5)
                     except (discord.Forbidden, discord.HTTPException):
                         pass
@@ -1580,58 +1601,63 @@ async def before_periodic_sync():
 @bot.command(name='setnick')
 @commands.has_permissions(manage_nicknames=True)
 async def set_nickname(ctx, member: discord.Member = None):
-    """Command to manually set nickname to GKR for users with the GKR role in this server"""
+    """Command to manually set nickname to BOT_NAME for users with the bot role in this server"""
     if member is None:
         member = ctx.author
     
     if has_gkr_role(member):
         try:
-            await member.edit(nick="GKR")
-            await ctx.send(f"✅ Changed {member.mention}'s nickname to GKR!")
+            await member.edit(nick=BOT_NAME)
+            await ctx.send(f"✅ Changed {member.mention}'s nickname to {BOT_NAME}!")
         except discord.Forbidden:
             await ctx.send("❌ I don't have permission to change that member's nickname.")
         except discord.HTTPException as e:
             await ctx.send(f"❌ Failed to change nickname: {e}")
     else:
-        await ctx.send("❌ That member doesn't have a qualifying GKR role.")
+        await ctx.send(f"❌ That member doesn't have a qualifying {BOT_NAME} role.")
 
 @bot.command(name='setallnicks')
 @commands.has_permissions(manage_nicknames=True)
 async def set_all_nicknames(ctx):
-    """Command to set all members with the GKR role to have GKR nickname in this server"""
+    """Command to set all members with the bot role to have BOT_NAME nickname in this server"""
     roles = []
     if ctx.guild.id == GUILD_ID:
         br = ctx.guild.get_role(BOT_ROLE_ID)
         if br:
             roles.append(br)
+    target_names = {BOT_NAME.upper(), "GKR"}
     for r in ctx.guild.roles:
-        if r.name.upper() == "GKR" and r not in roles:
+        if r.name.upper() in target_names and r not in roles:
             roles.append(r)
 
     if not roles:
-        await ctx.send("❌ GKR role not found on this server.")
+        await ctx.send(f"❌ {BOT_NAME} role not found on this server.")
         return
     
     changed = 0
     failed = 0
     synced_members = set()
     
-    await ctx.send(f"🔄 Processing members with GKR roles...")
+    await ctx.send(f"🔄 Processing members with {BOT_NAME} roles...")
     
     for role in roles:
         for member in role.members:
             if member.id in synced_members or member.bot:
                 continue
             synced_members.add(member.id)
-            if member.nick != "GKR":
+            if member.nick != BOT_NAME:
                 try:
-                    await member.edit(nick="GKR")
+                    await member.edit(nick=BOT_NAME)
                     changed += 1
                     await asyncio.sleep(0.2)
                 except (discord.Forbidden, discord.HTTPException):
                     failed += 1
     
-    result_msg = f"✅ Changed {changed} nicknames to GKR"
+    result_msg = f"✅ Changed {changed} nicknames to {BOT_NAME}"
+    if failed > 0:
+        result_msg += f" ({failed} failed due to permissions)"
+    
+    await ctx.send(result_msg)
     if failed > 0:
         result_msg += f" ({failed} failed due to permissions)"
     
@@ -1932,9 +1958,9 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             # Get bot status
             status = {
                 "status": "online" if bot.is_ready() else "offline",
-                "bot_name": str(bot.user) if bot.user else "GKR Bot",
+                "bot_name": str(bot.user) if bot.user else f"{BOT_NAME} Bot",
                 "guilds": len(bot.guilds) if bot.guilds else 0,
-                "message": "GKR Discord Bot is running! 🚀"
+                "message": f"{BOT_NAME} Discord Bot is running! 🚀"
             }
             
             import json
@@ -2140,7 +2166,7 @@ async def setup_reaction_roles(ctx):
                 )
     
     # Add footer with powered by text and timestamp
-    embed.set_footer(text="Powered by GKR Bot • Select your roles below")
+    embed.set_footer(text=f"Powered by {BOT_NAME} Bot • Select your roles below")
     embed.timestamp = datetime.datetime.now()
     
     # Send a header message with animated text effect
@@ -2459,7 +2485,7 @@ async def simple_reaction_roles(ctx):
                 )
     
     # Add footer with timestamp
-    embed.set_footer(text="Powered by GKR Bot • Select your roles below")
+    embed.set_footer(text=f"Powered by {BOT_NAME} Bot • Select your roles below")
     embed.timestamp = datetime.datetime.now()
     
     # Send a header message
@@ -2506,7 +2532,7 @@ if __name__ == "__main__":
         
         # Start the bot
         print('='*50)
-        print("🚀 Starting GKR Discord Bot...")
+        print(f"🚀 Starting {BOT_NAME} Discord Bot...")
         print(f"⚙️ Configured for Guild ID: {GUILD_ID}")
         if REACTION_CHANNEL_ID != 0:
             print(f"🎮 Reaction roles channel ID: {REACTION_CHANNEL_ID}")

@@ -23,6 +23,7 @@ from discord.ext import commands
 
 from gkr_ui import (
     C,
+    BOT_NAME,
     create_moderation_embed,
     embed_success,
     embed_error,
@@ -346,7 +347,7 @@ class ModerationCog(commands.Cog):
         ]
 
         embed = discord.Embed(
-            title="🤖  GKR Bot System Status",
+            title=f"🤖  {BOT_NAME} Bot System Status",
             description="\n".join(lines),
             color=C.SUCCESS if latency_ms < 200 else C.WARNING,
             timestamp=discord.utils.utcnow()

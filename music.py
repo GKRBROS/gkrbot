@@ -15,7 +15,7 @@ import re
 from discord import app_commands
 from discord.ext import commands, tasks
 from typing import Optional, List
-from gkr_ui import C, embed_error, embed_success, embed_info
+from gkr_ui import C, embed_error, embed_success, embed_info, BOT_NAME
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -336,7 +336,7 @@ class MusicControlView(discord.ui.View):
             artwork = getattr(track, 'artwork_url', None) or getattr(track, 'thumbnail', None)
             if artwork:
                 fav_embed.set_thumbnail(url=artwork)
-            fav_embed.set_footer(text=f"Saved from {interaction.guild.name}  •  GKR Music")
+            fav_embed.set_footer(text=f"Saved from {interaction.guild.name}  •  {BOT_NAME} Music")
             await interaction.user.send(embed=fav_embed)
             await interaction.response.send_message(embed=embed_success("Saved to DMs!", f"Sent **{track.title}** to your DMs! ❤️"), ephemeral=True)
         except Exception:
@@ -497,14 +497,14 @@ class GuildPlayer:
                     bot_avatar = bot_member.display_avatar.url
         except Exception:
             pass
-        embed.set_author(name="GKR MUSIC PLAYER", icon_url=bot_avatar)
+        embed.set_author(name=f"{BOT_NAME.upper()} MUSIC PLAYER", icon_url=bot_avatar)
 
         if not vc or not vc.playing or not track:
             embed.description = (
                 "**No track currently playing.**\n\n"
                 "Use `/play <song or link>` or `/random` to start streaming!"
             )
-            embed.set_footer(text="Queue: 0 tracks · GKR Studio Audio")
+            embed.set_footer(text=f"Queue: 0 tracks · {BOT_NAME} Studio Audio")
             return embed
 
         self.voice_client = vc
@@ -532,7 +532,7 @@ class GuildPlayer:
         # Bottom Center Visualizer: Stitched Continuous Looping GIF
         embed.set_image(url=MUSIC_VISUALIZER_GIF)
 
-        embed.set_footer(text=f"Queue · {vc.queue.count} tracks   |   Source · GKR Studio Audio")
+        embed.set_footer(text=f"Queue · {vc.queue.count} tracks   |   Source · {BOT_NAME} Studio Audio")
         return embed
 
     async def update_panel(self, bot: commands.Bot, track: Optional[wavelink.Playable] = None):

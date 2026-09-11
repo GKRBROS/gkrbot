@@ -4,9 +4,11 @@ import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync } from '../../sync';
 import { Select } from '../../components/Select';
+import { useBotName } from '../../BotContext';
 
 function Welcome() {
   const { guildId } = useParams();
+  const botName = useBotName();
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -180,7 +182,7 @@ function Welcome() {
               }}></div>
               <div>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '4px' }}>
-                  <span style={{ fontWeight: '500', color: 'white', fontSize: '15px' }}>GKR Bot</span>
+                  <span style={{ fontWeight: '500', color: 'white', fontSize: '15px' }}>{botName} Bot</span>
                   <span style={{ fontSize: '10px', background: '#5865F2', padding: '2px 4px', borderRadius: '3px', textTransform: 'uppercase' }}>Bot</span>
                   <span style={{ fontSize: '12px', color: '#72767d' }}>Today at 12:00 PM</span>
                 </div>
@@ -278,7 +280,7 @@ function Welcome() {
               }}></div>
               <div style={{ width: '100%' }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '8px' }}>
-                  <span style={{ fontWeight: '500', color: 'white', fontSize: '15px' }}>GKR Bot</span>
+                  <span style={{ fontWeight: '500', color: 'white', fontSize: '15px' }}>{botName} Bot</span>
                   <span style={{ fontSize: '10px', background: '#5865F2', padding: '2px 4px', borderRadius: '3px', textTransform: 'uppercase' }}>Bot</span>
                 </div>
                 

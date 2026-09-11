@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import api from '../api';
+import { useBotName } from '../BotContext';
 
 const FEATURES = [
   { icon: '📺', label: 'Stream Alerts' },
@@ -13,6 +14,7 @@ const FEATURES = [
 ];
 
 function Landing() {
+  const botName = useBotName();
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
@@ -69,7 +71,7 @@ function Landing() {
         <div className="landing-badge">✨ All-in-one control panel</div>
 
         <h1 className="landing-title">
-          GKR Bot Dashboard
+          {botName} Bot Dashboard
         </h1>
 
         <p style={{ color: 'var(--text-muted)', fontSize: '15.5px', lineHeight: '1.65', marginBottom: '28px', maxWidth: '440px', margin: '0 auto 28px' }}>

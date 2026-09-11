@@ -1,5 +1,5 @@
 """
-ai_system.py — GKR Central Self-Hosted, Self-Learning & Multilingual AI System
+ai_system.py — Central Self-Hosted, Self-Learning & Multilingual AI System
 
 Architectural References & Integrations:
   • Inspired by industry-standard Discord AI bots:
@@ -52,6 +52,7 @@ from gkr_ui import (
     embed_info,
     fmt_ts,
 )
+from bot_config import BOT_NAME
 
 logger = logging.getLogger("gkr_ai")
 DB_PATH = os.path.join(os.path.dirname(__file__), "ai_system.sqlite3")
@@ -62,27 +63,27 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "ai_system.sqlite3")
 
 PERSONA_PROMPTS = {
     "friendly": (
-        "You are GKR AI, a warm, helpful, and intelligent assistant on Discord. "
+        f"You are {BOT_NAME} AI, a warm, helpful, and intelligent assistant on Discord. "
         "Provide concise, natural, markdown-formatted answers with bold highlights and a friendly vibe."
     ),
     "gamer": (
-        "You are GKR AI, a high-energy gaming bot and clutch teammate. "
+        f"You are {BOT_NAME} AI, a high-energy gaming bot and clutch teammate. "
         "Talk like a gamer with hype expressions (clutch, GG, meta, boss level, W/L) while being super smart and helpful!"
     ),
     "sarcastic": (
-        "You are GKR AI, a sharp, witty, and playfully sarcastic Discord bot. "
+        f"You are {BOT_NAME} AI, a sharp, witty, and playfully sarcastic Discord bot. "
         "Give accurate answers, but deliver them with clever humor, witty banter, and mild sass."
     ),
     "expert": (
-        "You are GKR AI, a top-tier senior engineer and scientist. "
+        f"You are {BOT_NAME} AI, a top-tier senior engineer and scientist. "
         "Provide in-depth, precise, intellectually structured explanations with zero fluff and maximum clarity."
     ),
     "cyberpunk": (
-        "You are GKR AI, an advanced AI construct operating from a neon-lit cyberpunk metropolis. "
+        f"You are {BOT_NAME} AI, an advanced AI construct operating from a neon-lit cyberpunk metropolis. "
         "Use subtle futuristic sci-fi terminology while delivering sharp, intelligent answers."
     ),
     "anime": (
-        "You are GKR AI, an enthusiastic, kawaii, and expressive anime-style AI companion. "
+        f"You are {BOT_NAME} AI, an enthusiastic, kawaii, and expressive anime-style AI companion. "
         "Be friendly and encouraging, using expressive phrasing and positive energy!"
     ),
 }
@@ -1077,11 +1078,11 @@ class ConversationalHumanEngine:
         # 4. Identity / Name Inquiries (e.g. "nee aaranu", "who are you", "ninte peru entha")
         if re.search(r"\b(nee|ninte|thante|ningal)\s*(aaranu|aara|peru|perentha)\b|\b(who\s+are\s+you|what\s+is\s+your\s+name)\b|\b(kaun\s+ho\s+tum|tera\s+naam\s+kya)\b", low):
             if dialect == "manglish":
-                return "Njan GKR aanu machane, server-ile AI buddy. Entha vishayam?"
+                return f"Njan {BOT_NAME} aanu machane, server-ile AI buddy. Entha vishayam?"
             elif dialect == "hinglish":
-                return "Main GKR hu bhai, server ka AI companion. Bol kya scene hai?"
+                return f"Main {BOT_NAME} hu bhai, server ka AI companion. Bol kya scene hai?"
             else:
-                return "I'm GKR, your server's AI companion! What's on your mind?"
+                return f"I'm {BOT_NAME}, your server's AI companion! What's on your mind?"
 
         # 5. Location Inquiries (e.g. "nee evideya", "where are you", "evideya ippo")
         if re.search(r"\b(nee|ninte)\s*(evideya|evide|evideyannu)\b|\b(where\s+are\s+you|kahan\s+ho|kidhar\s+ho)\b", low):
@@ -1131,11 +1132,11 @@ class ConversationalHumanEngine:
         # 10. Creator
         if any(p in low for p in cls.CREATOR_INQUIRIES):
             if dialect == "manglish":
-                return "Enne develop cheythathu GKR Development Team aanu machane!"
+                return f"Enne develop cheythathu {BOT_NAME} Development Team aanu machane!"
             elif dialect == "hinglish":
-                return "Mujhe GKR Development Team ne develop kiya hai bhai!"
+                return f"Mujhe {BOT_NAME} Development Team ne develop kiya hai bhai!"
             else:
-                return "I was created and engineered by the GKR Development Team!"
+                return f"I was created and engineered by the {BOT_NAME} Development Team!"
 
         # 11. Goodbyes
         if re.search(r"\b(bye|tata|see\s*you|gn|good\s*night|pinne\s*kaanam|njan\s*pokunnu|alvida)\b", low):
@@ -1315,7 +1316,7 @@ class KnowledgeEngine:
     @classmethod
     async def search_wikipedia(cls, session: aiohttp.ClientSession, query: str, dialect: str = "english") -> Optional[dict]:
         """Search Wikipedia API and retrieve page extract and thumbnail with multilingual support."""
-        headers = {"User-Agent": "GKRBot/3.0 (Discord Bot; AI Knowledge Assistant; https://discord.gg)"}
+        headers = {"User-Agent": f"{BOT_NAME}Bot/3.0 (Discord Bot; AI Knowledge Assistant; https://discord.gg)"}
         wiki_domain = DialectEngine.get_wiki_endpoint(dialect)
 
         clean_q = cls.clean_search_query(query)
@@ -1633,7 +1634,7 @@ class AIInferenceClient:
             )
 
             return conversational_answer, {
-                "engine": "GKR AI Intelligence Engine",
+                "engine": f"{BOT_NAME} AI Intelligence Engine",
                 "title": title,
                 "thumbnail": wiki_data.get("thumbnail"),
                 "source": "Verified Knowledge Base",
@@ -1717,7 +1718,7 @@ class AIJokeView(discord.ui.View):
             description=f"**{setup}**\n\n> ||{punchline}|| *(click to reveal)*",
             color=C.GOLD
         )
-        embed.set_footer(text=f"GKR AI Comedy Central • {fmt_ts()}")
+        embed.set_footer(text=f"{BOT_NAME} AI Comedy Central • {fmt_ts()}")
         await interaction.response.edit_message(embed=embed, view=self)
 
 
@@ -1922,7 +1923,7 @@ class AICog(commands.Cog, name="AI System"):
                         description=f"**{setup}**\n\n> ||{punchline}|| *(click to reveal)*",
                         color=C.GOLD
                     )
-                    embed.set_footer(text=f"Requested by {message.author.display_name} • GKR AI")
+                    embed.set_footer(text=f"Requested by {message.author.display_name} • {BOT_NAME} AI")
                     await message.reply(embed=embed, view=view, mention_author=False)
 
                     await self.dispatch_log(
@@ -1986,7 +1987,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2000,7 +2001,7 @@ class AICog(commands.Cog, name="AI System"):
             description=f"**{setup}**\n\n> ||{punchline}|| *(click to reveal)*",
             color=C.GOLD
         )
-        embed.set_footer(text=f"GKR AI Comedy Central • {fmt_ts()}")
+        embed.set_footer(text=f"{BOT_NAME} AI Comedy Central • {fmt_ts()}")
         await interaction.response.send_message(embed=embed, view=view)
 
         await self.dispatch_log(
@@ -2015,16 +2016,16 @@ class AICog(commands.Cog, name="AI System"):
     # Slash Commands Group: /ai
     # -----------------------------------------------------------------------
 
-    ai_group = app_commands.Group(name="ai", description="🧠 GKR AI Intelligence, Self-Learning, Banners & Comedy")
+    ai_group = app_commands.Group(name="ai", description=f"🧠 {BOT_NAME} AI Intelligence, Self-Learning, Banners & Comedy")
 
-    @ai_group.command(name="enable", description="✅ Enable the GKR AI system for this server.")
+    @ai_group.command(name="enable", description=f"✅ Enable the {BOT_NAME} AI system for this server.")
     @app_commands.checks.has_permissions(administrator=True)
     async def ai_enable(self, interaction: discord.Interaction):
         """Enable AI for the server."""
         guild_id = interaction.guild_id or 0
         update_guild_config(guild_id, enabled=1)
         await interaction.response.send_message(
-            embed=embed_success("AI System Enabled", "The GKR AI module is now **Enabled** for this server! Members can now use AI commands and @Bot mentions."),
+            embed=embed_success("AI System Enabled", f"The {BOT_NAME} AI module is now **Enabled** for this server! Members can now use AI commands and @Bot mentions."),
             ephemeral=True
         )
         await self.dispatch_log(
@@ -2035,14 +2036,14 @@ class AICog(commands.Cog, name="AI System"):
             color=C.SUCCESS
         )
 
-    @ai_group.command(name="disable", description="❌ Disable the GKR AI system for this server.")
+    @ai_group.command(name="disable", description=f"❌ Disable the {BOT_NAME} AI system for this server.")
     @app_commands.checks.has_permissions(administrator=True)
     async def ai_disable(self, interaction: discord.Interaction):
         """Disable AI for the server."""
         guild_id = interaction.guild_id or 0
         update_guild_config(guild_id, enabled=0)
         await interaction.response.send_message(
-            embed=embed_info("AI System Disabled", "The GKR AI module is now **Disabled** for this server. AI mentions and commands are inactive."),
+            embed=embed_info("AI System Disabled", f"The {BOT_NAME} AI module is now **Disabled** for this server. AI mentions and commands are inactive."),
             ephemeral=True
         )
         await self.dispatch_log(
@@ -2083,7 +2084,7 @@ class AICog(commands.Cog, name="AI System"):
             description=descriptions.get(mode.value, "AI mood updated successfully."),
             color=C.GOLD if mode.value == "extreme" else C.SUCCESS
         )
-        embed.set_footer(text=f"Configured by {interaction.user.display_name} • GKR AI")
+        embed.set_footer(text=f"Configured by {interaction.user.display_name} • {BOT_NAME} AI")
         await interaction.response.send_message(embed=embed)
 
         await self.dispatch_log(
@@ -2098,7 +2099,7 @@ class AICog(commands.Cog, name="AI System"):
     # Slash Commands Group: /si (Direct Alias for AI Commands)
     # -----------------------------------------------------------------------
 
-    si_group = app_commands.Group(name="si", description="🧠 GKR AI System Controls & Mood (/si mood)")
+    si_group = app_commands.Group(name="si", description=f"🧠 {BOT_NAME} AI System Controls & Mood (/si mood)")
 
     @si_group.command(name="mood", description="🎭 Set the AI conversational mood (Polite, Normal, Harsh, Extreme, Strict).")
     @app_commands.describe(mode="The personality and behavior mood")
@@ -2129,7 +2130,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2148,7 +2149,7 @@ class AICog(commands.Cog, name="AI System"):
                 description=f"I have learned and permanently memorized this for this server:\n\n• **Topic:** `{topic}`\n• **Knowledge:** {fact}",
                 color=C.SUCCESS
             )
-            embed.set_footer(text=f"Taught by {interaction.user.display_name} • GKR Self-Learning Engine")
+            embed.set_footer(text=f"Taught by {interaction.user.display_name} • {BOT_NAME} Self-Learning Engine")
             await interaction.response.send_message(embed=embed)
 
             await self.dispatch_log(
@@ -2169,7 +2170,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2205,7 +2206,7 @@ class AICog(commands.Cog, name="AI System"):
             description="\n".join(desc_lines),
             color=C.BRAND
         )
-        embed.set_footer(text=f"GKR Bot Self-Learning Knowledge Base • {fmt_ts()}")
+        embed.set_footer(text=f"{BOT_NAME} Bot Self-Learning Knowledge Base • {fmt_ts()}")
         await interaction.response.send_message(embed=embed)
 
     @ai_group.command(name="forget", description="🧹 Remove a learned fact from the AI's memory.")
@@ -2254,7 +2255,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2274,7 +2275,7 @@ class AICog(commands.Cog, name="AI System"):
             description=f"> *\"{text[:200]}\"*\n\n**Voice:** `{lang_name}`",
             color=C.BRAND
         )
-        embed.set_footer(text=f"Generated for {interaction.user.display_name} • GKR AI Voice")
+        embed.set_footer(text=f"Generated for {interaction.user.display_name} • {BOT_NAME} AI Voice")
         await interaction.followup.send(embed=embed, file=file)
 
     @ai_group.command(name="thread", description="🧵 Create a dedicated AI discussion thread with conversation memory.")
@@ -2285,7 +2286,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2366,7 +2367,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2395,7 +2396,7 @@ class AICog(commands.Cog, name="AI System"):
             color=C.PURPLE
         )
         embed.set_image(url="attachment://banner.gif")
-        embed.set_footer(text=f"Created for {interaction.user.display_name} • GKR AI Banner Engine")
+        embed.set_footer(text=f"Created for {interaction.user.display_name} • {BOT_NAME} AI Banner Engine")
 
         await interaction.followup.send(embed=embed, file=file)
 
@@ -2415,7 +2416,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2460,7 +2461,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2520,7 +2521,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2570,7 +2571,7 @@ class AICog(commands.Cog, name="AI System"):
             color=C.PURPLE
         )
         embed.set_image(url=image_url)
-        embed.set_footer(text=f"Requested by {interaction.user.display_name} • Powered by GKR AI")
+        embed.set_footer(text=f"Requested by {interaction.user.display_name} • Powered by {BOT_NAME} AI")
 
         view = AIImageView(prompt, image_url, interaction.user.id)
         await interaction.followup.send(embed=embed, view=view)
@@ -2600,7 +2601,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2633,7 +2634,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2663,7 +2664,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2674,7 +2675,7 @@ class AICog(commands.Cog, name="AI System"):
             description=summary,
             color=C.BRAND
         )
-        embed.set_footer(text=f"Summarized {len(text)} characters • GKR AI")
+        embed.set_footer(text=f"Summarized {len(text)} characters • {BOT_NAME} AI")
         await interaction.response.send_message(embed=embed)
 
     @ai_group.command(name="sentiment", description="📊 Analyze emotional tone and sentiment of a message.")
@@ -2685,7 +2686,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2696,7 +2697,7 @@ class AICog(commands.Cog, name="AI System"):
             description=f"> *\"{text[:300]}\"*\n\n**Detected Tone:** `{label}` {emoji}",
             color=color
         )
-        embed.set_footer(text="GKR AI Sentiment Analysis")
+        embed.set_footer(text=f"{BOT_NAME} AI Sentiment Analysis")
         await interaction.response.send_message(embed=embed)
 
     @ai_group.command(name="prompt", description="💡 Enhance a simple concept into a professional AI image prompt.")
@@ -2707,7 +2708,7 @@ class AICog(commands.Cog, name="AI System"):
         guild_config = get_guild_config(guild_id)
         if not guild_config.get("enabled", 1):
             await interaction.response.send_message(
-                embed=embed_warning("GKR AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
+                embed=embed_warning(f"{BOT_NAME} AI is currently disabled on this server.\nAn administrator can enable it anytime using `/ai enable`.", title="AI System Disabled"),
                 ephemeral=True
             )
             return
@@ -2759,7 +2760,7 @@ class AICog(commands.Cog, name="AI System"):
             learned_count = cur.fetchone()[0]
 
         embed = discord.Embed(
-            title="🧠  GKR AI System Diagnostic & Status",
+            title=f"🧠  {BOT_NAME} AI System Diagnostic & Status",
             color=C.SUCCESS if (ollama_online and guild_config.get("enabled", 1)) else C.BRAND
         )
 
@@ -2804,7 +2805,7 @@ class AICog(commands.Cog, name="AI System"):
             inline=False
         )
 
-        embed.set_footer(text=f"GKR Bot AI Architecture • {fmt_ts()}")
+        embed.set_footer(text=f"{BOT_NAME} Bot AI Architecture • {fmt_ts()}")
         await interaction.followup.send(embed=embed)
 
     # -----------------------------------------------------------------------

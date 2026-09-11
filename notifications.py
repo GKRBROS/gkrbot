@@ -21,7 +21,7 @@ import sqlite3
 from typing import Optional
 
 import discord
-from gkr_ui import embed_success, embed_error, embed_info, C
+from gkr_ui import embed_success, embed_error, embed_info, C, BOT_NAME
 from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -111,7 +111,7 @@ def _boost_embed(member: discord.Member, message: str) -> discord.Embed:
     embed.set_thumbnail(url=member.display_avatar.url)
     embed.add_field(name="💜 Total Boosts", value=str(member.guild.premium_subscription_count or 0), inline=True)
     embed.add_field(name="🏆 Boost Tier", value=f"Level {member.guild.premium_tier}", inline=True)
-    embed.set_footer(text=f"GKR Boost Notifications • {member.guild.name}")
+    embed.set_footer(text=f"{BOT_NAME} Boost Notifications • {member.guild.name}")
     return embed
 
 
@@ -141,7 +141,7 @@ def _boostlevel_embed(guild: discord.Guild, old_tier: int, new_tier: int, messag
     }
     embed.add_field(name="✨ Newly Unlocked Perks", value=perks.get(new_tier, "Various perks!"), inline=False)
     embed.add_field(name="💜 Total Boosts", value=str(guild.premium_subscription_count or 0), inline=True)
-    embed.set_footer(text=f"GKR Boost Notifications • {guild.name}")
+    embed.set_footer(text=f"{BOT_NAME} Boost Notifications • {guild.name}")
     return embed
 
 

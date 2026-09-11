@@ -7,6 +7,7 @@ from aiohttp import web
 from discord.ext import commands
 import discord
 from gkr_ui import embed_success, embed_error, embed_info, C
+from bot_config import BOT_NAME
 
 import urllib.parse
 
@@ -221,8 +222,18 @@ async def handle_me(request: web.Request):
             "username": session_data["username"],
             "avatar": f"https://cdn.discordapp.com/avatars/{session_data['user_id']}/{session_data['avatar']}.png" if session_data["avatar"] else None,
         },
+        "bot_name": BOT_NAME,
         "bot_client_id": _resolve_client_id(bot),
         "guilds": mutual_admin_guilds
+    })
+
+async def handle_bot_info(request: web.Request):
+    """Public endpoint providing non-sensitive bot metadata including BOT_NAME."""
+    bot = request.app.get("bot")
+    return web.json_response({
+        "bot_name": BOT_NAME,
+        "bot_client_id": _resolve_client_id(bot),
+        "version": "3.0"
     })
 
 # --- Auto-Sync Engine: replicate dashboard edits to ALL other servers ---
@@ -1680,7 +1691,314 @@ async def handle_guild_sync(request: web.Request):
 
         synced_count += 1
 
-    return web.json_response({"success": True, "synced_servers": synced_count})
+
+# --- Dynamic Registration & Application Endpoints ---
+
+async def handle_registration_list_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = str(request.match_info["guild_id"])
+    import registration
+    db = registration.db
+    forms = db.get_guild_forms(guild_id)
+    items = []
+    for f in forms:
+        q_count = len(db.get_questions(f["id"]))
+        subs = db.get_submissions(f["id"])
+        pending_count = sum(1 for s in subs if s["status"] == "pending")
+        items.append({
+            "id": f["id"],
+            "guild_id": f["guild_id"],
+            "name": f["name"],
+            "description": f["description"],
+            "channel_id": f["channel_id"],
+            "panel_message_id": f["panel_message_id"],
+            "button_label": f["button_label"],
+            "button_emoji": f["button_emoji"],
+            "button_style": f["button_style"],
+            "enabled": bool(f["enabled"]),
+            "approval_mode": f["approval_mode"],
+            "review_channel_id": f["review_channel_id"],
+            "log_channel_id": f["log_channel_id"],
+            "auto_role_enabled": bool(f["auto_role_enabled"]),
+            "add_role_ids": json.loads(f["add_role_ids"] or "[]"),
+            "remove_role_enabled": bool(f["remove_role_enabled"]),
+            "remove_role_ids": json.loads(f["remove_role_ids"] or "[]"),
+            "change_nickname_enabled": bool(f["change_nickname_enabled"]),
+            "nickname_question_id": f["nickname_question_id"],
+            "nickname_format": f["nickname_format"],
+            "question_count": q_count,
+            "submission_count": len(subs),
+            "pending_count": pending_count,
+            "created_at": f["created_at"],
+            "updated_at": f["updated_at"]
+        })
+    return web.json_response({"forms": items})
+
+async def handle_registration_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = str(request.match_info["guild_id"])
+    data = await request.json()
+    name = (data.get("name") or "Server Registration").strip()
+    desc = (data.get("description") or "").strip()
+    import registration
+    db = registration.db
+    form_id = db.create_form(guild_id, name=name, description=desc, created_by=str(sess.get("user_id")))
+    return web.json_response({"success": True, "id": form_id})
+
+async def handle_registration_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    form_id = int(request.match_info["form_id"])
+    import registration
+    db = registration.db
+    form = db.get_form(form_id)
+    if not form:
+        return web.json_response({"error": "Form not found"}, status=404)
+    questions = db.get_questions(form_id)
+    q_items = []
+    for q in questions:
+        opts = []
+        try:
+            opts = json.loads(q["options"] or "[]")
+        except Exception:
+            opts = []
+        q_items.append({
+            "id": q["id"],
+            "registration_id": q["registration_id"],
+            "question": q["question"],
+            "field_type": q["field_type"],
+            "required": bool(q["required"]),
+            "placeholder": q["placeholder"],
+            "options": opts,
+            "min_length": q["min_length"],
+            "max_length": q["max_length"],
+            "min_value": q["min_value"],
+            "max_value": q["max_value"],
+            "position": q["position"]
+        })
+    return web.json_response({
+        "form": {
+            "id": form["id"],
+            "guild_id": form["guild_id"],
+            "name": form["name"],
+            "description": form["description"],
+            "channel_id": form["channel_id"],
+            "panel_message_id": form["panel_message_id"],
+            "button_label": form["button_label"],
+            "button_emoji": form["button_emoji"],
+            "button_style": form["button_style"],
+            "enabled": bool(form["enabled"]),
+            "approval_mode": form["approval_mode"],
+            "review_channel_id": form["review_channel_id"],
+            "log_channel_id": form["log_channel_id"],
+            "auto_role_enabled": bool(form["auto_role_enabled"]),
+            "add_role_ids": json.loads(form["add_role_ids"] or "[]"),
+            "remove_role_enabled": bool(form["remove_role_enabled"]),
+            "remove_role_ids": json.loads(form["remove_role_ids"] or "[]"),
+            "change_nickname_enabled": bool(form["change_nickname_enabled"]),
+            "nickname_question_id": form["nickname_question_id"],
+            "nickname_format": form["nickname_format"],
+            "single_submission": bool(form["single_submission"]),
+            "success_message": form["success_message"],
+            "questions": q_items
+        }
+    })
+
+async def handle_registration_put(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    form_id = int(request.match_info["form_id"])
+    data = await request.json()
+    import registration
+    db = registration.db
+    form = db.get_form(form_id)
+    if not form:
+        return web.json_response({"error": "Form not found"}, status=404)
+    upd = {}
+    for key in ("name", "description", "channel_id", "button_label", "button_emoji", "button_style",
+                "enabled", "approval_mode", "review_channel_id", "log_channel_id",
+                "auto_role_enabled", "remove_role_enabled", "change_nickname_enabled",
+                "nickname_question_id", "nickname_format", "single_submission", "success_message"):
+        if key in data:
+            upd[key] = data[key]
+    if "add_role_ids" in data:
+        upd["add_role_ids"] = json.dumps(data["add_role_ids"])
+    if "remove_role_ids" in data:
+        upd["remove_role_ids"] = json.dumps(data["remove_role_ids"])
+    db.update_form(form_id, **upd)
+    return web.json_response({"success": True})
+
+async def handle_registration_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    form_id = int(request.match_info["form_id"])
+    import registration
+    db = registration.db
+    success = db.delete_form(form_id)
+    return web.json_response({"success": success})
+
+async def handle_registration_publish(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    form_id = int(request.match_info["form_id"])
+    data = await request.json()
+    channel_id = data.get("channel_id")
+    import registration
+    db = registration.db
+    form = db.get_form(form_id)
+    if not form:
+        return web.json_response({"error": "Form not found"}, status=404)
+    target_chan_id = int(channel_id or form["channel_id"] or 0)
+    if not target_chan_id:
+        return web.json_response({"error": "No target channel selected"}, status=400)
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        return web.json_response({"error": "Guild not found"}, status=404)
+    channel = guild.get_channel(target_chan_id)
+    if not channel:
+        return web.json_response({"error": "Channel not found"}, status=404)
+
+    embed = discord.Embed(
+        title=f"📝 {form['name']}",
+        description=form["description"] or "Welcome to our registration system.\nClick the button below to begin your registration.",
+        color=0x5865F2
+    )
+    if form["thumbnail_url"]: embed.set_thumbnail(url=form["thumbnail_url"])
+    if form["image_url"]: embed.set_image(url=form["image_url"])
+    embed.set_footer(text=form["footer_text"] or f"{BOT_NAME} Dynamic Registration System")
+
+    view = registration.build_panel_view(form)
+    msg = await channel.send(embed=embed, view=view)
+    db.update_form(form_id, channel_id=str(channel.id), panel_message_id=str(msg.id))
+    bot.add_view(view)
+    return web.json_response({"success": True, "message_id": str(msg.id), "channel_id": str(channel.id)})
+
+async def handle_registration_questions_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    form_id = int(request.match_info["form_id"])
+    data = await request.json()
+    import registration
+    db = registration.db
+    q_id = db.add_question(
+        form_id,
+        question=data.get("question", "Question"),
+        field_type=data.get("field_type", "short_text"),
+        required=bool(data.get("required", True)),
+        placeholder=data.get("placeholder", ""),
+        options=data.get("options", []),
+        min_length=data.get("min_length"),
+        max_length=data.get("max_length"),
+        min_value=data.get("min_value"),
+        max_value=data.get("max_value")
+    )
+    return web.json_response({"success": True, "id": q_id})
+
+async def handle_registration_question_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    q_id = int(request.match_info["question_id"])
+    import registration
+    db = registration.db
+    success = db.delete_question(q_id)
+    return web.json_response({"success": success})
+
+async def handle_registration_submissions_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    form_id = int(request.match_info["form_id"])
+    status_filter = request.query.get("status")
+    import registration
+    db = registration.db
+    subs = db.get_submissions(form_id, status=status_filter)
+    res = []
+    for s in subs:
+        answers = db.get_answers(s["id"])
+        ans_list = [{"question_text": a["question_text"], "field_type": a["field_type"], "answer": a["answer"]} for a in answers]
+        res.append({
+            "id": s["id"],
+            "registration_id": s["registration_id"],
+            "guild_id": s["guild_id"],
+            "user_id": s["user_id"],
+            "status": s["status"],
+            "submitted_at": s["submitted_at"],
+            "reviewed_at": s["reviewed_at"],
+            "reviewed_by": s["reviewed_by"],
+            "rejection_reason": s["rejection_reason"],
+            "answers": ans_list
+        })
+    return web.json_response({"submissions": res})
+
+async def handle_registration_submission_review(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    sub_id = int(request.match_info["sub_id"])
+    data = await request.json()
+    action = data.get("action")
+    reason = data.get("reason", "")
+    import registration
+    db = registration.db
+    sub = db.get_submission(sub_id)
+    if not sub:
+        return web.json_response({"error": "Submission not found"}, status=404)
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(int(sub["guild_id"]))
+    member = guild.get_member(int(sub["user_id"])) if guild else None
+    config = db.get_form(sub["registration_id"])
+
+    if action == "approve":
+        db.update_submission_status(sub_id, "approved", reviewed_by=str(sess.get("user_id")))
+        answers_dict = {a["question_id"]: a["answer"] for a in db.get_answers(sub_id)}
+        if member and config:
+            await registration.execute_post_registration_actions(bot, guild, member, config, answers_dict)
+            try:
+                dm_embed = discord.Embed(
+                    title=f"🎉 Registration Approved — {guild.name}",
+                    description=f"Your registration for **{config['name']}** has been accepted by our staff team!",
+                    color=0x57F287
+                )
+                await member.send(embed=dm_embed)
+            except Exception:
+                pass
+        return web.json_response({"success": True, "status": "approved"})
+
+    elif action == "reject":
+        db.update_submission_status(sub_id, "rejected", reviewed_by=str(sess.get("user_id")), rejection_reason=reason)
+        if member and config:
+            try:
+                dm_embed = discord.Embed(
+                    title=f"❌ Registration Update — {guild.name}",
+                    description=f"Your registration for **{config['name']}** was not approved.\n\n**Reason:**\n> {reason or 'No reason provided.'}",
+                    color=0xED4245
+                )
+                await member.send(embed=dm_embed)
+            except Exception:
+                pass
+        return web.json_response({"success": True, "status": "rejected"})
+
+    return web.json_response({"error": "Invalid action"}, status=400)
+
+async def handle_registration_logs_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = str(request.match_info["guild_id"])
+    import registration
+    db = registration.db
+    logs = db.get_logs(guild_id, limit=50)
+    items = [{
+        "id": l["id"],
+        "event_type": l["event_type"],
+        "actor_id": l["actor_id"],
+        "target_user_id": l["target_user_id"],
+        "details": l["details"],
+        "created_at": l["created_at"]
+    } for l in logs]
+    return web.json_response({"logs": items})
+
 
 class DashboardAPI(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -1698,6 +2016,8 @@ class DashboardAPI(commands.Cog):
             web.get("/api/auth/callback", handle_callback_redirect),
             web.post("/api/auth/callback", handle_callback),
             web.get("/api/users/@me", handle_me),
+            web.get("/api/bot-info", handle_bot_info),
+            web.get("/api/config", handle_bot_info),
             # Channels & Roles (shared)
             web.get("/api/guilds/{guild_id}/channels", handle_bot_channels),
             web.get("/api/guilds/{guild_id}/roles", handle_bot_roles),
@@ -1750,6 +2070,18 @@ class DashboardAPI(commands.Cog):
             # Music
             web.get("/api/guilds/{guild_id}/music", handle_music_get),
             web.post("/api/guilds/{guild_id}/music/control", handle_music_control),
+            # Registration & Applications
+            web.get("/api/guilds/{guild_id}/registration", handle_registration_list_get),
+            web.post("/api/guilds/{guild_id}/registration", handle_registration_post),
+            web.get("/api/guilds/{guild_id}/registration/logs", handle_registration_logs_get),
+            web.get("/api/guilds/{guild_id}/registration/{form_id}", handle_registration_get),
+            web.put("/api/guilds/{guild_id}/registration/{form_id}", handle_registration_put),
+            web.delete("/api/guilds/{guild_id}/registration/{form_id}", handle_registration_delete),
+            web.post("/api/guilds/{guild_id}/registration/{form_id}/publish", handle_registration_publish),
+            web.post("/api/guilds/{guild_id}/registration/{form_id}/questions", handle_registration_questions_post),
+            web.delete("/api/guilds/{guild_id}/registration/{form_id}/questions/{question_id}", handle_registration_question_delete),
+            web.get("/api/guilds/{guild_id}/registration/{form_id}/submissions", handle_registration_submissions_get),
+            web.post("/api/guilds/{guild_id}/registration/submissions/{sub_id}/review", handle_registration_submission_review),
         ])
         
         # Static file serving if dashboard-ui/dist exists
@@ -1780,15 +2112,15 @@ class DashboardAPI(commands.Cog):
                 if request.path.startswith("/api"):
                     raise web.HTTPNotFound()
                 return web.Response(
-                    text="""<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>GKR Bot Dashboard</title>
-<style>body{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}
-.card{background:#1e293b;padding:32px;border-radius:16px;border:1px solid #334155;max-width:480px;text-align:center;}
-h1{margin-top:0;color:#60a5fa;font-size:22px;}p{color:#94a3b8;font-size:14px;line-height:1.6;}
-code{background:#090d16;padding:2px 6px;border-radius:4px;color:#38bdf8;}
+                    text=f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>{BOT_NAME} Bot Dashboard</title>
+<style>body{{font-family:system-ui,-apple-system,sans-serif;background:#0f172a;color:#f8fafc;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;}}
+.card{{background:#1e293b;padding:32px;border-radius:16px;border:1px solid #334155;max-width:480px;text-align:center;}}
+h1{{margin-top:0;color:#60a5fa;font-size:22px;}}p{{color:#94a3b8;font-size:14px;line-height:1.6;}}
+code{{background:#090d16;padding:2px 6px;border-radius:4px;color:#38bdf8;}}
 </style></head>
 <body><div class="card">
-<h1>🤖 GKR Bot Dashboard API Running</h1>
+<h1>🤖 {BOT_NAME} Bot Dashboard API Running</h1>
 <p>To serve the full website directly from this port, run:<br><code>npm run build</code> inside the <code>dashboard-ui</code> directory and restart the bot.</p>
 <p>For development with hot reload, run <code>npm run dev</code> inside <code>dashboard-ui</code> (port 5173).</p>
 </div></body></html>""",
@@ -1804,7 +2136,7 @@ code{background:#090d16;padding:2px 6px;border-radius:4px;color:#38bdf8;}
         port = int(os.getenv("SERVER_PORT") or os.getenv("DASHBOARD_PORT") or os.getenv("PORT", "8085"))
         site = web.TCPSite(self.runner, "0.0.0.0", port)
         self.bot.loop.create_task(site.start())
-        print(f"🌐 GKR Dashboard & API running on 0.0.0.0:{port}")
+        print(f"🌐 {BOT_NAME} Dashboard & API running on 0.0.0.0:{port}")
 
     async def cog_unload(self):
         if self.runner:

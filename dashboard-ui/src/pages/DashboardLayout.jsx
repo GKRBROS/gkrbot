@@ -2,11 +2,13 @@ import { Outlet, Link, useParams, useLocation, useNavigate } from 'react-router-
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { autoSyncEnabled, setAutoSyncEnabled } from '../sync';
+import { useBotName } from '../BotContext';
 
 function DashboardLayout({ user }) {
   const { guildId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const botName = useBotName();
   const [guild, setGuild] = useState(null);
   const [autoSync, setAutoSync] = useState(autoSyncEnabled());
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -35,6 +37,7 @@ function DashboardLayout({ user }) {
       label: 'Core Features',
       items: [
         { name: 'Welcome & Leave', path: `/dashboard/${guildId}/welcome`, icon: '👋' },
+        { name: 'Registration & Forms', path: `/dashboard/${guildId}/registration`, icon: '📝' },
         { name: 'Stream Alerts', path: `/dashboard/${guildId}/stream-alerts`, icon: '📺' },
         { name: 'Tickets System', path: `/dashboard/${guildId}/tickets`, icon: '🎫' },
       ]
@@ -96,7 +99,7 @@ function DashboardLayout({ user }) {
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             fontSize: '16px', boxShadow: '0 4px 14px -4px rgba(99,102,241,0.7)'
           }}>🤖</div>
-          <span className="sidebar-logo-text">GKR Dashboard</span>
+          <span className="sidebar-logo-text">{botName} Dashboard</span>
         </Link>
 
         {/* Selected Guild */}

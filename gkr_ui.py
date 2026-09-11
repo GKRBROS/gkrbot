@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime
 from typing import Optional, Any, Callable, Sequence, Union
 import discord
+from bot_config import BOT_NAME
 
 
 # ---------------------------------------------------------------------------
@@ -187,8 +188,10 @@ def paginate_leaderboard(
     *,
     per_page: int = 10,
     color: int = C.GOLD,
-    footer: str = "GKR Leaderboard",
+    footer: Optional[str] = None,
 ) -> list[discord.Embed]:
+    if footer is None:
+        footer = f"{BOT_NAME} Leaderboard"
     """
     Build a list of leaderboard embed pages from a sequence of rows.
 
@@ -399,7 +402,7 @@ def create_audit_embed(
     if thumbnail_url:
         embed.set_thumbnail(url=thumbnail_url)
 
-    footer_str = f"GKR Bot • {footer_text}" if footer_text else "GKR Server Logs"
+    footer_str = f"{BOT_NAME} Bot • {footer_text}" if footer_text else f"{BOT_NAME} Server Logs"
     embed.set_footer(text=footer_str)
 
     return embed
