@@ -596,37 +596,64 @@ class RateLimiter:
 # ---------------------------------------------------------------------------
 
 class TTSEngine:
-    """Zero-key cloud Text-to-Speech audio synthesizer."""
+    """Zero-key neural Text-to-Speech synthesizer (Microsoft Edge neural voices).
 
+    Replaces old translate_tts endpoint (robotic, 200-char cap, throttled)
+    with real neural voices. Same free/no-key model, far better quality.
+    Shared by /ai tts and the voice_announce.py cog.
+    """
+
+    # lang code -> (display name, neural voice id)
     SUPPORTED_LANGUAGES = {
-        "en": "English",
-        "es": "Spanish",
-        "fr": "French",
-        "de": "German",
-        "ja": "Japanese",
-        "hi": "Hindi",
-        "ml": "Malayalam",
-        "ko": "Korean",
-        "ar": "Arabic",
-        "ru": "Russian",
-        "it": "Italian",
-        "pt": "Portuguese",
+        "en": ("English (US)", "en-US-AriaNeural"),
+        "en-gb": ("English (UK)", "en-GB-SoniaNeural"),
+        "es": ("Spanish", "es-ES-ElviraNeural"),
+        "fr": ("French", "fr-FR-DeniseNeural"),
+        "de": ("German", "de-DE-KatjaNeural"),
+        "ja": ("Japanese", "ja-JP-NanamiNeural"),
+        "hi": ("Hindi", "hi-IN-SwaraNeural"),
+        "ml": ("Malayalam", "ml-IN-SobhanaNeural"),
+        "ta": ("Tamil", "ta-IN-PallaviNeural"),
+        "ko": ("Korean", "ko-KR-SunHiNeural"),
+        "ar": ("Arabic", "ar-SA-ZariyahNeural"),
+        "ru": ("Russian", "ru-RU-SvetlanaNeural"),
+        "it": ("Italian", "it-IT-ElsaNeural"),
+        "pt": ("Portuguese", "pt-BR-FranciscaNeural"),
+        "zh": ("Chinese (Mandarin)", "zh-CN-XiaoxiaoNeural"),
     }
 
     @classmethod
-    async def generate_tts(cls, session: aiohttp.ClientSession, text: str, lang: str = "en") -> Optional[io.BytesIO]:
-        """Generate MP3 audio in pure memory."""
-        lang_code = lang.lower() if lang.lower() in cls.SUPPORTED_LANGUAGES else "en"
-        clean_text = text.strip()[:250]
-        url = f"https://translate.google.com/translate_tts?ie=UTF-8&tl={lang_code}&client=tw-ob&q={urllib.parse.quote(clean_text)}"
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    async def generate_tts(
+        cls,
+        session: aiohttp.ClientSession,
+        text: str,
+        lang: str = "en",
+        rate: str = "+0%",
+        pitch: str = "+0Hz",
+    ) -> Optional[io.BytesIO]:
+        """Generate MP3 audio in memory using an Edge neural voice.
+
+        `session` kept for call-signature compatibility with existing
+        callers; edge-tts manages its own network connection.
+        """
+        key = lang.lower() if lang.lower() in cls.SUPPORTED_LANGUAGES else "en"
+        _, voice_id = cls.SUPPORTED_LANGUAGES[key]
+        clean_text = text.strip()[:1000]
+        if not clean_text:
+            return None
         try:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=8)) as resp:
-                if resp.status == 200:
-                    data = await resp.read()
-                    buf = io.BytesIO(data)
-                    buf.seek(0)
-                    return buf
+            import edge_tts  # optional dependency: pip install edge-tts
+            communicate = edge_tts.Communicate(clean_text, voice_id, rate=rate, pitch=pitch)
+            buf = io.BytesIO()
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    buf.write(chunk["data"])
+            if buf.tell() == 0:
+                return None
+            buf.seek(0)
+            return buf
+        except ImportError:
+            logger.warning("edge-tts not installed — run: pip install edge-tts")
         except Exception as e:
             logger.debug(f"TTS generation error: {e}")
         return None
@@ -2234,19 +2261,23 @@ class AICog(commands.Cog, name="AI System"):
 
     @ai_group.command(name="tts", description="🔊 Generate natural voice speech audio from text.")
     @app_commands.describe(
-        text="The message to speak (max 250 characters)",
+        text="The message to speak (max 1000 characters)",
         language="Spoken language voice"
     )
     @app_commands.choices(
         language=[
-            app_commands.Choice(name="English", value="en"),
+            app_commands.Choice(name="English (US)", value="en"),
+            app_commands.Choice(name="English (UK)", value="en-gb"),
             app_commands.Choice(name="Spanish", value="es"),
             app_commands.Choice(name="French", value="fr"),
             app_commands.Choice(name="German", value="de"),
             app_commands.Choice(name="Japanese", value="ja"),
             app_commands.Choice(name="Hindi", value="hi"),
             app_commands.Choice(name="Malayalam", value="ml"),
+            app_commands.Choice(name="Tamil", value="ta"),
             app_commands.Choice(name="Korean", value="ko"),
+            app_commands.Choice(name="Arabic", value="ar"),
+            app_commands.Choice(name="Chinese (Mandarin)", value="zh"),
         ]
     )
     async def ai_tts(self, interaction: discord.Interaction, text: str, language: Optional[app_commands.Choice[str]] = None):

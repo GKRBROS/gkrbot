@@ -430,6 +430,7 @@ async def setup_hook():
         "poll",              # New: Advanced Interactive Polling System
         "ai_system",         # New: Central Self-Hosted & Zero-API AI System
         "registration",      # New: Dynamic Registration & Application System
+        "voice_announce",    # New: Voice Channel Announcer (Edge Neural TTS)
     ]
     for ext in extensions:
         try:
@@ -472,6 +473,7 @@ async def help_cmd(interaction: discord.Interaction, category: str = None):
             "color": 0x9B59B6,
             "commands": [
                 ("`/ai chat`", "Chat with the built-in AI assistant"),
+                ("`/ai tts`", "Generate neural voice speech audio from text"),
                 ("`/ai imagine`", "🔞 Generate AI art (NSFW channels only)"),
                 ("`/ai summarize`", "Summarize a long piece of text"),
                 ("`/ai translate`", "Translate text into another language"),
@@ -540,6 +542,9 @@ async def help_cmd(interaction: discord.Interaction, category: str = None):
                 ("`/selfroles`", "Set up self-assignable roles"),
                 ("`/dev setup_logs`", "Set up developer crash/error log channels"),
                 ("`/announcement`", "Post a formatted announcement embed"),
+                ("`/announce channel`", "🔊 Speak a voice announcement in a voice channel"),
+                ("`/announce category`", "🔊 Speak announcement in all VCs under a category"),
+                ("`/announce stop`", "🔇 Stop voice announcement & disconnect"),
                 ("`/rules`", "Post your server rules as a styled embed"),
             ],
         },
