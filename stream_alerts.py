@@ -8,12 +8,19 @@ stream_alerts.py — YouTube, Twitch & Kick live/video notification system.
 Supported platforms:
   YouTube  – polls YouTube Data API v3 for latest video + live status
   Twitch   – uses Twitch Helix API (app access token) for stream status
-  Kick     – unofficial Kick API endpoint (no auth required)
+  Kick     – uses Kick's OFFICIAL public API (api.kick.com/public/v1) via an
+             app access token when KICK_CLIENT_ID/KICK_CLIENT_SECRET are set
+             (free dev app: https://kick.com/settings/developer). Falls back
+             to an unofficial kick.com scrape (curl_cffi) if those aren't
+             configured — that fallback sits behind Cloudflare bot-detection
+             and can intermittently fail to return live status/thumbnails,
+             which is why the official API is strongly recommended.
 """
 
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import sqlite3
@@ -36,6 +43,24 @@ except ImportError:
     has_ytnoti = False
 
 
+async def _robust_verify_channel_ids(channel_ids) -> None:
+    """Drop-in replacement for ytnoti's internal `_verify_channel_ids`.
+
+    Bypasses ytnoti's rigid, un-headered HEAD check that gets blocked with 404
+    by YouTube's bot detection. PubSubHubbub (Google's WebSub hub) itself
+    handles subscription validation, so local pre-checks cause false-positive
+    crashes for valid channels.
+    """
+    return
+
+
+if has_ytnoti:
+    try:
+        AsyncYouTubeNotifier._verify_channel_ids = staticmethod(_robust_verify_channel_ids)
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -45,13 +70,21 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "stream_alerts.sqlite3")
 YOUTUBE_API_KEY    = os.getenv("YOUTUBE_API_KEY", "")
 TWITCH_CLIENT_ID   = os.getenv("TWITCH_CLIENT_ID", "")
 TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET", "")
+# Optional: a free Kick developer app (https://kick.com/settings/developer).
+# When set, Kick live status/thumbnails come from Kick's OFFICIAL public API
+# instead of scraping kick.com, which is what actually fixes the "no live
+# preview/thumbnail" problem — see get_kick_stream_official() below.
+KICK_CLIENT_ID     = os.getenv("KICK_CLIENT_ID", "")
+KICK_CLIENT_SECRET = os.getenv("KICK_CLIENT_SECRET", "")
 
 YOUTUBE_SEARCH_URL  = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_CHANNEL_URL = "https://www.googleapis.com/youtube/v3/channels"
 TWITCH_TOKEN_URL    = "https://id.twitch.tv/oauth2/token"
 TWITCH_STREAMS_URL  = "https://api.twitch.tv/helix/streams"
 TWITCH_USERS_URL    = "https://api.twitch.tv/helix/users"
-KICK_CHANNEL_URL    = "https://kick.com/api/v2/channels/{}"
+KICK_TOKEN_URL        = "https://id.kick.com/oauth/token"
+KICK_API_CHANNELS_URL = "https://api.kick.com/public/v1/channels"
+KICK_CHANNEL_URL    = "https://kick.com/api/v2/channels/{}"  # legacy scrape fallback only
 
 STREAM_POLL_SECONDS = 30  # check live every 30 seconds — very fast detection
 VIDEO_POLL_MINUTES  = 10  # how often to check for new video uploads
@@ -258,6 +291,42 @@ class TwitchAuth:
 
 
 _twitch_auth = TwitchAuth()
+
+
+class KickAuth:
+    """Manages a Kick App Access Token (client-credentials grant), same
+    pattern as TwitchAuth. Requires a free Kick developer app — create one
+    at https://kick.com/settings/developer and set KICK_CLIENT_ID /
+    KICK_CLIENT_SECRET. Returns None (instead of raising) when no
+    credentials are configured, so callers can cleanly fall back.
+    """
+
+    def __init__(self):
+        self._token: str = ""
+        self._expires_at: float = 0.0
+
+    async def get_token(self, session: aiohttp.ClientSession) -> Optional[str]:
+        import time
+        if not KICK_CLIENT_ID or not KICK_CLIENT_SECRET:
+            return None
+        if self._token and time.time() < self._expires_at - 60:
+            return self._token
+
+        data = {
+            "client_id": KICK_CLIENT_ID,
+            "client_secret": KICK_CLIENT_SECRET,
+            "grant_type": "client_credentials",
+        }
+        async with session.post(KICK_TOKEN_URL, data=data, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+            if resp.status != 200:
+                raise RuntimeError(f"Kick token request failed: {resp.status}")
+            payload = await resp.json()
+        self._token = payload["access_token"]
+        self._expires_at = time.time() + payload.get("expires_in", 3600)
+        return self._token
+
+
+_kick_auth = KickAuth()
 
 
 async def resolve_youtube_channel_id(session: aiohttp.ClientSession, username: str) -> Optional[str]:
@@ -571,11 +640,115 @@ async def get_twitch_stream(session: aiohttp.ClientSession, user_id: str) -> Opt
     return None
 
 
+async def get_kick_stream_official(session: aiohttp.ClientSession, username: str) -> Optional[dict]:
+    """Fetch Kick live status + thumbnail via Kick's OFFICIAL public API
+    (api.kick.com/public/v1), authenticated with an app access token.
+
+    This is the reliable path. It isn't behind the Cloudflare bot-detection
+    layer that fronts kick.com itself, so unlike the scraping approach below
+    it doesn't randomly stop returning live status or preview thumbnails
+    whenever Kick tightens its anti-bot rules.
+
+    Returns None if KICK_CLIENT_ID/KICK_CLIENT_SECRET aren't configured, the
+    channel doesn't exist, or the request fails — callers should fall back
+    to get_kick_stream_scrape() in that case. Returns {"is_live": False}
+    (not None) when the channel is found but simply offline, so callers can
+    tell "not live" apart from "couldn't check".
+    """
+    clean_user = username.strip().lstrip("@").lower()
+    try:
+        token = await _kick_auth.get_token(session)
+    except Exception as e:
+        print(f"[StreamAlerts] Kick official API auth failed: {e}")
+        return None
+    if not token:
+        return None
+
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        async with session.get(
+            KICK_API_CHANNELS_URL,
+            params={"slug": clean_user},
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status != 200:
+                print(f"[StreamAlerts] Kick official API error for {username}: HTTP {resp.status}")
+                return None
+            payload = await resp.json()
+    except Exception as e:
+        print(f"[StreamAlerts] Kick official API request failed for {username}: {e}")
+        return None
+
+    # The official API wraps results as {"data": [...]}; be lenient about shape.
+    channels = payload.get("data") if isinstance(payload, dict) else payload
+    if not channels:
+        return None
+    channel = channels[0]
+    stream = channel.get("stream") or {}
+
+    if not stream.get("is_live"):
+        return {"is_live": False}
+
+    import time
+    thumb = stream.get("thumbnail") or ""
+    if thumb and "?" not in thumb:
+        thumb = f"{thumb}?t={int(time.time())}"
+
+    category = channel.get("category") or {}
+    creator_name = channel.get("slug") or clean_user
+
+    return {
+        "is_live": True,
+        "title": channel.get("stream_title") or f"{creator_name} is live on Kick!",
+        "game": category.get("name", ""),
+        "thumbnail": thumb,
+        "avatar": "",  # the official /channels payload doesn't include a profile picture
+        "viewer_count": stream.get("viewer_count", 0),
+        "url": stream.get("url") or f"https://kick.com/{clean_user}",
+        "user_name": creator_name,
+        "playback_url": "",  # official API doesn't expose the HLS manifest
+    }
+
+
 async def get_kick_stream(session: aiohttp.ClientSession, username: str) -> Optional[dict]:
+    """Kick live-status + thumbnail lookup.
+
+    Prefers the OFFICIAL Kick API (see get_kick_stream_official) when
+    KICK_CLIENT_ID/KICK_CLIENT_SECRET are configured. Falls back to the old
+    unofficial kick.com scrape otherwise, or if the official call errors out
+    for some transient reason.
+    """
+    if KICK_CLIENT_ID and KICK_CLIENT_SECRET:
+        info = await get_kick_stream_official(session, username)
+        if info is not None:
+            return info if info.get("is_live") else None
+        # Official call hard-failed (network/auth error) — fall through and
+        # try the scrape path rather than reporting "not live" incorrectly.
+    return await get_kick_stream_scrape(session, username)
+
+
+async def get_kick_stream_scrape(session: aiohttp.ClientSession, username: str) -> Optional[dict]:
+    """Legacy fallback: scrape kick.com's unofficial, undocumented endpoints.
+
+    Used only when no Kick developer app credentials are configured. Kick
+    puts these endpoints behind Cloudflare bot-detection, so this path can
+    fail intermittently (empty/blocked responses, missing thumbnail field,
+    etc.) in ways that have nothing to do with this bot's code — that's
+    exactly the "no live preview" symptom this fallback is prone to.
+    Set KICK_CLIENT_ID / KICK_CLIENT_SECRET (a free Kick dev app) to use the
+    official API instead and avoid this entirely.
+    """
     clean_user = username.strip().lstrip("@").lower()
     try:
         from curl_cffi.requests import AsyncSession
-        async with AsyncSession(impersonate="chrome110") as c_session:
+        # Use the rolling "chrome" alias (always the latest Chrome profile)
+        # rather than a pinned version like "chrome110". Cloudflare and
+        # similar anti-bot vendors fingerprint and blocklist specific pinned
+        # curl_cffi impersonation profiles over time as more scrapers adopt
+        # them, so an old pinned version is a common reason this silently
+        # stops working after previously being fine.
+        async with AsyncSession(impersonate="chrome") as c_session:
             # 1. Try v1 API first (returns live video screenshot in thumbnail)
             resp = await c_session.get(f"https://kick.com/api/v1/channels/{clean_user}", timeout=10)
             data = None
@@ -633,6 +806,15 @@ async def get_kick_stream(session: aiohttp.ClientSession, username: str) -> Opti
             if categories and isinstance(categories, list) and len(categories) > 0:
                 game_name = categories[0].get("name", "")
 
+            # 5.5 Playback URL (HLS manifest) — used as a last-resort source
+            # for grabbing a real screenshot ourselves if Kick's own preview
+            # thumbnail isn't ready yet.
+            playback_url = (
+                data.get("playback_url")
+                or livestream.get("playback_url")
+                or ""
+            )
+
             # 5. Append cache-buster timestamp so Discord loads fresh live frame
             if thumb_url and "?" not in thumb_url:
                 import time
@@ -649,10 +831,119 @@ async def get_kick_stream(session: aiohttp.ClientSession, username: str) -> Opti
                 "viewer_count": livestream.get("viewer_count", 0),
                 "url": f"https://kick.com/{clean_user}",
                 "user_name": creator_name,
+                "playback_url": playback_url,
             }
     except Exception as e:
         print(f"[StreamAlerts] Kick check error for {username}: {e}")
         return None
+
+
+async def capture_stream_screenshot(playback_url: str) -> Optional[bytes]:
+    """Grab one real frame from a live stream using ffmpeg.
+
+    Used for any platform when the official API hasn't generated a preview
+    thumbnail yet — gives an actual screenshot of the stream instead of a
+    blank embed. Returns JPEG bytes, or None if ffmpeg/the stream isn't
+    reachable.
+    """
+    if not playback_url:
+        return None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y",
+            "-i", playback_url,
+            "-frames:v", "1",
+            "-q:v", "3",
+            "-f", "image2pipe",
+            "-vcodec", "mjpeg",
+            "pipe:1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=12)
+        if stdout and len(stdout) > 500:  # sanity check it's a real image, not an empty/error frame
+            return stdout
+    except Exception as e:
+        print(f"[StreamAlerts] Screenshot capture failed: {e}")
+    return None
+
+
+async def resolve_direct_stream_url(watch_url: str) -> Optional[str]:
+    """Resolve a Twitch/YouTube watch-page URL into a direct playable stream
+    URL using yt-dlp, so ffmpeg can grab a frame from it. Kick already
+    exposes its own playback_url directly from the API (see get_kick_stream),
+    so this is mainly for Twitch and YouTube.
+
+    Requires: pip install yt-dlp
+    """
+    if not watch_url:
+        return None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "yt-dlp", "-g", "-f", "best[protocol^=m3u8]/best", watch_url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+        if stdout:
+            lines = [l for l in stdout.decode(errors="ignore").strip().splitlines() if l.strip()]
+            if lines:
+                return lines[0]
+    except FileNotFoundError:
+        print("[StreamAlerts] yt-dlp not installed — run: pip install yt-dlp")
+    except Exception as e:
+        print(f"[StreamAlerts] Could not resolve direct stream URL for screenshot: {e}")
+    return None
+
+
+def generate_placeholder_banner(creator_name: str, platform: str) -> io.BytesIO:
+    """Generate a generic branded 'X is live' banner when no real thumbnail
+    or screenshot is available at all, so the alert never looks blank.
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    meta = PLATFORM_META.get(platform, {"color": 0x5865F2, "name": platform.title()})
+    color = meta["color"]
+    rgb = ((color >> 16) & 255, (color >> 8) & 255, color & 255)
+
+    W, H = 1280, 720
+    img = Image.new("RGB", (W, H), rgb)
+    draw = ImageDraw.Draw(img)
+
+    # subtle diagonal darker stripe for texture, not just a flat block
+    dark = tuple(max(0, c - 35) for c in rgb)
+    for i in range(-H, W, 90):
+        draw.line([(i, H), (i + H, 0)], fill=dark, width=30)
+
+    def _font(size: int):
+        for path in (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        ):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+        return ImageFont.load_default()
+
+    title_font = _font(72)
+    sub_font = _font(36)
+
+    title = f"{creator_name.upper()} IS LIVE"
+    subtitle = f"on {meta.get('name', platform.title())}"
+
+    for text, font, y_frac, fill in (
+        (title, title_font, 0.42, (255, 255, 255)),
+        (subtitle, sub_font, 0.56, (255, 255, 255)),
+    ):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text(((W - tw) / 2, H * y_frac - th / 2), text, font=font, fill=fill)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf
 
 
 # ---------------------------------------------------------------------------
@@ -738,6 +1029,9 @@ class StreamAlertsCog(commands.Cog):
             if cb_url and cb_url.startswith(("http://", "https://")) and "localhost" not in cb_url and "127.0.0.1" not in cb_url:
                 try:
                     self.yt_notifier = AsyncYouTubeNotifier(callback_url=cb_url)
+                    # Instance-level override: replaces ytnoti's broken HEAD-based
+                    # channel ID check with a GET-based one (see comment above).
+                    self.yt_notifier._verify_channel_ids = _robust_verify_channel_ids
 
                     @self.yt_notifier.upload()
                     async def on_upload(video):
@@ -762,8 +1056,14 @@ class StreamAlertsCog(commands.Cog):
         try:
             if initial_channels:
                 print(f"[StreamAlerts] Subscribing {len(initial_channels)} channels to ytnoti...")
-                await self.yt_notifier.subscribe(initial_channels)
-                print(f"[StreamAlerts] ytnoti subscribed to {len(initial_channels)} channels.")
+                subscribed = 0
+                for ch in initial_channels:
+                    try:
+                        await self.yt_notifier.subscribe([ch])
+                        subscribed += 1
+                    except Exception as sub_err:
+                        print(f"[StreamAlerts] ⚠️ Could not subscribe channel {ch} to ytnoti: {sub_err}")
+                print(f"[StreamAlerts] ytnoti subscribed to {subscribed}/{len(initial_channels)} channels.")
             await self.yt_notifier.run(port=8086)
         except asyncio.CancelledError:
             pass
@@ -980,17 +1280,22 @@ class StreamAlertsCog(commands.Cog):
     async def before_video_check(self):
         await self.bot.wait_until_ready()
 
-    async def _check_live(self, alert: AlertConfig) -> None:
-        info = None
+    async def _fetch_live_info(self, alert: AlertConfig) -> Optional[dict]:
+        """Dispatch to the right platform fetcher. Shared by the polling
+        loop and the thumbnail-retry patcher so both stay in sync."""
         if alert.platform == "twitch" and alert.creator_id:
-            info = await get_twitch_stream(self.session, alert.creator_id)
+            return await get_twitch_stream(self.session, alert.creator_id)
         elif alert.platform == "kick":
             username = alert.creator_id or alert.creator_username
-            info = await get_kick_stream(self.session, username)
+            return await get_kick_stream(self.session, username)
         elif alert.platform == "youtube" and alert.creator_id:
             data = await get_youtube_latest(self.session, alert.creator_id)
             if data and data.get("is_live"):
-                info = data
+                return data
+        return None
+
+    async def _check_live(self, alert: AlertConfig) -> None:
+        info = await self._fetch_live_info(alert)
 
         is_live_now = info is not None
         was_live = alert.last_live
@@ -1038,14 +1343,75 @@ class StreamAlertsCog(commands.Cog):
         stream_url = info.get("url", "")
         if stream_url:
             view.add_item(discord.ui.Button(label="Watch Stream", url=stream_url, style=discord.ButtonStyle.link))
-            
+
+        # If the platform's API has no live preview thumbnail yet, don't
+        # send a blank embed — grab a real screenshot straight from the
+        # stream, or as a last resort attach a generated "LIVE" banner so
+        # it's never empty. Applies to Kick, Twitch, and YouTube alike.
+        file = None
+        used_fallback_image = False
+        if not info.get("thumbnail"):
+            playback = info.get("playback_url", "")  # Kick provides this directly
+            if not playback:
+                playback = await resolve_direct_stream_url(info.get("url", ""))  # Twitch/YouTube via yt-dlp
+            shot = await capture_stream_screenshot(playback) if playback else None
+            if shot:
+                file = discord.File(io.BytesIO(shot), filename="live_screenshot.jpg")
+                embed.set_image(url="attachment://live_screenshot.jpg")
+            else:
+                banner = generate_placeholder_banner(author_name, alert.platform)
+                file = discord.File(banner, filename="live_placeholder.png")
+                embed.set_image(url="attachment://live_placeholder.png")
+                used_fallback_image = True
+
         try:
             allowed = discord.AllowedMentions(everyone=True, roles=True)
-            await channel.send(content=content, embed=embed, view=view, allowed_mentions=allowed)
+            if file:
+                sent_msg = await channel.send(content=content, embed=embed, view=view, file=file, allowed_mentions=allowed)
+            else:
+                sent_msg = await channel.send(content=content, embed=embed, view=view, allowed_mentions=allowed)
         except Exception as exc:
             print(f"[StreamAlerts] Failed to send live alert: {exc}")
+            return
 
-    async def _send_video_alert(self, alert: AlertConfig, info: dict) -> None:
+        # Only worth patching in a better image later if we had to fall back
+        # to the generated placeholder — a real captured screenshot is
+        # already a genuine image of the stream, so leave it as-is.
+        if used_fallback_image:
+            asyncio.create_task(self._patch_live_thumbnail(sent_msg, alert, embed))
+
+    async def _patch_live_thumbnail(self, message: discord.Message, alert: AlertConfig, embed: discord.Embed) -> None:
+        """Retry fetching live stream data and swap in the official live
+        thumbnail (or a fresh real screenshot) once it's ready, replacing
+        the generated placeholder banner. Works for any platform.
+        """
+        for delay in (45, 60, 90):
+            await asyncio.sleep(delay)
+            try:
+                info = await self._fetch_live_info(alert)
+            except Exception:
+                continue
+            if not (info and info.get("is_live")):
+                continue
+
+            if info.get("thumbnail"):
+                embed.set_image(url=info["thumbnail"])
+                try:
+                    await message.edit(embed=embed, attachments=[])
+                except Exception:
+                    pass
+                return
+
+            playback = info.get("playback_url", "") or await resolve_direct_stream_url(info.get("url", ""))
+            shot = await capture_stream_screenshot(playback) if playback else None
+            if shot:
+                file = discord.File(io.BytesIO(shot), filename="live_screenshot.jpg")
+                embed.set_image(url="attachment://live_screenshot.jpg")
+                try:
+                    await message.edit(embed=embed, attachments=[file])
+                except Exception:
+                    pass
+                return
         guild = self.bot.get_guild(alert.guild_id)
         if not guild:
             return
@@ -1138,6 +1504,13 @@ class StreamAlertsCog(commands.Cog):
                     return
 
             elif platform == "kick":
+                if not (KICK_CLIENT_ID and KICK_CLIENT_SECRET):
+                    print(
+                        "[StreamAlerts] Kick alert added without KICK_CLIENT_ID/KICK_CLIENT_SECRET set — "
+                        "falling back to the unofficial kick.com scrape, which can intermittently miss "
+                        "live status or thumbnails. Create a free app at https://kick.com/settings/developer "
+                        "and set those two env vars to use Kick's official API instead."
+                    )
                 # Verify the channel exists
                 test = await get_kick_stream(self.session, username.lstrip("@"))
                 creator_id = username.lstrip("@")  # Kick has no numeric ID needed

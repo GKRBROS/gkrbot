@@ -72,6 +72,14 @@ async def synthesize(text: str, lang: str, rate: str = "+0%") -> Optional[io.Byt
     clean = text.strip()[:1000]
     if not clean:
         return None
+    # Manglish/Hinglish typed in Latin letters (e.g. "evideya", "sugam")
+    # gets converted to native script here, since the neural voice only
+    # reads the script it's built for.
+    try:
+        from manglish_translit import transliterate_colloquial
+        clean = transliterate_colloquial(clean, lang)
+    except ImportError:
+        pass
     try:
         import edge_tts
         communicate = edge_tts.Communicate(clean, voice_id, rate=rate)

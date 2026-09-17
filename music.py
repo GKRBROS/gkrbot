@@ -810,21 +810,24 @@ class MusicCog(commands.Cog):
         if member.bot:
             return
         guild = member.guild
-        vc: Optional[wavelink.Player] = guild.voice_client
-        if not vc:
+        vc = guild.voice_client
+        if not vc or not isinstance(vc, wavelink.Player):
             return
         gp = self.get_gp(guild.id)
         if gp.mode_247:
             return
         # Check if bot is alone
+        if not vc.channel:
+            return
         members_in_vc = [m for m in vc.channel.members if not m.bot]
         if not members_in_vc:
             await asyncio.sleep(60)
-            vc2: Optional[wavelink.Player] = guild.voice_client
-            if vc2 and not [m for m in vc2.channel.members if not m.bot]:
+            vc2 = guild.voice_client
+            if vc2 and isinstance(vc2, wavelink.Player) and vc2.channel and not [m for m in vc2.channel.members if not m.bot]:
                 if vc2.channel:
                     await set_voice_channel_status(self.bot, vc2.channel.id, "")
-                vc2.queue.clear()
+                if hasattr(vc2, "queue"):
+                    vc2.queue.clear()
                 await vc2.disconnect()
 
 

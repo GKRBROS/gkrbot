@@ -11,6 +11,7 @@ import StreamAlerts from './pages/features/StreamAlerts';
 import Tickets from './pages/features/Tickets';
 import Welcome from './pages/features/Welcome';
 import Music from './pages/features/Music';
+import Radio from './pages/features/Radio';
 import Security from './pages/features/Security';
 import Moderation from './pages/features/Moderation';
 import StickyMessages from './pages/features/StickyMessages';
@@ -70,6 +71,7 @@ function App() {
         <Route path="custom-commands" element={<CustomCommands />} />
         <Route path="temp-vc" element={<TempVC />} />
         <Route path="music" element={<Music />} />
+        <Route path="radio" element={<Radio />} />
         <Route path="economy" element={<Economy />} />
         <Route path="sync" element={<ServerSync />} />
       </Route>

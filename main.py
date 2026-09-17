@@ -431,6 +431,7 @@ async def setup_hook():
         "ai_system",         # New: Central Self-Hosted & Zero-API AI System
         "registration",      # New: Dynamic Registration & Application System
         "voice_announce",    # New: Voice Channel Announcer (Edge Neural TTS)
+        "radio",             # New: 24/7 Ultra-Low PC Usage Radio & Audio Streaming
     ]
     for ext in extensions:
         try:
@@ -463,6 +464,7 @@ bot.setup_hook = setup_hook
     app_commands.Choice(name="📊 Analytics & Stats", value="stats"),
     app_commands.Choice(name="💰 Economy", value="economy"),
     app_commands.Choice(name="📝 Registration & Forms", value="registration"),
+    app_commands.Choice(name="📻 24/7 Radio", value="radio"),
 ])
 async def help_cmd(interaction: discord.Interaction, category: str = None):
     """Show an overview of all bot features and commands."""
@@ -493,6 +495,20 @@ async def help_cmd(interaction: discord.Interaction, category: str = None):
                 ("`/nowplaying`", "Show the currently playing track"),
                 ("`/volume`", "Adjust the playback volume"),
                 ("`/stop`", "Stop music and clear the queue"),
+            ],
+        },
+        "radio": {
+            "title": "📻 24/7 Radio System",
+            "color": 0xE67E22,
+            "commands": [
+                ("`/radio play`", "Play a 24/7 curated radio station (low CPU usage)"),
+                ("`/radio custom`", "Stream any custom audio URL 24/7"),
+                ("`/radio stations`", "Browse all available 24/7 radio stations"),
+                ("`/radio 247`", "Toggle 24/7 persistence & auto-reconnect"),
+                ("`/radio volume`", "Adjust radio playback volume (1-150%)"),
+                ("`/radio nowplaying`", "Show current station and interactive player controls"),
+                ("`/radio pause` / `/radio resume`", "Pause or resume radio playback"),
+                ("`/radio stop`", "Stop radio and disconnect from voice"),
             ],
         },
         "tickets": {

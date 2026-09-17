@@ -386,6 +386,23 @@ class TicketCreateModal(discord.ui.Modal, title="Create Ticket"):
                     except ValueError:
                         pass
 
+        # BUG FIX: admin_roles were configured as the category's "staff with manage
+        # ticket access" but were never actually granted channel access — only
+        # ping_roles got a permission overwrite. Staff-only roles (kept separate
+        # from ping_roles on purpose, e.g. so they aren't @-mentioned) therefore
+        # couldn't even see tickets they were supposed to manage/close. Give them
+        # the same view/send access here (without pinging them).
+        if category.admin_roles:
+            for rid in category.admin_roles.split(','):
+                rid = rid.strip()
+                if rid:
+                    try:
+                        role = interaction.guild.get_role(int(rid))
+                        if role and role not in overwrites:
+                            overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+                    except ValueError:
+                        pass
+
         try:
             ticket_channel = await interaction.guild.create_text_channel(
                 name=channel_name,

@@ -2077,6 +2077,113 @@ async def handle_registration_logs_get(request: web.Request):
     return web.json_response({"logs": items})
 
 
+# ---------------------------------------------------------------------------
+# Radio API handlers
+# ---------------------------------------------------------------------------
+
+async def handle_radio_get(request: web.Request):
+    """GET /api/guilds/{guild_id}/radio — return current radio state for the guild."""
+    sess = _get_session(request)
+    if not sess:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = request.match_info["guild_id"]
+    bot: commands.Bot = request.app["bot"]
+
+    try:
+        import radio as radio_module
+        row = radio_module.get_guild_row(guild_id)
+    except Exception as e:
+        return web.json_response({"error": f"Radio module unavailable: {e}"}, status=503)
+
+    if not row:
+        return web.json_response({"active": False, "stations": _radio_stations_list()})
+
+    # Resolve voice channel name
+    vc_name = None
+    guild = bot.get_guild(int(guild_id))
+    if guild and row.get("voice_channel_id"):
+        vc = guild.get_channel(int(row["voice_channel_id"]))
+        vc_name = vc.name if vc else None
+
+    return web.json_response({
+        "active": bool(row.get("is_active")),
+        "paused": bool(row.get("is_paused")),
+        "mode_247": bool(row.get("mode_247")),
+        "station_key": row.get("station_key"),
+        "station_name": row.get("station_name"),
+        "stream_url": row.get("stream_url"),
+        "volume": row.get("volume", 100),
+        "voice_channel_id": row.get("voice_channel_id"),
+        "voice_channel_name": vc_name,
+        "stations": _radio_stations_list(),
+    })
+
+
+async def handle_radio_control(request: web.Request):
+    """POST /api/guilds/{guild_id}/radio/control — control radio playback."""
+    sess = _get_session(request)
+    if not sess:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = request.match_info["guild_id"]
+    data = await request.json()
+    action = data.get("action", "")
+    bot: commands.Bot = request.app["bot"]
+
+    try:
+        import radio as radio_module
+    except Exception as e:
+        return web.json_response({"error": f"Radio module unavailable: {e}"}, status=503)
+
+    guild = bot.get_guild(int(guild_id))
+    if not guild:
+        return web.json_response({"error": "Guild not found"}, status=404)
+
+    cog: "radio_module.RadioCog" = bot.cogs.get("RadioCog")  # type: ignore
+    if not cog:
+        return web.json_response({"error": "Radio cog not loaded"}, status=503)
+
+    try:
+        if action == "stop":
+            await cog.api_stop(guild)
+        elif action == "pause":
+            await cog.api_pause(guild)
+        elif action == "resume":
+            await cog.api_resume(guild)
+        elif action == "toggle_247":
+            await cog.api_toggle_247(guild)
+        elif action == "set_volume":
+            volume = int(data.get("volume", 100))
+            await cog.api_set_volume(guild, volume)
+        elif action == "set_station":
+            station_key = data.get("station_key", "")
+            await cog.api_set_station(guild, station_key)
+        else:
+            return web.json_response({"error": f"Unknown action: {action}"}, status=400)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+    return web.json_response({"success": True})
+
+
+def _radio_stations_list():
+    """Return the stations dict from radio.py as a list for the UI."""
+    try:
+        import radio as radio_module
+        return [
+            {
+                "key": k,
+                "name": v["name"],
+                "category": v["category"],
+                "desc": v["desc"],
+                "emoji": v["emoji"],
+                "url": v["url"],
+            }
+            for k, v in radio_module.STATIONS.items()
+        ]
+    except Exception:
+        return []
+
+
 class DashboardAPI(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -2147,6 +2254,10 @@ class DashboardAPI(commands.Cog):
             # Music
             web.get("/api/guilds/{guild_id}/music", handle_music_get),
             web.post("/api/guilds/{guild_id}/music/control", handle_music_control),
+            # Radio
+            web.get("/api/guilds/{guild_id}/radio", handle_radio_get),
+            web.post("/api/guilds/{guild_id}/radio/control", handle_radio_control),
+
             # Registration & Applications
             web.get("/api/guilds/{guild_id}/registration", handle_registration_list_get),
             web.post("/api/guilds/{guild_id}/registration", handle_registration_post),

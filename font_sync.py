@@ -260,11 +260,22 @@ class FontSyncDatabase:
         col_names = row.keys()
         custom_font_raw = row["custom_font"] if "custom_font" in col_names else "{}"
         decoration = row["decoration"] if "decoration" in col_names else "none"
+        # Normalize the legacy "category" mode name to its current equivalent
+        # right here, once, so every other function in this module (matches_scope,
+        # sync_guild, sync_category, the embeds, the UI) only ever has to deal
+        # with ONE canonical name instead of checking `in ("category_combined",
+        # "category")` everywhere. This was the main source of the confusing/
+        # inconsistent scope behavior — old guilds saved with mode "category"
+        # were silently handled slightly differently in some branches that had
+        # a stray/missing "category" alias in their tuple checks.
+        sync_mode = row["sync_mode"]
+        if sync_mode == "category":
+            sync_mode = "category_combined"
         return FontSyncConfig(
             guild_id=guild_id,
             enabled=bool(row["enabled"]),
             font_style=row["font_style"],
-            sync_mode=row["sync_mode"],
+            sync_mode=sync_mode,
             category_ids=json.loads(row["category_ids"]),
             channel_ids=json.loads(row["channel_ids"]),
             custom_font=json.loads(custom_font_raw or "{}"),
@@ -481,25 +492,34 @@ class FontSyncCog(commands.Cog):
 
     async def sync_category(self, category: discord.CategoryChannel, reason: str) -> int:
         config = await self.get_config(category.guild.id)
-        valid_modes = {"category", "category_only", "category_channels_only", "category_combined", "category_individual"}
+        valid_modes = {"category_only", "category_channels_only", "category_combined", "category_individual"}
         if not config.enabled or config.sync_mode not in valid_modes:
             return 0
 
-        # For legacy category or category_individual mode, restrict to selected category IDs
-        if config.sync_mode in ("category", "category_individual") and category.id not in config.category_ids:
+        # Restrict to selected category IDs for "individual" mode, and for
+        # "combined" mode whenever specific categories were picked (rather than
+        # "all categories"). BUG FIX: this previously only checked the legacy
+        # "category" mode name and never "category_combined", so a guild with
+        # combined-mode + a specific category selection (e.g. migrated data)
+        # would incorrectly get EVERY category synced instead of just the
+        # selected one(s).
+        restricted = config.sync_mode == "category_individual" or (
+            config.sync_mode == "category_combined" and config.category_ids
+        )
+        if restricted and category.id not in config.category_ids:
             return 0
 
         queued = 0
 
         # Rename the category header itself
-        if config.sync_mode in ("category", "category_only", "category_combined", "category_individual"):
+        if config.sync_mode in ("category_only", "category_combined", "category_individual"):
             cat_desired = self._get_desired_name(category, config)
             if category.name != cat_desired:
                 await self._enqueue_rename(category, cat_desired, reason)
                 queued += 1
 
         # Rename channels inside the category
-        if config.sync_mode in ("category", "category_channels_only", "category_combined", "category_individual"):
+        if config.sync_mode in ("category_channels_only", "category_combined", "category_individual"):
             for channel in category.channels:
                 if not self._is_renameable_channel(channel):
                     continue
@@ -528,8 +548,11 @@ class FontSyncCog(commands.Cog):
             if self.matches_scope(config, after):
                 await self._maybe_queue_channel(after, "Font Sync category update")
             # Also resync all child channels when in category mode
-            if config.sync_mode in ("category", "category_only", "category_channels_only", "category_combined", "category_individual"):
-                if config.sync_mode in ("category", "category_individual") and after.id not in config.category_ids:
+            if config.sync_mode in ("category_only", "category_channels_only", "category_combined", "category_individual"):
+                restricted = config.sync_mode == "category_individual" or (
+                    config.sync_mode == "category_combined" and config.category_ids
+                )
+                if restricted and after.id not in config.category_ids:
                     pass
                 else:
                     await self.sync_category(after, "Font Sync category update")
@@ -541,10 +564,13 @@ class FontSyncCog(commands.Cog):
         # Handle a channel moving between categories
         before_cat_id = getattr(before, "category_id", None)
         after_cat_id = getattr(after, "category_id", None)
-        if config.sync_mode in ("category", "category_channels_only", "category_combined", "category_individual") and before_cat_id != after_cat_id:
+        if config.sync_mode in ("category_channels_only", "category_combined", "category_individual") and before_cat_id != after_cat_id:
             parent_ids = {pid for pid in (before_cat_id, after_cat_id) if pid is not None}
+            restricted = config.sync_mode == "category_individual" or (
+                config.sync_mode == "category_combined" and config.category_ids
+            )
             for parent_id in parent_ids:
-                if config.sync_mode in ("category", "category_individual") and parent_id not in config.category_ids:
+                if restricted and parent_id not in config.category_ids:
                     continue
                 category = after.guild.get_channel(parent_id)
                 if isinstance(category, discord.CategoryChannel):

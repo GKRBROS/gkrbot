@@ -62,9 +62,11 @@ function DashboardLayout({ user }) {
       label: 'Entertainment',
       items: [
         { name: 'Music Player', path: `/dashboard/${guildId}/music`, icon: '🎵' },
+        { name: 'Radio Station', path: `/dashboard/${guildId}/radio`, icon: '📻' },
         { name: 'Economy & Shop', path: `/dashboard/${guildId}/economy`, icon: '🪙' },
       ]
     },
+
     {
       label: 'Multi-Server Tools',
       items: [

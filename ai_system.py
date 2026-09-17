@@ -41,7 +41,7 @@ from typing import Dict, List, Optional, Tuple
 import aiohttp
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 from PIL import Image, ImageDraw, ImageFont
 
 from gkr_ui import (
@@ -173,6 +173,25 @@ def init_db():
             )
             """
         )
+
+        # Background Self-Learning Research Queue — topics the AI should
+        # research on its own time, off the main chat-response path, so it
+        # never adds latency or CPU load to a live user request.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ai_research_queue (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id TEXT NOT NULL,
+                topic TEXT NOT NULL,
+                added_by TEXT NOT NULL DEFAULT '0',
+                source TEXT NOT NULL DEFAULT 'manual',
+                status TEXT NOT NULL DEFAULT 'pending',
+                added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                processed_at TIMESTAMP
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_research_status ON ai_research_queue (status, added_at)")
 
         # Table migrations
         cur = conn.cursor()
@@ -436,6 +455,95 @@ class LearningMemoryEngine:
 
 
 # ---------------------------------------------------------------------------
+# Background Self-Learning Research Queue
+# ---------------------------------------------------------------------------
+
+class ResearchQueue:
+    """Topics the AI should research on its own time, off the live chat path.
+
+    Kept deliberately simple (SQLite, one row per topic) since the point is
+    to be a lightweight, low-overhead queue — not a full task system. The
+    background loop in AICog processes one item at a time using the same
+    Wikipedia/knowledge lookup already used for live questions, never the
+    local Ollama model, so autonomous learning costs network I/O only and
+    essentially zero CPU.
+    """
+
+    MAX_PENDING_PER_GUILD = 15  # simple anti-spam cap on the queue
+
+    @staticmethod
+    def add_topic(guild_id: int | str, topic: str, added_by: int | str = 0, source: str = "manual") -> bool:
+        topic = topic.strip()[:150]
+        if not topic:
+            return False
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*) FROM ai_research_queue WHERE guild_id = ? AND status = 'pending'",
+                (str(guild_id),)
+            )
+            pending = cur.fetchone()[0]
+            if pending >= ResearchQueue.MAX_PENDING_PER_GUILD:
+                return False
+            # Skip near-duplicate pending topics
+            cur.execute(
+                "SELECT id FROM ai_research_queue WHERE guild_id = ? AND status = 'pending' AND LOWER(topic) = LOWER(?)",
+                (str(guild_id), topic)
+            )
+            if cur.fetchone():
+                return False
+            cur.execute(
+                "INSERT INTO ai_research_queue (guild_id, topic, added_by, source) VALUES (?, ?, ?, ?)",
+                (str(guild_id), topic, str(added_by), source)
+            )
+            conn.commit()
+            return True
+
+    @staticmethod
+    def get_next_pending() -> Optional[dict]:
+        """Oldest pending topic across all guilds (simple global FIFO queue)."""
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM ai_research_queue WHERE status = 'pending' ORDER BY added_at ASC LIMIT 1"
+            )
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    @staticmethod
+    def mark_done(item_id: int, success: bool) -> None:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "UPDATE ai_research_queue SET status = ?, processed_at = CURRENT_TIMESTAMP WHERE id = ?",
+                ("learned" if success else "failed", item_id)
+            )
+            conn.commit()
+
+    @staticmethod
+    def list_pending(guild_id: int | str, limit: int = 10) -> List[dict]:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT * FROM ai_research_queue WHERE guild_id = ? AND status = 'pending' ORDER BY added_at ASC LIMIT ?",
+                (str(guild_id), limit)
+            )
+            return [dict(r) for r in cur.fetchall()]
+
+    @staticmethod
+    def count_learned(guild_id: int | str) -> int:
+        with sqlite3.connect(DB_PATH) as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*) FROM ai_research_queue WHERE guild_id = ? AND status = 'learned'",
+                (str(guild_id),)
+            )
+            row = cur.fetchone()
+            return row[0] if row else 0
+
+
+# ---------------------------------------------------------------------------
 # Dialect & Language Mirroring Engine
 # ---------------------------------------------------------------------------
 
@@ -641,6 +749,15 @@ class TTSEngine:
         clean_text = text.strip()[:1000]
         if not clean_text:
             return None
+        # Manglish/Hinglish typed in Latin letters (e.g. "evideya", "sugam")
+        # gets converted to native script here, since the neural voice only
+        # reads the script it's built for — Latin input to ml-IN/hi-IN
+        # voices otherwise comes out as mispronounced English gibberish.
+        try:
+            from manglish_translit import transliterate_colloquial
+            clean_text = transliterate_colloquial(clean_text, key)
+        except ImportError:
+            pass
         try:
             import edge_tts  # optional dependency: pip install edge-tts
             communicate = edge_tts.Communicate(clean_text, voice_id, rate=rate, pitch=pitch)
@@ -1488,22 +1605,52 @@ class AIInferenceClient:
     Handles generation requests.
     Prioritizes local self-hosted Ollama endpoints with dynamic persona prompts,
     falling back seamlessly to the built-in Intelligent Knowledge & Reasoning Engine.
+
+    CPU/concurrency notes:
+    - Local LLM inference (Ollama) is the only genuinely CPU-heavy part of this
+      system. Everything else (Wikipedia research, memory lookups, dialect
+      detection) is lightweight I/O or string processing.
+    - OLLAMA_MAX_CONCURRENT caps how many generations can run at the same time
+      across the whole bot. Running many local LLM requests in parallel on a
+      CPU-bound Ollama install causes severe slowdown/thrashing rather than
+      real concurrency, so extra requests queue politely instead of piling on.
+    - Ollama's /api/tags status was previously re-checked on every single
+      message; it's now cached briefly (OLLAMA_STATUS_CACHE_TTL) since it
+      rarely changes second-to-second.
+    - For a lighter footprint, prefer small quantized models when pulling for
+      Ollama, e.g. `ollama pull llama3.2:3b`, `qwen2.5:3b-instruct`, or
+      `phi3:mini` instead of full-size 8B+ models.
     """
+
+    OLLAMA_MAX_CONCURRENT = 2          # max simultaneous local LLM generations bot-wide
+    OLLAMA_STATUS_CACHE_TTL = 20       # seconds to cache an Ollama /api/tags check
 
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
+        self._ollama_semaphore = asyncio.Semaphore(self.OLLAMA_MAX_CONCURRENT)
+        self._status_cache: dict[str, tuple[float, bool, List[str]]] = {}  # base_url -> (checked_at, online, models)
 
     async def check_ollama_status(self, base_url: str) -> Tuple[bool, List[str]]:
-        """Check if self-hosted Ollama instance is online and return available models."""
+        """Check if self-hosted Ollama instance is online and return available models.
+
+        Cached briefly per base_url so busy channels don't hit /api/tags on
+        every single message.
+        """
+        now = time.monotonic()
+        cached = self._status_cache.get(base_url)
+        if cached and (now - cached[0]) < self.OLLAMA_STATUS_CACHE_TTL:
+            return cached[1], cached[2]
         try:
             url = f"{base_url.rstrip('/')}/api/tags"
             async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     models = [m["name"] for m in data.get("models", [])]
+                    self._status_cache[base_url] = (now, True, models)
                     return True, models
         except Exception:
             pass
+        self._status_cache[base_url] = (now, False, [])
         return False, []
 
     async def generate_ollama(
@@ -1511,9 +1658,16 @@ class AIInferenceClient:
         base_url: str,
         model: str,
         messages: List[Dict[str, str]],
-        system_prompt: str = ""
+        system_prompt: str = "",
+        num_predict: int = 700,
     ) -> Optional[str]:
-        """Query local Ollama server."""
+        """Query local Ollama server.
+
+        Concurrency-limited via a shared semaphore so multiple simultaneous
+        chats don't all hammer the CPU at once — extras simply wait their
+        turn instead of causing contention that slows every request down.
+        num_predict caps generation length (lower = less CPU time/request).
+        """
         try:
             url = f"{base_url.rstrip('/')}/api/chat"
             payload_messages = []
@@ -1527,19 +1681,20 @@ class AIInferenceClient:
                 "stream": False,
                 "options": {
                     "temperature": 0.7,
-                    "num_predict": 1024,
+                    "num_predict": num_predict,
                 }
             }
-            async with self.session.post(
-                url,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=45)
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    content = data.get("message", {}).get("content", "").strip()
-                    if content:
-                        return content
+            async with self._ollama_semaphore:
+                async with self.session.post(
+                    url,
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=45)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        content = data.get("message", {}).get("content", "").strip()
+                        if content:
+                            return content
         except Exception as e:
             logger.debug(f"Ollama generation failed: {e}")
         return None
@@ -1639,7 +1794,8 @@ class AIInferenceClient:
 
         # 7. Knowledge & Research Engine Fallback
         wiki_data = None
-        if guild_config.get("research_enabled", 1) and KnowledgeEngine.is_factual_inquiry(clean_prompt):
+        was_factual_inquiry = guild_config.get("research_enabled", 1) and KnowledgeEngine.is_factual_inquiry(clean_prompt)
+        if was_factual_inquiry:
             wiki_data = await KnowledgeEngine.search_wikipedia(self.session, clean_prompt, dialect=detected_dialect)
 
         # If we got research facts, synthesize a clean, natural conversational answer in user's dialect
@@ -1667,6 +1823,14 @@ class AIInferenceClient:
                 "source": "Verified Knowledge Base",
                 "dialect": detected_dialect
             }
+
+        # It looked like a real question but nothing was found right now —
+        # queue it for the background self-learner to retry quietly later
+        # (network hiccup, phrasing Wikipedia didn't match, etc.) instead of
+        # just giving up on it. Costs nothing on this request; it's picked
+        # up by the low-frequency background loop, never blocks this reply.
+        if was_factual_inquiry and guild_config.get("self_learning", 1):
+            ResearchQueue.add_topic(guild_id, clean_prompt, added_by=user_id, source="auto_miss")
 
         # 8. Built-in Natural Conversational Response (Never robotic!)
         fallback_text = ConversationalHumanEngine.generate_general_chat(clean_prompt, detected_dialect, mood, user_name)
@@ -1773,11 +1937,55 @@ class AICog(commands.Cog, name="AI System"):
         """Initialize reusable HTTP session on cog load."""
         self.session = aiohttp.ClientSession()
         self.client = AIInferenceClient(self.session)
+        self.background_research_loop.start()
 
     async def cog_unload(self):
         """Cleanup HTTP session and cache on cog unload."""
+        self.background_research_loop.cancel()
         if self.session and not self.session.closed:
             await self.session.close()
+
+    # -----------------------------------------------------------------------
+    # Background Self-Learning Research Loop
+    # -----------------------------------------------------------------------
+    # Runs independently of any user request — this is the "does it all
+    # simultaneously" piece. It never touches the local Ollama model (that's
+    # the only CPU-heavy part of this system), so it costs one small
+    # Wikipedia lookup every 20 minutes and nothing else: no CPU spikes,
+    # no competition with live chat responses.
+
+    @tasks.loop(minutes=20)
+    async def background_research_loop(self):
+        try:
+            item = ResearchQueue.get_next_pending()
+            if not item:
+                return
+            guild_config = get_guild_config(item["guild_id"])
+            if not guild_config.get("self_learning", 1):
+                ResearchQueue.mark_done(item["id"], success=False)
+                return
+
+            wiki_data = await KnowledgeEngine.search_wikipedia(self.session, item["topic"], dialect="english")
+            if wiki_data and wiki_data.get("extract"):
+                cleaned = KnowledgeEngine.clean_wiki_lead(wiki_data["extract"])
+                LearningMemoryEngine.add_memory(
+                    item["guild_id"],
+                    item["added_by"],
+                    "Self-Learner",
+                    wiki_data.get("title", item["topic"]),
+                    cleaned[:300],
+                    learned_from="background_research",
+                )
+                ResearchQueue.mark_done(item["id"], success=True)
+                logger.info(f"[Self-Learning] Learned about '{item['topic']}' in the background.")
+            else:
+                ResearchQueue.mark_done(item["id"], success=False)
+        except Exception as e:
+            logger.debug(f"[Self-Learning] Background research loop error: {e}")
+
+    @background_research_loop.before_loop
+    async def before_background_research_loop(self):
+        await self.bot.wait_until_ready()
 
     # -----------------------------------------------------------------------
     # Logging Integration Helper (Dispatches to server_logs.py AI Category)
@@ -2256,6 +2464,49 @@ class AICog(commands.Cog, name="AI System"):
             )
         else:
             await interaction.response.send_message(f"❌ No learned memory found for `{topic}`.", ephemeral=True)
+
+    # ── Background Self-Learning / Research Queue ────────────────────────────
+
+    @ai_group.command(name="research", description="🔬 Queue a topic for the AI to research and learn about in the background.")
+    @app_commands.describe(topic="What should the AI go learn about?")
+    async def ai_research(self, interaction: discord.Interaction, topic: str):
+        """Queue a topic for the background self-learning loop."""
+        guild_id = interaction.guild_id or 0
+        added = ResearchQueue.add_topic(guild_id, topic, added_by=interaction.user.id, source="manual")
+        if added:
+            await interaction.response.send_message(
+                embed=embed_success(
+                    "📚 Queued for Research",
+                    f"I'll quietly research **{topic}** in the background (checked every ~20 min) "
+                    f"and remember what I find — no need to wait here, this doesn't slow anything down.",
+                ),
+                ephemeral=True,
+            )
+        else:
+            await interaction.response.send_message(
+                "❌ Couldn't queue that — it might already be pending, or this server's research queue is full for now.",
+                ephemeral=True,
+            )
+
+    @ai_group.command(name="research_status", description="📋 See what the AI is currently researching or has learned recently.")
+    async def ai_research_status(self, interaction: discord.Interaction):
+        guild_id = interaction.guild_id or 0
+        pending = ResearchQueue.list_pending(guild_id)
+        learned_count = ResearchQueue.count_learned(guild_id)
+
+        if pending:
+            queue_text = "\n".join(f"• {p['topic']}" for p in pending[:10])
+        else:
+            queue_text = "*Nothing queued right now.*"
+
+        embed = embed_info(
+            "🔬 Self-Learning Research Status",
+            f"**Pending topics:**\n{queue_text}\n\n"
+            f"**Total topics learned in background:** {learned_count}\n\n"
+            f"*The background researcher checks one topic roughly every 20 minutes — "
+            f"it runs independently of chat and never uses the local AI model, so it's essentially free.*"
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ── Media & Voice Features ─────────────────────────────────────────────
 
@@ -3015,3 +3266,5 @@ async def setup(bot: commands.Bot):
     """Setup hook to register AICog with the bot."""
     await bot.add_cog(AICog(bot))
     print("🧠 Central AI & Self-Hosted Intelligence system loaded!")
+
+    

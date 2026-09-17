@@ -329,6 +329,10 @@ class MemberSelect(discord.ui.Select):
             add_cohost(self.vc.id, member_id)
             await self.vc.set_permissions(member, connect=True, view_channel=True, manage_channels=True, move_members=True)
             await interaction.response.send_message(f"⭐  **{member.display_name}** has been granted **Co-Host Power**! They can now manage this voice channel.", ephemeral=True)
+            try:
+                await self.vc.send(f"⭐ {member.mention} you've been granted **Co-Host** access by {interaction.user.mention} — you can now manage this voice channel.")
+            except Exception:
+                pass
 
         elif self.action == "uncohost":
             remove_cohost(self.vc.id, member_id)
@@ -850,7 +854,7 @@ class TempVCCog(commands.Cog):
 
                 embed = _build_panel_embed(member, new_vc)
                 view = TempVCControlPanel()
-                await new_vc.send(embed=embed, view=view)
+                await new_vc.send(content=f"{member.mention} 👑 Here's your channel control menu:", embed=embed, view=view)
 
             except discord.Forbidden:
                 print(f"[TempVC] Missing permissions to create VC in {guild.name}")
@@ -1076,4 +1080,3 @@ async def setup(bot: commands.Bot):
     await bot.add_cog(TempVCCog(bot))
     bot.add_view(TempVCControlPanel())
     print("🎮 Temp VC System Loaded")
-
