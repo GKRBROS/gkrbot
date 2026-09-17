@@ -2,7 +2,7 @@ import os
 import io
 import aiohttp
 import sqlite3
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageFilter
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -37,6 +37,7 @@ class WelcomeConfig:
         "🏠 *Welcome home, Amigo!*"
     )
     background_path: Optional[str] = None
+    card_style: str = "legacy"      # "legacy" | "glass" | "ticket" | "cinematic"
     show_avatar: bool = True       # Embed thumbnail toggle
     show_guild_icon: bool = False   # Server icon drawing toggle
     draw_avatar: bool = True        # User avatar drawing toggle
@@ -94,6 +95,7 @@ class WelcomeDatabase:
                     channel_id      TEXT,
                     welcome_message TEXT NOT NULL DEFAULT 'Welcome {member} to {server}! 🎉',
                     background_path TEXT,
+                    card_style      TEXT NOT NULL DEFAULT 'legacy',
                     show_avatar     INTEGER NOT NULL DEFAULT 1,
                     show_guild_icon INTEGER NOT NULL DEFAULT 0,
                     draw_avatar     INTEGER NOT NULL DEFAULT 1,
@@ -127,6 +129,8 @@ class WelcomeDatabase:
                 conn.execute("ALTER TABLE welcome_configs ADD COLUMN leave_message TEXT NOT NULL DEFAULT '**{user}** left the server.'")
             if "leave_image_url" not in columns:
                 conn.execute("ALTER TABLE welcome_configs ADD COLUMN leave_image_url TEXT")
+            if "card_style" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN card_style TEXT NOT NULL DEFAULT 'legacy'")
             conn.commit()
 
         # One-time migration: replace any literal \n in stored messages
@@ -178,6 +182,7 @@ class WelcomeDatabase:
             channel_id=int(row["channel_id"]) if row["channel_id"] else None,
             welcome_message=decoded_msg,
             background_path=row["background_path"],
+            card_style=row["card_style"] if "card_style" in row.keys() and row["card_style"] else "legacy",
             show_avatar=show_avatar,
             show_guild_icon=show_guild_icon,
             draw_avatar=draw_avatar,
@@ -195,14 +200,15 @@ class WelcomeDatabase:
             conn.execute(
                 """
                 INSERT INTO welcome_configs (
-                    guild_id, enabled, channel_id, welcome_message, background_path, show_avatar, show_guild_icon, draw_avatar, draw_text, welcome_role_id, bot_role_id,
+                    guild_id, enabled, channel_id, welcome_message, background_path, card_style, show_avatar, show_guild_icon, draw_avatar, draw_text, welcome_role_id, bot_role_id,
                     leave_enabled, leave_channel_id, leave_message, leave_image_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(guild_id) DO UPDATE SET
                     enabled         = excluded.enabled,
                     channel_id      = excluded.channel_id,
                     welcome_message = excluded.welcome_message,
                     background_path = excluded.background_path,
+                    card_style      = excluded.card_style,
                     show_avatar     = excluded.show_avatar,
                     show_guild_icon = excluded.show_guild_icon,
                     draw_avatar     = excluded.draw_avatar,
@@ -220,6 +226,7 @@ class WelcomeDatabase:
                     str(config.channel_id) if config.channel_id else None,
                     config.welcome_message,
                     config.background_path,
+                    config.card_style,
                     1 if config.show_avatar else 0,
                     1 if config.show_guild_icon else 0,
                     1 if config.draw_avatar else 0,
@@ -555,6 +562,336 @@ def render_welcome_card(
     return output
 
 
+# ---------------------------------------------------------------------------
+# Alternate card styles (selectable via /welcomesetup)
+# ---------------------------------------------------------------------------
+
+def _avatar_or_initial(avatar_bytes: bytes, username: str, size: int, color: Tuple[int, int, int]) -> Image.Image:
+    """Return the real avatar image, or a colored circle with the user's
+    first initial if no avatar bytes were provided/loadable."""
+    if avatar_bytes:
+        try:
+            return Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+        except Exception:
+            pass
+    img = Image.new("RGBA", (size, size), (*color, 255))
+    d = ImageDraw.Draw(img)
+    initial = (username[:1] if username else "?").upper()
+    f = load_font(FONT_BOLD_PATH, int(size * 0.42))
+    bbox = d.textbbox((0, 0), initial, font=f)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    d.text(((size - tw) / 2 - bbox[0], (size - th) / 2 - bbox[1]), initial, font=f, fill=(255, 255, 255, 235))
+    return img
+
+
+def render_card_glass(
+    avatar_bytes: bytes,
+    guild_icon_bytes: bytes,
+    username: str,
+    member_count: int,
+    guild_name: str = "the server",
+    background_path: Optional[str] = None,
+    draw_avatar: bool = True,
+    show_guild_icon: bool = False,
+    draw_text: bool = True,
+) -> io.BytesIO:
+    """'Minimalist Glass' — centered avatar, soft glow, clean modern type."""
+    W, H = 1024, 500
+    ACCENT = (130, 110, 255)
+
+    bg = None
+    if background_path and os.path.exists(background_path):
+        try:
+            bg = Image.open(background_path).convert("RGBA")
+            bg = ImageOps.fit(bg, (W, H), Image.Resampling.LANCZOS)
+            bg = Image.alpha_composite(bg, Image.new("RGBA", bg.size, (10, 10, 14, 190)))
+        except Exception:
+            bg = None
+    if bg is None:
+        bg = Image.new("RGBA", (W, H), (22, 23, 28, 255))
+        d0 = ImageDraw.Draw(bg)
+        for y in range(H):
+            t = y / H
+            c = (22 + int(6 * t), 23 + int(6 * t), 30 + int(10 * t))
+            d0.line([(0, y), (W, y)], fill=(*c, 255))
+
+    glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ImageDraw.Draw(glow).ellipse((W // 2 - 260, -180, W // 2 + 260, 220), fill=(*ACCENT, 60))
+    glow = glow.filter(ImageFilter.GaussianBlur(60))
+    bg.alpha_composite(glow)
+
+    if draw_avatar:
+        av = _avatar_or_initial(avatar_bytes, username, 220, ACCENT)
+        circ = make_circle_avatar(av, size=200, border_color=(30, 30, 40), border_width=0)
+        shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(shadow).ellipse((W // 2 - 104, 74, W // 2 + 104, 282), fill=(0, 0, 0, 120))
+        shadow = shadow.filter(ImageFilter.GaussianBlur(18))
+        bg.alpha_composite(shadow)
+        ring = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(ring).ellipse((W // 2 - 108, 68, W // 2 + 108, 284), outline=(255, 255, 255, 60), width=2)
+        bg.alpha_composite(ring)
+        bg.paste(circ, (W // 2 - 100, 76), mask=circ)
+
+    if draw_text:
+        td = ImageDraw.Draw(bg)
+        f_name = load_font(FONT_BOLD_PATH, 46)
+        display_name = username
+        while True:
+            bbox = td.textbbox((0, 0), display_name, font=f_name)
+            if (bbox[2] - bbox[0]) <= W - 120 or len(display_name) < 4:
+                break
+            display_name = display_name[:-4] + "..."
+        bbox = td.textbbox((0, 0), display_name, font=f_name)
+        tw = bbox[2] - bbox[0]
+        td.text((W // 2 - tw // 2, 300), display_name, font=f_name, fill=(255, 255, 255, 255))
+
+        sub = f"just joined {guild_name}"
+        f_sub = load_font(FONT_REGULAR_PATH, 21)
+        bbox = td.textbbox((0, 0), sub, font=f_sub)
+        if (bbox[2] - bbox[0]) > W - 100:
+            sub = "just joined the server"
+            bbox = td.textbbox((0, 0), sub, font=f_sub)
+        tw = bbox[2] - bbox[0]
+        td.text((W // 2 - tw // 2, 358), sub, font=f_sub, fill=(165, 165, 180, 255))
+
+        td.line([(W // 2 - 60, 400), (W // 2 + 60, 400)], fill=(*ACCENT, 150), width=2)
+
+        chip = f"MEMBER #{member_count:,}"
+        f_chip = load_font(FONT_BOLD_PATH, 16)
+        bbox = td.textbbox((0, 0), chip, font=f_chip)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pad = 14
+        x1, y1 = W // 2 - tw // 2 - pad, 420
+        x2, y2 = W // 2 + tw // 2 + pad, 420 + th + 16
+        td.rounded_rectangle((x1, y1, x2, y2), radius=(y2 - y1) // 2, outline=(*ACCENT, 200), width=1)
+        td.text((W // 2 - tw // 2, y1 + 8), chip, font=f_chip, fill=(190, 175, 255, 255))
+
+    output = io.BytesIO()
+    bg.convert("RGB").save(output, format="JPEG", quality=93)
+    output.seek(0)
+    return output
+
+
+def render_card_ticket(
+    avatar_bytes: bytes,
+    guild_icon_bytes: bytes,
+    username: str,
+    member_count: int,
+    guild_name: str = "the server",
+    background_path: Optional[str] = None,
+    draw_avatar: bool = True,
+    show_guild_icon: bool = False,
+    draw_text: bool = True,
+) -> io.BytesIO:
+    """'Ticket Pass' — boarding-pass / event-ticket layout."""
+    import random
+    W, H = 1024, 500
+    GOLD = (255, 190, 60)
+
+    bg = Image.new("RGBA", (W, H), (18, 18, 22, 255))
+    if background_path and os.path.exists(background_path):
+        try:
+            custom = Image.open(background_path).convert("RGBA")
+            custom = ImageOps.fit(custom, (W, H), Image.Resampling.LANCZOS)
+            bg = Image.alpha_composite(custom, Image.new("RGBA", custom.size, (0, 0, 0, 150)))
+        except Exception:
+            pass
+
+    MARGIN = 40
+    tw_, th_ = W - MARGIN * 2, H - MARGIN * 2
+    ticket = Image.new("RGBA", (tw_, th_), (0, 0, 0, 0))
+    td = ImageDraw.Draw(ticket)
+    STUB_W = 260
+
+    td.rounded_rectangle((0, 0, tw_, th_), radius=22, fill=(28, 26, 34, 235))
+    td.rounded_rectangle((0, 0, STUB_W, th_), radius=22, fill=(38, 34, 52, 235))
+    td.rectangle((STUB_W - 22, 0, STUB_W, th_), fill=(38, 34, 52, 235))
+
+    dash_y = 0
+    while dash_y < th_:
+        td.line([(STUB_W, dash_y), (STUB_W, min(dash_y + 10, th_))], fill=(90, 85, 110, 255), width=2)
+        dash_y += 20
+
+    if draw_avatar:
+        av = _avatar_or_initial(avatar_bytes, username, 200, GOLD)
+        circ = make_circle_avatar(av, size=128, border_color=GOLD, border_width=3)
+        ring = Image.new("RGBA", ticket.size, (0, 0, 0, 0))
+        ImageDraw.Draw(ring).ellipse((STUB_W // 2 - 70, 70, STUB_W // 2 + 70, 210), outline=(*GOLD, 200), width=3)
+        ticket.alpha_composite(ring)
+        ticket.paste(circ, (STUB_W // 2 - circ.width // 2, 76), mask=circ)
+
+    if draw_text:
+        f_small = load_font(FONT_BOLD_PATH, 15)
+        lbl = "PASSENGER"
+        bbox = td.textbbox((0, 0), lbl, font=f_small)
+        tlw = bbox[2] - bbox[0]
+        td.text((STUB_W // 2 - tlw // 2, 218), lbl, font=f_small, fill=(*GOLD, 220))
+
+        name = username
+        f_name_s = load_font(FONT_BOLD_PATH, 28)
+        while True:
+            bbox = td.textbbox((0, 0), name, font=f_name_s)
+            if (bbox[2] - bbox[0]) <= STUB_W - 40 or len(name) < 4:
+                break
+            name = name[:-4] + "..."
+        bbox = td.textbbox((0, 0), name, font=f_name_s)
+        tlw = bbox[2] - bbox[0]
+        td.text((STUB_W // 2 - tlw // 2, 240), name, font=f_name_s, fill=(255, 255, 255, 255))
+
+        RX = STUB_W + 40
+        f_admit = load_font(FONT_BOLD_PATH, 20)
+        td.text((RX, 34), "ADMIT ONE  ✦  NEW ARRIVAL", font=f_admit, fill=(*GOLD, 255))
+
+        f_big = load_font(FONT_BOLD_PATH, 46)
+        welcome_line = f"Welcome, {username}"
+        while True:
+            bbox = td.textbbox((0, 0), welcome_line, font=f_big)
+            if (bbox[2] - bbox[0]) <= tw_ - RX - 30 or len(welcome_line) < 12:
+                break
+            welcome_line = welcome_line[:-4] + "..."
+        td.text((RX, 74), welcome_line, font=f_big, fill=(255, 255, 255, 255))
+
+        f_lbl = load_font(FONT_REGULAR_PATH, 15)
+        f_val = load_font(FONT_BOLD_PATH, 20)
+        srv_display = guild_name if len(guild_name) <= 20 else guild_name[:17] + "..."
+        cols = [
+            ("VENUE", srv_display),
+            ("MEMBER NO.", f"#{member_count:,}"),
+            ("BOARDED", "just now"),
+        ]
+        cx = RX
+        for lbl, val in cols:
+            td.text((cx, 172), lbl, font=f_lbl, fill=(150, 145, 165, 255))
+            td.text((cx, 194), val, font=f_val, fill=(255, 255, 255, 255))
+            cx += 230
+
+        bx = RX
+        by = th_ - 60
+        rng = random.Random(member_count or 1)
+        while bx < tw_ - 30:
+            bw = rng.choice([2, 2, 4, 6, 2])
+            bh = rng.randint(28, 42)
+            td.rectangle((bx, by, bx + bw, by + bh), fill=(120, 115, 135, 255))
+            bx += bw + rng.choice([3, 5, 7])
+
+    bg.paste(ticket, (MARGIN, MARGIN), mask=ticket)
+    output = io.BytesIO()
+    bg.convert("RGB").save(output, format="JPEG", quality=93)
+    output.seek(0)
+    return output
+
+
+def render_card_cinematic(
+    avatar_bytes: bytes,
+    guild_icon_bytes: bytes,
+    username: str,
+    member_count: int,
+    guild_name: str = "the server",
+    background_path: Optional[str] = None,
+    draw_avatar: bool = True,
+    show_guild_icon: bool = False,
+    draw_text: bool = True,
+) -> io.BytesIO:
+    """'Cinematic Poster' — bold moody poster-style typography."""
+    W, H = 1024, 500
+
+    bg = None
+    if background_path and os.path.exists(background_path):
+        try:
+            bg = Image.open(background_path).convert("RGBA")
+            bg = ImageOps.fit(bg, (W, H), Image.Resampling.LANCZOS)
+            bg = Image.alpha_composite(bg, Image.new("RGBA", bg.size, (0, 0, 0, 140)))
+        except Exception:
+            bg = None
+
+    if bg is None:
+        bg = Image.new("RGBA", (W, H), (10, 10, 14, 255))
+        d0 = ImageDraw.Draw(bg)
+        for y in range(H):
+            t = y / H
+            r = int(10 + 4 * t)
+            g = int(22 + 10 * (1 - t))
+            b = int(28 + 14 * (1 - t))
+            d0.line([(0, y), (W, y)], fill=(r, g, b, 255))
+        beam = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+        ImageDraw.Draw(beam).polygon(
+            [(W * 0.62, -50), (W * 0.95, -50), (W * 0.55, H + 50), (W * 0.22, H + 50)],
+            fill=(90, 220, 200, 35),
+        )
+        beam = beam.filter(ImageFilter.GaussianBlur(40))
+        bg.alpha_composite(beam)
+
+    if draw_avatar:
+        av = _avatar_or_initial(avatar_bytes, username, 520, (30, 140, 130))
+        av_big = ImageOps.fit(av, (520, 520), Image.Resampling.LANCZOS)
+        mask = Image.new("L", (520, 520), 0)
+        ImageDraw.Draw(mask).ellipse((0, 0, 520, 520), fill=255)
+        mask = mask.filter(ImageFilter.GaussianBlur(30))
+        bg.paste(av_big, (W - 460, -60), mask=mask)
+
+    scrim = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(scrim)
+    for y in range(H):
+        t = y / H
+        a = int(210 * max(0, (t - 0.35) / 0.65))
+        sd.line([(0, y), (W, y)], fill=(6, 8, 10, a))
+    bg.alpha_composite(scrim)
+
+    if draw_text:
+        td = ImageDraw.Draw(bg)
+        f_tag = load_font(FONT_BOLD_PATH, 18)
+        td.text((44, 40), f"MEMBER No. {member_count:,}", font=f_tag, fill=(120, 230, 210, 255))
+        td.line([(44, 68), (230, 68)], fill=(120, 230, 210, 180), width=2)
+
+        f_crest = load_font(FONT_BOLD_PATH, 16)
+        crest = guild_name.upper()
+        bbox = td.textbbox((0, 0), crest, font=f_crest)
+        if (bbox[2] - bbox[0]) > 400:
+            crest = crest[:24] + "..."
+            bbox = td.textbbox((0, 0), crest, font=f_crest)
+        tw = bbox[2] - bbox[0]
+        td.text((W - 44 - tw, 40), crest, font=f_crest, fill=(200, 200, 200, 200))
+
+        f_huge = load_font(FONT_BOLD_PATH, 74)
+        display_name = username.upper()
+        while True:
+            bbox = td.textbbox((0, 0), display_name, font=f_huge)
+            if (bbox[2] - bbox[0]) <= W - 84 or len(display_name) < 4:
+                break
+            display_name = display_name[:-4] + "..."
+        td.text((42, H - 160), display_name, font=f_huge, fill=(255, 255, 255, 255))
+
+        f_sub = load_font(FONT_REGULAR_PATH, 24)
+        td.text((46, H - 84), "has entered the server", font=f_sub, fill=(210, 235, 230, 230))
+
+    output = io.BytesIO()
+    bg.convert("RGB").save(output, format="JPEG", quality=93)
+    output.seek(0)
+    return output
+
+
+CARD_STYLES = {
+    "legacy":    {"label": "Legacy Neon",      "emoji": "🟣", "desc": "Split-panel purple/cyan glow (original)"},
+    "glass":     {"label": "Minimalist Glass", "emoji": "⚪", "desc": "Centered avatar, soft glow, clean type"},
+    "ticket":    {"label": "Ticket Pass",      "emoji": "🎫", "desc": "Boarding-pass / event-ticket layout"},
+    "cinematic": {"label": "Cinematic Poster", "emoji": "🎬", "desc": "Bold moody poster-style typography"},
+}
+
+CARD_RENDERERS = {
+    "legacy": render_welcome_card,
+    "glass": render_card_glass,
+    "ticket": render_card_ticket,
+    "cinematic": render_card_cinematic,
+}
+
+
+def render_card(style: str, **kwargs) -> io.BytesIO:
+    """Dispatch to the renderer for the given style, falling back to the
+    legacy design for unknown/blank style values (e.g. old configs)."""
+    fn = CARD_RENDERERS.get(style, render_welcome_card)
+    return fn(**kwargs)
+
+
 async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
     if not config.enabled or not config.channel_id:
         return
@@ -589,8 +926,9 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
             except Exception:
                 pass
 
-        # Render card
-        card_file_bytes = render_welcome_card(
+        # Render card (dispatches to whichever style is configured)
+        card_file_bytes = render_card(
+            config.card_style,
             avatar_bytes=avatar_bytes,
             guild_icon_bytes=guild_icon_bytes,
             username=member.display_name,
@@ -810,6 +1148,429 @@ class LeaveMessageModal(discord.ui.Modal, title="👋 Set Leave Message"):
         await interaction.response.send_message(embed=embed_success("Success", f"Leave message set:\n>>> {preview}"), ephemeral=True)
 
 
+def build_setup_embed(config: "WelcomeConfig", guild: discord.Guild) -> discord.Embed:
+    """The embed shown by /welcomesetup — reflects current config at a glance."""
+    embed = discord.Embed(
+        title="👋 Welcome System Setup",
+        description="Use the menus and buttons below — every change saves immediately.",
+        color=0x8250FF if config.enabled else 0x808080,
+    )
+    style_meta = CARD_STYLES.get(config.card_style, CARD_STYLES["legacy"])
+    embed.add_field(name="Status", value="🟢 Enabled" if config.enabled else "🔴 Disabled", inline=True)
+
+    channel = guild.get_channel(config.channel_id) if config.channel_id else None
+    embed.add_field(name="Channel", value=channel.mention if channel else "Not set", inline=True)
+    embed.add_field(name="Card Style", value=f"{style_meta['emoji']} {style_meta['label']}", inline=True)
+
+    role = guild.get_role(config.welcome_role_id) if config.welcome_role_id else None
+    embed.add_field(name="Auto-Role", value=role.mention if role else "Not set", inline=True)
+    embed.add_field(name="Avatar on Card", value="✅" if config.draw_avatar else "❌", inline=True)
+    embed.add_field(name="Text on Card", value="✅" if config.draw_text else "❌", inline=True)
+
+    msg_preview = config.welcome_message[:150] + ("…" if len(config.welcome_message) > 150 else "")
+    embed.add_field(name="Message Preview", value=f"```{msg_preview}```", inline=False)
+
+    embed.set_footer(text="Panel is private to you • expires in 5 minutes of inactivity")
+    return embed
+
+
+def build_more_options_embed(config: "WelcomeConfig", guild: discord.Guild) -> discord.Embed:
+    embed = discord.Embed(
+        title="⚙️ Welcome Setup — More Options",
+        description="Bot auto-role and leave-message settings.",
+        color=0x8250FF,
+    )
+    bot_role = guild.get_role(config.bot_role_id) if config.bot_role_id else None
+    embed.add_field(name="Bot Auto-Role", value=bot_role.mention if bot_role else "Not set", inline=True)
+
+    leave_channel = guild.get_channel(config.leave_channel_id) if config.leave_channel_id else None
+    embed.add_field(name="Leave Channel", value=leave_channel.mention if leave_channel else "Not set", inline=True)
+    embed.add_field(name="Leave Messages", value="🟢 Enabled" if config.leave_enabled else "🔴 Disabled", inline=True)
+
+    leave_preview = config.leave_message[:150] + ("…" if len(config.leave_message) > 150 else "")
+    embed.add_field(name="Leave Message Preview", value=f"```{leave_preview}```", inline=False)
+    embed.set_footer(text="Panel is private to you • expires in 5 minutes of inactivity")
+    return embed
+
+
+class SetupMessageModal(discord.ui.Modal, title="✏️ Set Welcome Message"):
+    message_text = discord.ui.TextInput(
+        label="Welcome Message",
+        style=discord.TextStyle.paragraph,
+        placeholder="Use {member}, {server}, {member_count}. Newlines & spacing preserved exactly.",
+        required=True,
+        max_length=4000,
+    )
+
+    def __init__(self, cog: "WelcomeCog", guild_id: int, panel_message: discord.Message):
+        super().__init__()
+        self.cog = cog
+        self.guild_id = guild_id
+        self.panel_message = panel_message
+        config = cog.db.get_config(guild_id)
+        self.message_text.default = config.welcome_message
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        config = self.cog.db.get_config(self.guild_id)
+        config.welcome_message = str(self.message_text)
+        self.cog.db.save_config(config)
+        try:
+            await self.panel_message.edit(embed=build_setup_embed(config, interaction.guild), view=WelcomeSetupView(self.cog, self.guild_id))
+        except Exception:
+            pass
+        await interaction.response.send_message(embed=embed_success("Success", "Welcome message updated."), ephemeral=True)
+
+
+class SetupLeaveMessageModal(discord.ui.Modal, title="✏️ Set Leave Message"):
+    message_text = discord.ui.TextInput(
+        label="Leave Message",
+        style=discord.TextStyle.paragraph,
+        placeholder="Use {user}, {member}, {server}, {member_count}.",
+        required=True,
+        max_length=4000,
+    )
+
+    def __init__(self, cog: "WelcomeCog", guild_id: int, panel_message: discord.Message):
+        super().__init__()
+        self.cog = cog
+        self.guild_id = guild_id
+        self.panel_message = panel_message
+        config = cog.db.get_config(guild_id)
+        self.message_text.default = config.leave_message
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        config = self.cog.db.get_config(self.guild_id)
+        config.leave_message = str(self.message_text)
+        self.cog.db.save_config(config)
+        try:
+            await self.panel_message.edit(embed=build_more_options_embed(config, interaction.guild), view=WelcomeMoreOptionsView(self.cog, self.guild_id))
+        except Exception:
+            pass
+        await interaction.response.send_message(embed=embed_success("Success", "Leave message updated."), ephemeral=True)
+
+
+class WelcomeMoreOptionsView(discord.ui.View):
+    """Second page of the setup panel: bot auto-role + leave-message settings."""
+
+    def __init__(self, cog: "WelcomeCog", guild_id: int):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.guild_id = guild_id
+
+        bot_role_select = discord.ui.RoleSelect(
+            placeholder="🤖 Auto-Role for New Bots (optional)", row=0, min_values=0, max_values=1,
+        )
+
+        async def on_bot_role_select(interaction: discord.Interaction):
+            config = self.cog.db.get_config(self.guild_id)
+            if bot_role_select.values:
+                config.bot_role_id = bot_role_select.values[0].id
+            else:
+                config.bot_role_id = None
+            self.cog.db.save_config(config)
+            await interaction.response.edit_message(
+                embed=build_more_options_embed(config, interaction.guild),
+                view=WelcomeMoreOptionsView(self.cog, self.guild_id),
+            )
+
+        bot_role_select.callback = on_bot_role_select
+        self.add_item(bot_role_select)
+
+        leave_channel_select = discord.ui.ChannelSelect(
+            placeholder="📤 Choose Leave Channel", row=1, min_values=1, max_values=1,
+            channel_types=[discord.ChannelType.text, discord.ChannelType.public_thread, discord.ChannelType.forum],
+        )
+
+        async def on_leave_channel_select(interaction: discord.Interaction):
+            config = self.cog.db.get_config(self.guild_id)
+            config.leave_channel_id = leave_channel_select.values[0].id
+            self.cog.db.save_config(config)
+            await interaction.response.edit_message(
+                embed=build_more_options_embed(config, interaction.guild),
+                view=WelcomeMoreOptionsView(self.cog, self.guild_id),
+            )
+
+        leave_channel_select.callback = on_leave_channel_select
+        self.add_item(leave_channel_select)
+
+        config = cog.db.get_config(guild_id)
+
+        toggle_leave_btn = discord.ui.Button(
+            label=f"Leave: {'On' if config.leave_enabled else 'Off'}", emoji="🔁",
+            style=discord.ButtonStyle.success if config.leave_enabled else discord.ButtonStyle.secondary, row=2,
+        )
+
+        async def on_toggle_leave(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            c.leave_enabled = not c.leave_enabled
+            self.cog.db.save_config(c)
+            await interaction.response.edit_message(
+                embed=build_more_options_embed(c, interaction.guild),
+                view=WelcomeMoreOptionsView(self.cog, self.guild_id),
+            )
+
+        toggle_leave_btn.callback = on_toggle_leave
+        self.add_item(toggle_leave_btn)
+
+        edit_leave_msg_btn = discord.ui.Button(label="Edit Leave Message", emoji="✏️", style=discord.ButtonStyle.secondary, row=2)
+
+        async def on_edit_leave_message(interaction: discord.Interaction):
+            await interaction.response.send_modal(SetupLeaveMessageModal(self.cog, self.guild_id, interaction.message))
+
+        edit_leave_msg_btn.callback = on_edit_leave_message
+        self.add_item(edit_leave_msg_btn)
+
+        test_leave_btn = discord.ui.Button(label="Test Leave", emoji="🧪", style=discord.ButtonStyle.primary, row=2)
+
+        async def on_test_leave(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            if not c.leave_channel_id:
+                await interaction.response.send_message(embed=embed_error("Set a leave channel first."), ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            old_enabled = c.leave_enabled
+            c.leave_enabled = True
+            try:
+                await send_leave(interaction.user, c)
+                await interaction.followup.send(embed=embed_success("Success", "Test leave message sent."), ephemeral=True)
+            except Exception as exc:
+                await interaction.followup.send(embed=embed_error(f"Failed: {exc}"), ephemeral=True)
+            finally:
+                c.leave_enabled = old_enabled
+
+        test_leave_btn.callback = on_test_leave
+        self.add_item(test_leave_btn)
+
+        back_btn = discord.ui.Button(label="Back", emoji="⬅️", style=discord.ButtonStyle.secondary, row=3)
+
+        async def on_back(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            await interaction.response.edit_message(
+                embed=build_setup_embed(c, interaction.guild),
+                view=WelcomeSetupView(self.cog, self.guild_id),
+            )
+
+        back_btn.callback = on_back
+        self.add_item(back_btn)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not interaction.user.guild_permissions.manage_guild:
+            await interaction.response.send_message(embed=embed_error("You need the **Manage Server** permission to use this."), ephemeral=True)
+            return False
+        return True
+
+
+class WelcomeSetupView(discord.ui.View):
+    """The main /welcomesetup panel: card style, channel, auto-role, and
+    quick-access buttons for everything else."""
+
+    def __init__(self, cog: "WelcomeCog", guild_id: int):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.guild_id = guild_id
+        config = cog.db.get_config(guild_id)
+
+        # ── Row 0: card style ────────────────────────────────────────────
+        style_select = discord.ui.Select(
+            placeholder="🎨 Choose Card Style",
+            min_values=1, max_values=1, row=0,
+            options=[
+                discord.SelectOption(
+                    label=meta["label"], value=key, emoji=meta["emoji"],
+                    description=meta["desc"], default=(key == config.card_style),
+                )
+                for key, meta in CARD_STYLES.items()
+            ],
+        )
+
+        async def on_style_select(interaction: discord.Interaction):
+            style = style_select.values[0]
+            c = self.cog.db.get_config(self.guild_id)
+            c.card_style = style
+            self.cog.db.save_config(c)
+
+            await interaction.response.edit_message(
+                embed=build_setup_embed(c, interaction.guild),
+                view=WelcomeSetupView(self.cog, self.guild_id),
+            )
+
+            avatar_bytes = b""
+            try:
+                avatar_bytes = await interaction.user.display_avatar.read()
+            except Exception:
+                pass
+            preview = render_card(
+                style,
+                avatar_bytes=avatar_bytes,
+                guild_icon_bytes=b"",
+                username=interaction.user.display_name,
+                member_count=interaction.guild.member_count,
+                guild_name=interaction.guild.name,
+                background_path=c.background_path,
+                draw_avatar=c.draw_avatar,
+                show_guild_icon=c.show_guild_icon,
+                draw_text=c.draw_text,
+            )
+            file = discord.File(preview, filename="preview.jpg")
+            await interaction.followup.send(
+                content=f"✅ Card style set to **{CARD_STYLES[style]['label']}** — preview:",
+                file=file,
+                ephemeral=True,
+            )
+
+        style_select.callback = on_style_select
+        self.add_item(style_select)
+
+        # ── Row 1: welcome channel ───────────────────────────────────────
+        channel_select = discord.ui.ChannelSelect(
+            placeholder="📢 Choose Welcome Channel", row=1, min_values=1, max_values=1,
+            channel_types=[discord.ChannelType.text, discord.ChannelType.public_thread, discord.ChannelType.forum],
+        )
+
+        async def on_channel_select(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            c.channel_id = channel_select.values[0].id
+            self.cog.db.save_config(c)
+            await interaction.response.edit_message(
+                embed=build_setup_embed(c, interaction.guild),
+                view=WelcomeSetupView(self.cog, self.guild_id),
+            )
+
+        channel_select.callback = on_channel_select
+        self.add_item(channel_select)
+
+        # ── Row 2: auto-role ─────────────────────────────────────────────
+        role_select = discord.ui.RoleSelect(
+            placeholder="🎫 Auto-Role for New Members (optional)", row=2, min_values=0, max_values=1,
+        )
+
+        async def on_role_select(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            c.welcome_role_id = role_select.values[0].id if role_select.values else None
+            self.cog.db.save_config(c)
+            await interaction.response.edit_message(
+                embed=build_setup_embed(c, interaction.guild),
+                view=WelcomeSetupView(self.cog, self.guild_id),
+            )
+
+        role_select.callback = on_role_select
+        self.add_item(role_select)
+
+        # ── Row 3: action buttons ────────────────────────────────────────
+        edit_msg_btn = discord.ui.Button(label="Edit Message", emoji="✏️", style=discord.ButtonStyle.secondary, row=3)
+
+        async def on_edit_message(interaction: discord.Interaction):
+            await interaction.response.send_modal(SetupMessageModal(self.cog, self.guild_id, interaction.message))
+
+        edit_msg_btn.callback = on_edit_message
+        self.add_item(edit_msg_btn)
+
+        set_bg_btn = discord.ui.Button(label="Set Background", emoji="🖼️", style=discord.ButtonStyle.secondary, row=3)
+
+        async def on_set_background_info(interaction: discord.Interaction):
+            await interaction.response.send_message(
+                embed=embed_info(
+                    "Set a Background",
+                    "Buttons can't accept file uploads, so use one of these instead:\n"
+                    "• `/welcome setbg` — attach an image or GIF directly\n"
+                    "• `/welcome setbgurl` — paste a direct image/GIF URL\n\n"
+                    "Once set, it'll be used behind whichever card style you pick here."
+                ),
+                ephemeral=True,
+            )
+
+        set_bg_btn.callback = on_set_background_info
+        self.add_item(set_bg_btn)
+
+        test_btn = discord.ui.Button(label="Send Test", emoji="🧪", style=discord.ButtonStyle.primary, row=3)
+
+        async def on_send_test(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            if not c.channel_id:
+                await interaction.response.send_message(embed=embed_error("Set a welcome channel first."), ephemeral=True)
+                return
+            await interaction.response.defer(ephemeral=True, thinking=True)
+            try:
+                await send_welcome(interaction.user, c)
+                await interaction.followup.send(embed=embed_success("Success", "Test welcome message sent."), ephemeral=True)
+            except Exception as exc:
+                await interaction.followup.send(embed=embed_error(f"Failed: {exc}"), ephemeral=True)
+
+        test_btn.callback = on_send_test
+        self.add_item(test_btn)
+
+        more_btn = discord.ui.Button(label="More Options", emoji="⚙️", style=discord.ButtonStyle.secondary, row=3)
+
+        async def on_more_options(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            await interaction.response.edit_message(
+                embed=build_more_options_embed(c, interaction.guild),
+                view=WelcomeMoreOptionsView(self.cog, self.guild_id),
+            )
+
+        more_btn.callback = on_more_options
+        self.add_item(more_btn)
+
+        # ── Row 4: toggle buttons ────────────────────────────────────────
+        avatar_btn = discord.ui.Button(
+            label=f"Avatar: {'On' if config.draw_avatar else 'Off'}", emoji="👤",
+            style=discord.ButtonStyle.success if config.draw_avatar else discord.ButtonStyle.secondary, row=4,
+        )
+
+        async def on_toggle_avatar(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            c.draw_avatar = not c.draw_avatar
+            self.cog.db.save_config(c)
+            await interaction.response.edit_message(
+                embed=build_setup_embed(c, interaction.guild),
+                view=WelcomeSetupView(self.cog, self.guild_id),
+            )
+
+        avatar_btn.callback = on_toggle_avatar
+        self.add_item(avatar_btn)
+
+        text_btn = discord.ui.Button(
+            label=f"Text: {'On' if config.draw_text else 'Off'}", emoji="🔠",
+            style=discord.ButtonStyle.success if config.draw_text else discord.ButtonStyle.secondary, row=4,
+        )
+
+        async def on_toggle_text(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            c.draw_text = not c.draw_text
+            self.cog.db.save_config(c)
+            await interaction.response.edit_message(
+                embed=build_setup_embed(c, interaction.guild),
+                view=WelcomeSetupView(self.cog, self.guild_id),
+            )
+
+        text_btn.callback = on_toggle_text
+        self.add_item(text_btn)
+
+        enabled_btn = discord.ui.Button(
+            label=f"System: {'Enabled' if config.enabled else 'Disabled'}",
+            emoji="🟢" if config.enabled else "🔴",
+            style=discord.ButtonStyle.success if config.enabled else discord.ButtonStyle.danger, row=4,
+        )
+
+        async def on_toggle_enabled(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            c.enabled = not c.enabled
+            self.cog.db.save_config(c)
+            await interaction.response.edit_message(
+                embed=build_setup_embed(c, interaction.guild),
+                view=WelcomeSetupView(self.cog, self.guild_id),
+            )
+
+        enabled_btn.callback = on_toggle_enabled
+        self.add_item(enabled_btn)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not interaction.user.guild_permissions.manage_guild:
+            await interaction.response.send_message(embed=embed_error("You need the **Manage Server** permission to use this."), ephemeral=True)
+            return False
+        return True
+
+
 class WelcomeCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -836,6 +1597,13 @@ class WelcomeCog(commands.Cog):
         self.welcome_group.add_command(app_commands.Command(name="test", description="Simulate a welcome card message inside the setup channel", callback=self.test_welcome))
         
         self.bot.tree.add_command(self.welcome_group)
+
+        # Single all-in-one interactive setup panel
+        self.bot.tree.add_command(app_commands.Command(
+            name="welcomesetup",
+            description="Open the interactive Welcome system setup panel",
+            callback=self.welcomesetup,
+        ))
         
         # We assign the commands to the leave group
         self.leave_group.add_command(app_commands.Command(name="toggle", description="Toggle the leave message system on or off", callback=self.leave_toggle))
@@ -858,6 +1626,15 @@ class WelcomeCog(commands.Cog):
         self.bot.tree.remove_command(self.welcome_group.name)
         self.bot.tree.remove_command(self.leave_group.name)
         self.bot.tree.remove_command(self.autorole_group.name)
+        self.bot.tree.remove_command("welcomesetup")
+
+    @app_commands.default_permissions(manage_guild=True)
+    async def welcomesetup(self, interaction: discord.Interaction) -> None:
+        """Open the all-in-one interactive Welcome setup panel."""
+        config = self.db.get_config(interaction.guild.id)
+        embed = build_setup_embed(config, interaction.guild)
+        view = WelcomeSetupView(self, interaction.guild.id)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -911,6 +1688,9 @@ class WelcomeCog(commands.Cog):
         if config.background_path and os.path.exists(config.background_path):
             bg_status = "Custom Background Image"
         embed.add_field(name="Card Background", value=bg_status, inline=True)
+
+        style_meta = CARD_STYLES.get(config.card_style, CARD_STYLES["legacy"])
+        embed.add_field(name="Card Style", value=f"{style_meta['emoji']} {style_meta['label']}", inline=True)
         
         embed.add_field(name="Show Embed Thumbnail", value="Yes" if config.show_avatar else "No", inline=True)
         embed.add_field(name="Draw Avatar on Card", value="Yes" if config.draw_avatar else "No", inline=True)
@@ -1264,3 +2044,4 @@ class WelcomeCog(commands.Cog):
 
 async def setup(bot: commands.Bot) -> None:
     await bot.add_cog(WelcomeCog(bot))
+    print("👋 Welcome System loaded!")

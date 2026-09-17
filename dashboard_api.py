@@ -275,6 +275,11 @@ def _replicate_welcome(bot, source_guild_id):
                 tgt_cfg = w_db.get_config(g.id)
                 tgt_cfg.enabled = src_cfg.enabled
                 tgt_cfg.welcome_message = src_cfg.welcome_message
+                tgt_cfg.card_style = src_cfg.card_style
+                tgt_cfg.show_avatar = src_cfg.show_avatar
+                tgt_cfg.show_guild_icon = src_cfg.show_guild_icon
+                tgt_cfg.draw_avatar = src_cfg.draw_avatar
+                tgt_cfg.draw_text = src_cfg.draw_text
                 tgt_cfg.leave_enabled = src_cfg.leave_enabled
                 tgt_cfg.leave_message = src_cfg.leave_message
                 tgt_cfg.leave_image_url = src_cfg.leave_image_url
@@ -921,7 +926,7 @@ async def handle_welcome_get(request: web.Request):
     if not await check_guild_permissions(request, guild_id, user_id):
         return web.json_response({"error": "Missing permissions"}, status=403)
         
-    from welcome import WelcomeDatabase
+    from welcome import WelcomeDatabase, CARD_STYLES
     db = WelcomeDatabase()
     config = db.get_config(int(guild_id))
     
@@ -930,11 +935,20 @@ async def handle_welcome_get(request: web.Request):
             "enabled": config.enabled,
             "channel_id": str(config.channel_id) if config.channel_id else "",
             "message": config.welcome_message,
+            "card_style": getattr(config, "card_style", "legacy") or "legacy",
+            "background_path": config.background_path or "",
+            "show_avatar": getattr(config, "show_avatar", True),
+            "show_guild_icon": getattr(config, "show_guild_icon", False),
+            "draw_avatar": getattr(config, "draw_avatar", True),
+            "draw_text": getattr(config, "draw_text", True),
+            "welcome_role_id": str(config.welcome_role_id) if getattr(config, "welcome_role_id", None) else "",
+            "bot_role_id": str(config.bot_role_id) if getattr(config, "bot_role_id", None) else "",
             "leave_enabled": config.leave_enabled,
             "leave_channel_id": str(config.leave_channel_id) if config.leave_channel_id else "",
             "leave_message": config.leave_message,
             "leave_image_url": config.leave_image_url or ""
-        }
+        },
+        "card_styles": CARD_STYLES
     })
 
 async def handle_welcome_post(request: web.Request):
@@ -947,25 +961,65 @@ async def handle_welcome_post(request: web.Request):
         
     data = await request.json()
     
-    from welcome import WelcomeDatabase
+    from welcome import WelcomeDatabase, ASSETS_DIR
     db = WelcomeDatabase()
     config = db.get_config(int(guild_id))
     
-    config.enabled = bool(data.get("enabled", config.enabled))
-    channel_id = data.get("channel_id")
-    if channel_id is not None:
-        config.channel_id = int(channel_id) if channel_id else None
-    config.welcome_message = data.get("message", config.welcome_message)
+    if "enabled" in data:
+        config.enabled = bool(data["enabled"])
+    if "channel_id" in data:
+        config.channel_id = int(data["channel_id"]) if data["channel_id"] else None
+    if "message" in data:
+        config.welcome_message = data["message"]
     
-    config.leave_enabled = bool(data.get("leave_enabled", config.leave_enabled))
-    leave_channel_id = data.get("leave_channel_id")
-    if leave_channel_id is not None:
-        config.leave_channel_id = int(leave_channel_id) if leave_channel_id else None
-    config.leave_message = data.get("leave_message", config.leave_message)
-    
-    leave_image_url = data.get("leave_image_url")
-    if leave_image_url is not None:
-        config.leave_image_url = leave_image_url if leave_image_url else None
+    if "card_style" in data:
+        style = str(data["card_style"]).lower()
+        if style in ["legacy", "glass", "ticket", "cinematic"]:
+            config.card_style = style
+            
+    if "show_avatar" in data:
+        config.show_avatar = bool(data["show_avatar"])
+    if "show_guild_icon" in data:
+        config.show_guild_icon = bool(data["show_guild_icon"])
+    if "draw_avatar" in data:
+        config.draw_avatar = bool(data["draw_avatar"])
+    if "draw_text" in data:
+        config.draw_text = bool(data["draw_text"])
+        
+    if "welcome_role_id" in data:
+        config.welcome_role_id = int(data["welcome_role_id"]) if data["welcome_role_id"] else None
+    if "bot_role_id" in data:
+        config.bot_role_id = int(data["bot_role_id"]) if data["bot_role_id"] else None
+        
+    # Background URL handling
+    if "background_url" in data:
+        bg_url = (data["background_url"] or "").strip()
+        if not bg_url or bg_url.lower() == "none" or bg_url == "":
+            config.background_path = None
+        elif bg_url.startswith("http://") or bg_url.startswith("https://"):
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(bg_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                        if resp.status == 200:
+                            bg_data = await resp.read()
+                            is_gif = bg_url.lower().split("?")[0].endswith(".gif")
+                            fname = f"bg_{guild_id}.gif" if is_gif else f"bg_{guild_id}.png"
+                            dest = os.path.join(ASSETS_DIR, fname)
+                            with open(dest, "wb") as f:
+                                f.write(bg_data)
+                            config.background_path = dest
+            except Exception as e:
+                print(f"[Welcome API] Failed to download background: {e}")
+                
+    if "leave_enabled" in data:
+        config.leave_enabled = bool(data["leave_enabled"])
+    if "leave_channel_id" in data:
+        config.leave_channel_id = int(data["leave_channel_id"]) if data["leave_channel_id"] else None
+    if "leave_message" in data:
+        config.leave_message = data["leave_message"]
+    if "leave_image_url" in data:
+        config.leave_image_url = data["leave_image_url"] if data["leave_image_url"] else None
         
     db.save_config(config)
 
@@ -975,6 +1029,53 @@ async def handle_welcome_post(request: web.Request):
         print(f"[AutoSync] Welcome config replicated to {synced} other server(s)")
 
     return web.json_response({"success": True})
+
+async def handle_welcome_test(request: web.Request):
+    user_id = await get_user_id(request)
+    if not user_id: return web.json_response({"error": "Unauthorized"}, status=401)
+    
+    guild_id = int(request.match_info['guild_id'])
+    if not await check_guild_permissions(request, guild_id, user_id):
+        return web.json_response({"error": "Missing permissions"}, status=403)
+        
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        return web.json_response({"error": "Guild not found"}, status=404)
+        
+    data = await request.json() if request.can_read_body else {}
+    test_type = data.get("type", "welcome")
+    
+    from welcome import WelcomeDatabase, send_welcome, send_leave
+    db = WelcomeDatabase()
+    config = db.get_config(guild_id)
+    
+    member = guild.get_member(int(user_id)) or guild.owner
+    if not member and guild.members:
+        member = guild.members[0]
+    if not member:
+        return web.json_response({"error": "No member found in server to simulate test."}, status=400)
+        
+    if test_type == "leave":
+        if not config.leave_channel_id:
+            return web.json_response({"error": "Please set a Leave Channel before sending a test."}, status=400)
+        old_leave = config.leave_enabled
+        config.leave_enabled = True
+        try:
+            await send_leave(member, config)
+        finally:
+            config.leave_enabled = old_leave
+        return web.json_response({"success": True, "message": "Test leave message sent successfully!"})
+    else:
+        if not config.channel_id:
+            return web.json_response({"error": "Please set a Welcome Channel before sending a test."}, status=400)
+        old_enabled = config.enabled
+        config.enabled = True
+        try:
+            await send_welcome(member, config)
+        finally:
+            config.enabled = old_enabled
+        return web.json_response({"success": True, "message": "Test welcome card sent successfully!"})
 
 # --- Music ---
 
@@ -2234,6 +2335,7 @@ class DashboardAPI(commands.Cog):
             # Welcome
             web.get("/api/guilds/{guild_id}/welcome", handle_welcome_get),
             web.post("/api/guilds/{guild_id}/welcome", handle_welcome_post),
+            web.post("/api/guilds/{guild_id}/welcome/test", handle_welcome_test),
             # Security & Anti-Nuke
             web.get("/api/guilds/{guild_id}/security", handle_security_get),
             web.post("/api/guilds/{guild_id}/security", handle_security_post),
