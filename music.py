@@ -14,11 +14,63 @@ import difflib
 import re
 from discord import app_commands
 from discord.ext import commands, tasks
-from typing import Optional, List
+from typing import Optional, List, Tuple
 from gkr_ui import C, embed_error, embed_success, embed_info, BOT_NAME
 from dotenv import load_dotenv
+from voice_handoff import yield_voice_to, restore_voice_from
 
 load_dotenv()
+
+
+def get_player(guild: Optional[discord.Guild]) -> Optional[wavelink.Player]:
+    """
+    Safely fetch this guild's wavelink.Player, if any.
+
+    ROOT CAUSE FIX: every command/listener in this file used to read
+    `guild.voice_client` directly and just *assume* (via a type hint only,
+    which does nothing at runtime) that it was a wavelink.Player. But
+    `guild.voice_client` is whatever VoiceProtocol is currently connected for
+    that guild — and this bot also has a separate Radio cog that connects
+    with a plain `discord.VoiceClient` (no `.queue`, no `.playing`, no
+    `.paused`, etc). If Radio is active in a guild, `guild.voice_client`
+    returns that plain VoiceClient, and any code here that touches those
+    attributes crashes with AttributeError — exactly the reported traceback
+    (`'VoiceClient' object has no attribute 'paused'` in `_execute_play`).
+
+    Routing every read through this helper means we only ever get back an
+    actual wavelink.Player (or None), so the rest of the code can keep
+    assuming `vc.queue`/`vc.paused`/etc. exist without re-checking everywhere.
+    """
+    if not guild:
+        return None
+    vc = guild.voice_client
+    return vc if isinstance(vc, wavelink.Player) else None
+
+
+async def get_or_create_music_vc(bot: commands.Bot, guild: discord.Guild, channel: discord.VoiceChannel, **connect_kwargs) -> wavelink.Player:
+    """
+    Get (or create) a wavelink.Player connected to `channel`, handing off
+    cleanly from Radio first if Radio currently owns the connection.
+
+    FEATURE: previously, if Radio was playing, `get_player(guild)` returned
+    Radio's plain discord.VoiceClient and this code tried to use it as a
+    wavelink.Player directly (crash), or in other spots just always opened a
+    brand new connection without checking what was already there. Now we
+    explicitly ask Radio to suspend itself (saving its station so it can
+    resume later) via voice_handoff.yield_voice_to() before connecting.
+    """
+    vc = get_player(guild)
+    if vc is None:
+        # If something non-wavelink (i.e. Radio) is connected, ask it to step
+        # aside gracefully first.
+        existing = guild.voice_client
+        if existing is not None:
+            await yield_voice_to(bot, guild, "music")
+        return await channel.connect(cls=wavelink.Player, **connect_kwargs)
+
+    if vc.channel and vc.channel.id != channel.id:
+        await vc.move_to(channel)
+    return vc
 
 class TrackSelect(discord.ui.Select):
     def __init__(self, tracks, execute_callback, vc, gp):
@@ -64,7 +116,7 @@ class AudioFilterSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         selected = self.values[0]
         gp: GuildPlayer = self.view.gp
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client if interaction.guild else None
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc:
             return await interaction.response.send_message(embed=embed_error("Bot is not connected to voice."), ephemeral=True)
 
@@ -123,10 +175,38 @@ if SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET:
         print(f"⚠️ Spotify not available: {e}")
 
 def build_progress_bar(position: int, duration: int, length: int = 15) -> str:
-    """Legacy text progress bar - removed to reduce API usage and improve aesthetics."""
-    return ""
+    """Renders a simple text progress bar, e.g. `▬▬▬🔘▬▬▬▬▬▬▬  1:23 / 3:45`."""
+    if not duration or duration <= 0:
+        return ""
+    ratio = max(0.0, min(1.0, position / duration))
+    filled = int(round(ratio * length))
+    filled = max(0, min(length, filled))
+    bar = "▬" * filled + "🔘" + "▬" * (length - filled)
+    return f"`{bar}`  {format_ms(position)} / {format_ms(duration)}"
 
-MUSIC_VISUALIZER_GIF = "https://media.discordapp.net/attachments/778226616638898177/1539672796253265971/combined_music_visualizer.gif?ex=6a872b88&is=6a85da08&hm=156453eba45e90d506f944c7bca13d8f078d092fccf1a86b4d1ed693fb4c7c21&="
+# BUG FIX (from a previous pass): this used to be a raw Discord CDN attachment
+# link (media.discordapp.net/.../combined_music_visualizer.gif?ex=...&is=...&hm=...).
+# Those `ex=`/`is=`/`hm=` query params are a signed, TIME-LIMITED URL — Discord
+# attachment links are not meant to be hotlinked long-term. That link's `ex`
+# timestamp decodes to 2026-08-20, so it had been rendering as a broken image
+# in every "Now Playing" panel since then. Fixed by loading a local file
+# (re-uploaded fresh with every message, so it never expires) with a graceful
+# fallback to no image if the asset isn't present.
+MUSIC_VISUALIZER_GIF_PATH = os.path.join(os.path.dirname(__file__), "assets", "music_visualizer.gif")
+MUSIC_VISUALIZER_GIF_FILENAME = "music_visualizer.gif"
+# Optional: point this at a stable, permanently-hosted URL (imgur, your own
+# CDN, GitHub raw, etc — NOT a discord.com/discordapp.net attachment link) if
+# you'd rather not ship the gif as a local file.
+MUSIC_VISUALIZER_GIF_URL = os.getenv("MUSIC_VISUALIZER_GIF_URL", "")
+
+
+def get_visualizer_file() -> Optional[discord.File]:
+    """Returns a fresh discord.File for the visualizer gif if the local asset
+    exists. A discord.File can only be used in ONE send/edit call, so callers
+    must fetch a new one each time rather than caching/reusing the object."""
+    if os.path.isfile(MUSIC_VISUALIZER_GIF_PATH):
+        return discord.File(MUSIC_VISUALIZER_GIF_PATH, filename=MUSIC_VISUALIZER_GIF_FILENAME)
+    return None
 
 async def set_voice_channel_status(bot: commands.Bot, channel_id: int, status: str):
     """Update Discord voice channel status text for the connected VC."""
@@ -188,7 +268,7 @@ class MusicControlView(discord.ui.View):
         if not interaction.user.voice:
             await interaction.response.send_message(embed=embed_error("Join a voice channel first."), ephemeral=True)
             return False
-        vc = interaction.guild.voice_client
+        vc = get_player(interaction.guild)
         if not vc:
             await interaction.response.send_message(embed=embed_error("Bot is not connected."), ephemeral=True)
             return False
@@ -202,15 +282,18 @@ class MusicControlView(discord.ui.View):
         return True
 
     async def refresh_panel(self, interaction: discord.Interaction):
-        vc = interaction.guild.voice_client if interaction.guild else None
+        vc = get_player(interaction.guild)
         track = getattr(vc, 'current', None) if vc else None
-        embed = self.player.build_embed(vc, track)
+        embed, gif_file = self.player.build_embed(vc, track)
         self._update_styles()
+        kwargs = {"embed": embed, "view": self}
+        if gif_file:
+            kwargs["attachments"] = [gif_file]
         try:
-            await interaction.response.edit_message(embed=embed, view=self)
+            await interaction.response.edit_message(**kwargs)
         except Exception:
             try:
-                await interaction.edit_original_response(embed=embed, view=self)
+                await interaction.edit_original_response(**kwargs)
             except Exception:
                 pass
 
@@ -237,7 +320,7 @@ class MusicControlView(discord.ui.View):
         if not await self._check_voice(interaction): return
         if not self.player.history:
             return await interaction.response.send_message(embed=embed_error("No previous track in history."), ephemeral=True)
-        vc: wavelink.Player = interaction.guild.voice_client
+        vc: wavelink.Player = get_player(interaction.guild)
         self.player.skip_prev = True
         prev_track = self.player.history.pop()
         if vc.playing and vc.current:
@@ -249,7 +332,7 @@ class MusicControlView(discord.ui.View):
     @discord.ui.button(label="❚❚", style=discord.ButtonStyle.primary, custom_id="playpause", row=0)
     async def playpause_btn(self, interaction: discord.Interaction, _):
         if not await self._check_voice(interaction): return
-        vc: wavelink.Player = interaction.guild.voice_client
+        vc: wavelink.Player = get_player(interaction.guild)
         if not vc.playing and vc.queue.is_empty:
             return await interaction.response.send_message(embed=embed_error("Nothing playing."), ephemeral=True)
         
@@ -269,7 +352,7 @@ class MusicControlView(discord.ui.View):
     @discord.ui.button(label="▷▷", style=discord.ButtonStyle.secondary, custom_id="skip", row=0)
     async def skip_btn(self, interaction: discord.Interaction, _):
         if not await self._check_voice(interaction): return
-        vc: wavelink.Player = interaction.guild.voice_client
+        vc: wavelink.Player = get_player(interaction.guild)
         if not vc.playing:
             return await interaction.response.send_message(embed=embed_error("Nothing to skip."), ephemeral=True)
         await vc.skip(force=True)
@@ -278,7 +361,7 @@ class MusicControlView(discord.ui.View):
     @discord.ui.button(label="⇄", style=discord.ButtonStyle.secondary, custom_id="shuffle", row=0)
     async def shuffle_btn(self, interaction: discord.Interaction, _):
         if not await self._check_voice(interaction): return
-        vc: wavelink.Player = interaction.guild.voice_client
+        vc: wavelink.Player = get_player(interaction.guild)
         if vc.queue.is_empty:
             return await interaction.response.send_message(embed=embed_info("Queue", "Queue is empty, nothing to shuffle."), ephemeral=True)
         items = list(vc.queue)
@@ -287,8 +370,12 @@ class MusicControlView(discord.ui.View):
         for it in items:
             await vc.queue.put_wait(it)
         # refresh_panel uses edit_message; use followup for the notification
+        embed, gif_file = self.player.build_embed(vc, vc.current)
         try:
-            await interaction.response.edit_message(embed=self.player.build_embed(vc, vc.current), view=self)
+            kwargs = {"embed": embed, "view": self}
+            if gif_file:
+                kwargs["attachments"] = [gif_file]
+            await interaction.response.edit_message(**kwargs)
         except Exception:
             await interaction.response.defer()
         await interaction.followup.send(embed=embed_success("Queue Shuffled", "Queue order randomized! ⇄"), ephemeral=True)
@@ -306,7 +393,7 @@ class MusicControlView(discord.ui.View):
     @discord.ui.button(label="«", style=discord.ButtonStyle.secondary, custom_id="rewind", row=1)
     async def rewind_btn(self, interaction: discord.Interaction, _):
         if not await self._check_voice(interaction): return
-        vc: wavelink.Player = interaction.guild.voice_client
+        vc: wavelink.Player = get_player(interaction.guild)
         if not vc.playing:
             return await interaction.response.send_message(embed=embed_error("Nothing playing."), ephemeral=True)
         new_pos = max(0, vc.position - 10000)
@@ -316,14 +403,14 @@ class MusicControlView(discord.ui.View):
     @discord.ui.button(label="˗", style=discord.ButtonStyle.secondary, custom_id="vol_down", row=1)
     async def vol_down_btn(self, interaction: discord.Interaction, _):
         if not await self._check_voice(interaction): return
-        vc: wavelink.Player = interaction.guild.voice_client
+        vc: wavelink.Player = get_player(interaction.guild)
         new_vol = max(0, vc.volume - 10)
         await vc.set_volume(new_vol)
         await self.refresh_panel(interaction)
 
     @discord.ui.button(label="♡", style=discord.ButtonStyle.secondary, custom_id="fav", row=1)
     async def fav_btn(self, interaction: discord.Interaction, _):
-        vc: wavelink.Player = interaction.guild.voice_client if interaction.guild else None
+        vc: wavelink.Player = get_player(interaction.guild)
         if not vc or not vc.current:
             return await interaction.response.send_message(embed=embed_error("No track currently playing."), ephemeral=True)
         track = vc.current
@@ -345,7 +432,7 @@ class MusicControlView(discord.ui.View):
     @discord.ui.button(label="➕", style=discord.ButtonStyle.secondary, custom_id="vol_up", row=1)
     async def vol_up_btn(self, interaction: discord.Interaction, _):
         if not await self._check_voice(interaction): return
-        vc: wavelink.Player = interaction.guild.voice_client
+        vc: wavelink.Player = get_player(interaction.guild)
         new_vol = min(150, vc.volume + 10)
         await vc.set_volume(new_vol)
         await self.refresh_panel(interaction)
@@ -353,7 +440,7 @@ class MusicControlView(discord.ui.View):
     @discord.ui.button(label="»", style=discord.ButtonStyle.secondary, custom_id="forward", row=1)
     async def forward_btn(self, interaction: discord.Interaction, _):
         if not await self._check_voice(interaction): return
-        vc: wavelink.Player = interaction.guild.voice_client
+        vc: wavelink.Player = get_player(interaction.guild)
         if not vc.playing or not vc.current:
             return await interaction.response.send_message(embed=embed_error("Nothing playing."), ephemeral=True)
         new_pos = min(vc.current.length, vc.position + 10000)
@@ -364,7 +451,7 @@ class MusicControlView(discord.ui.View):
 
     @discord.ui.button(label="🎙", style=discord.ButtonStyle.secondary, custom_id="lyrics", row=2)
     async def lyrics_btn(self, interaction: discord.Interaction, _):
-        vc: wavelink.Player = interaction.guild.voice_client if interaction.guild else None
+        vc: wavelink.Player = get_player(interaction.guild)
         if not vc or not vc.current:
             return await interaction.response.send_message(embed=embed_error("Nothing is currently playing."), ephemeral=True)
             
@@ -405,7 +492,7 @@ class MusicControlView(discord.ui.View):
 
     @discord.ui.button(label="☰", style=discord.ButtonStyle.secondary, custom_id="queue", row=2)
     async def queue_btn(self, interaction: discord.Interaction, _):
-        vc: wavelink.Player = interaction.guild.voice_client if interaction.guild else None
+        vc: wavelink.Player = get_player(interaction.guild)
         if not vc or (vc.queue.is_empty and not vc.current):
             return await interaction.response.send_message(embed=embed_info("Queue", "The queue is currently empty."), ephemeral=True)
         lines = []
@@ -432,11 +519,12 @@ class MusicControlView(discord.ui.View):
         status = "enabled" if self.player.mode_247 else "disabled"
         # Refresh panel first, then notify via followup (avoids double-response crash)
         try:
-            vc2 = interaction.guild.voice_client
-            await interaction.response.edit_message(
-                embed=self.player.build_embed(vc2, getattr(vc2, 'current', None)),
-                view=self
-            )
+            vc2 = get_player(interaction.guild)
+            embed, gif_file = self.player.build_embed(vc2, getattr(vc2, 'current', None))
+            kwargs = {"embed": embed, "view": self}
+            if gif_file:
+                kwargs["attachments"] = [gif_file]
+            await interaction.response.edit_message(**kwargs)
         except Exception:
             await interaction.response.defer()
         await interaction.followup.send(
@@ -447,12 +535,15 @@ class MusicControlView(discord.ui.View):
     @discord.ui.button(label="✕", style=discord.ButtonStyle.danger, custom_id="stop", row=2)
     async def stop_btn(self, interaction: discord.Interaction, _):
         if not await self._check_voice(interaction): return
-        vc: wavelink.Player = interaction.guild.voice_client
+        vc: wavelink.Player = get_player(interaction.guild)
         self.player.mode_247 = False
         if vc.channel:
             await set_voice_channel_status(interaction.client, vc.channel.id, "")
         vc.queue.clear()
         await vc.disconnect()
+        # FEATURE: an explicit stop also counts as "music session finished" —
+        # hand the channel back to Radio if it was paused for this handoff.
+        await restore_voice_from(interaction.client, interaction.guild, "music")
         await interaction.response.send_message(embed=embed_success("Stopped", "Music stopped and disconnected."), ephemeral=True)
 
 
@@ -484,7 +575,7 @@ class GuildPlayer:
         except Exception:
             return None
 
-    def build_embed(self, vc: Optional[wavelink.Player], track: Optional[wavelink.Playable] = None) -> discord.Embed:
+    def build_embed(self, vc: Optional[wavelink.Player], track: Optional[wavelink.Playable] = None) -> Tuple[discord.Embed, Optional[discord.File]]:
         embed = discord.Embed(color=C.BRAND)
         # Use bot's own avatar as the author icon (always valid)
         bot_avatar = None
@@ -505,19 +596,20 @@ class GuildPlayer:
                 "Use `/play <song or link>` or `/random` to start streaming!"
             )
             embed.set_footer(text=f"Queue: 0 tracks · {BOT_NAME} Studio Audio")
-            return embed
+            return embed, None
 
         self.voice_client = vc
         loop_str = {"single": "🔂 Single", "queue": "🔁 Queue"}.get(self.loop_mode, "Off")
         status_badge = "⏸️ **Paused**" if vc.paused else "🟢 **Playing**"
         requester = self._get_requester(track) or "User"
-        duration = format_ms(track.length)
 
         # ── Polished Modern Dark Typography & Hierarchy ───────────────────────
+        progress = build_progress_bar(getattr(vc, "position", 0), track.length)
         desc = (
             f"## [{track.title}]({track.uri})\n"
             f"*by* **{track.author or 'Unknown Artist'}**\n\n"
-            f"🔊 `{vc.volume}%`  ·  🎛️ `{self.current_filter}`  ·  🔁 `{loop_str}`  ·  ⚡ `{'24/7 ON' if self.mode_247 else '24/7 OFF'}`\n\n"
+            + (f"{progress}\n\n" if progress else "")
+            + f"🔊 `{vc.volume}%`  ·  🎛️ `{self.current_filter}`  ·  🔁 `{loop_str}`  ·  ⚡ `{'24/7 ON' if self.mode_247 else '24/7 OFF'}`\n\n"
             f"🎧 Requested by **{requester}**  ·  {status_badge}"
         )
         embed.description = desc
@@ -529,25 +621,33 @@ class GuildPlayer:
         if artwork:
             embed.set_thumbnail(url=artwork)
 
-        # Bottom Center Visualizer: Stitched Continuous Looping GIF
-        embed.set_image(url=MUSIC_VISUALIZER_GIF)
+        # Bottom Center Visualizer GIF — see get_visualizer_file()/MUSIC_VISUALIZER_GIF_URL above.
+        visual_file = get_visualizer_file()
+        if visual_file:
+            embed.set_image(url=f"attachment://{MUSIC_VISUALIZER_GIF_FILENAME}")
+        elif MUSIC_VISUALIZER_GIF_URL:
+            embed.set_image(url=MUSIC_VISUALIZER_GIF_URL)
 
         embed.set_footer(text=f"Queue · {vc.queue.count} tracks   |   Source · {BOT_NAME} Studio Audio")
-        return embed
+        return embed, visual_file
+
 
     async def update_panel(self, bot: commands.Bot, track: Optional[wavelink.Playable] = None):
         guild = bot.get_guild(self.guild_id)
         if not guild:
             return
-        vc: Optional[wavelink.Player] = guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(guild)
         self.voice_client = vc
 
-        embed = self.build_embed(vc, track)
+        embed, gif_file = self.build_embed(vc, track)
         view = MusicControlView(self)
+        edit_kwargs = {"embed": embed, "view": view}
+        if gif_file:
+            edit_kwargs["attachments"] = [gif_file]
 
         if self.panel_message:
             try:
-                await self.panel_message.edit(embed=embed, view=view)
+                await self.panel_message.edit(**edit_kwargs)
                 return
             except Exception:
                 self.panel_message = None
@@ -561,7 +661,10 @@ class GuildPlayer:
                     break
         if channel:
             try:
-                self.panel_message = await channel.send(embed=embed, view=view)
+                send_kwargs = {"embed": embed, "view": view}
+                if gif_file:
+                    send_kwargs["file"] = gif_file
+                self.panel_message = await channel.send(**send_kwargs)
             except Exception as e:
                 print(f"[Music] Failed to send panel: {e}")
 
@@ -574,11 +677,149 @@ class MusicCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.guild_players: dict[int, GuildPlayer] = {}
+        # Guild ids -> saved session state, for guilds where Music was
+        # suspended so Radio could take over the voice channel. See
+        # suspend_for_handoff()/resume_from_handoff() and voice_handoff.py.
+        self._handoff_state: dict[int, dict] = {}
 
     def get_gp(self, guild_id: int) -> GuildPlayer:
         if guild_id not in self.guild_players:
             self.guild_players[guild_id] = GuildPlayer(guild_id)
         return self.guild_players[guild_id]
+
+    # -----------------------------------------------------------------------
+    # Music <-> Radio voice handoff (see voice_handoff.py)
+    # -----------------------------------------------------------------------
+
+    async def suspend_for_handoff(self, guild: discord.Guild) -> bool:
+        """Called by the Radio cog (via voice_handoff.yield_voice_to) right
+        before it wants to connect and play a station. If Music currently
+        owns this guild's voice connection, save the queue/current
+        track/position/volume/loop state and disconnect cleanly so Radio can
+        take the channel, instead of Radio just yanking it out from under us."""
+        vc = get_player(guild)
+        if not vc:
+            return False  # Music isn't the one holding the connection right now
+
+        gp = self.get_gp(guild.id)
+        try:
+            queue_items = list(vc.queue)
+        except Exception:
+            queue_items = []
+        current = getattr(vc, "current", None)
+        position = getattr(vc, "position", 0) or 0
+        was_paused = bool(getattr(vc, "paused", False))
+        volume = getattr(vc, "volume", 100)
+        channel_id = vc.channel.id if vc.channel else None
+
+        # Nothing worth resuming later (no track, no queue) — just let Radio
+        # have the channel, nothing to save.
+        if not current and not queue_items:
+            try:
+                await vc.disconnect(force=True)
+            except Exception:
+                pass
+            return False
+
+        self._handoff_state[guild.id] = {
+            "channel_id": channel_id,
+            "queue": queue_items,
+            "current": current,
+            "position": position,
+            "was_paused": was_paused,
+            "volume": volume,
+            "loop_mode": gp.loop_mode,
+            "mode_247": gp.mode_247,
+            "text_channel": gp.text_channel,
+        }
+
+        try:
+            if vc.channel:
+                await set_voice_channel_status(self.bot, vc.channel.id, "")
+        except Exception:
+            pass
+        try:
+            await vc.disconnect(force=True)
+        except Exception as e:
+            print(f"[Music] suspend_for_handoff disconnect error: {e}")
+
+        return True
+
+    async def resume_from_handoff(self, guild: discord.Guild) -> bool:
+        """Called by the Radio cog (via voice_handoff.restore_voice_from)
+        once it stops, to give the channel back to Music if Music was
+        suspended for this handoff. Reconnects and resumes the saved queue
+        and current track from the saved position."""
+        saved = self._handoff_state.pop(guild.id, None)
+        if not saved:
+            return False
+
+        channel_id = saved.get("channel_id")
+        channel = guild.get_channel(channel_id) if channel_id else None
+        if not isinstance(channel, discord.VoiceChannel):
+            return False
+
+        # Same race as Radio's side: reconnecting the instant Radio
+        # disconnects can beat Discord's voice gateway to fully process the
+        # teardown and silently time out. Back off and retry once.
+        vc = None
+        last_err: Optional[Exception] = None
+        for attempt, delay in enumerate((1.5, 3.0), start=1):
+            await asyncio.sleep(delay)
+            try:
+                vc = await channel.connect(cls=wavelink.Player, self_deaf=True)
+                break
+            except Exception as e:
+                last_err = e
+                print(f"[Music] Reconnect attempt {attempt} after handoff failed: {e}")
+
+        if vc is None:
+            print(f"[Music] Failed to reconnect after handoff: {last_err}")
+            text_channel = saved.get("text_channel")
+            if text_channel:
+                try:
+                    await text_channel.send("🎵 I couldn't automatically resume music after the radio finished — try playing your track again.")
+                except Exception:
+                    pass
+            return False
+
+        gp = self.get_gp(guild.id)
+        gp.loop_mode = saved.get("loop_mode")
+        gp.mode_247 = saved.get("mode_247", False)
+        gp.text_channel = saved.get("text_channel")
+        gp.voice_client = vc
+
+        try:
+            await vc.set_volume(saved.get("volume", 100))
+        except Exception:
+            pass
+
+        for item in saved.get("queue", []):
+            try:
+                await vc.queue.put_wait(item)
+            except Exception:
+                pass
+
+        current = saved.get("current")
+        if current:
+            try:
+                await vc.play(current, start=int(saved.get("position", 0) or 0))
+                if saved.get("was_paused"):
+                    await vc.pause(True)
+                if vc.channel and not saved.get("was_paused"):
+                    st = f"🎶 {current.title}" + (f" - {current.author}" if getattr(current, "author", None) else "")
+                    await set_voice_channel_status(self.bot, vc.channel.id, st[:100])
+            except Exception as e:
+                print(f"[Music] Failed to resume current track after handoff: {e}")
+        elif not vc.queue.is_empty:
+            try:
+                next_track = vc.queue.get()
+                await vc.play(next_track)
+            except Exception as e:
+                print(f"[Music] Failed to resume queue after handoff: {e}")
+
+        await gp.update_panel(self.bot, getattr(vc, "current", None))
+        return True
 
     async def cog_load(self):
         await self._connect_lavalink()
@@ -789,12 +1030,18 @@ class MusicCog(commands.Cog):
             if not gp.mode_247:
                 await asyncio.sleep(30)
                 if player.queue.is_empty and not player.playing:
+                    guild = player.guild
                     try:
                         if player.channel:
                             await set_voice_channel_status(self.bot, player.channel.id, "")
                         await player.disconnect()
                     except Exception:
                         pass
+                    # FEATURE: if Radio was paused to let this music session
+                    # play, hand the voice channel back to it now that the
+                    # queue is actually finished and we've disconnected.
+                    if guild:
+                        await restore_voice_from(self.bot, guild, "music")
         else:
             try:
                 next_track = player.queue.get()
@@ -810,7 +1057,7 @@ class MusicCog(commands.Cog):
         if member.bot:
             return
         guild = member.guild
-        vc = guild.voice_client
+        vc = get_player(guild)
         if not vc or not isinstance(vc, wavelink.Player):
             return
         gp = self.get_gp(guild.id)
@@ -822,7 +1069,7 @@ class MusicCog(commands.Cog):
         members_in_vc = [m for m in vc.channel.members if not m.bot]
         if not members_in_vc:
             await asyncio.sleep(60)
-            vc2 = guild.voice_client
+            vc2 = get_player(guild)
             if vc2 and isinstance(vc2, wavelink.Player) and vc2.channel and not [m for m in vc2.channel.members if not m.bot]:
                 if vc2.channel:
                     await set_voice_channel_status(self.bot, vc2.channel.id, "")
@@ -1641,12 +1888,12 @@ class MusicCog(commands.Cog):
 
         user_channel = interaction.user.voice.channel
 
-        # 2. Connect
+        # 2. Connect (hands off from Radio first if Radio is currently playing)
         gp.metrics["voice_start"] = time.time()
-        vc = interaction.guild.voice_client
+        vc = get_player(interaction.guild)
         if not vc:
             await set_india_voice_region(user_channel)
-            vc = await user_channel.connect(cls=wavelink.Player, self_deaf=True)
+            vc = await get_or_create_music_vc(self.bot, interaction.guild, user_channel, self_deaf=True)
         elif vc.channel != user_channel:
             await set_india_voice_region(user_channel)
             await vc.move_to(user_channel)
@@ -1724,12 +1971,12 @@ class MusicCog(commands.Cog):
             return await interaction.followup.send(embed=embed_error("Join a voice channel first."), ephemeral=True)
 
         user_channel = interaction.user.voice.channel
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
 
         if not vc:
             try:
                 await set_india_voice_region(user_channel)
-                vc = await user_channel.connect(cls=wavelink.Player)
+                vc = await get_or_create_music_vc(self.bot, interaction.guild, user_channel)
             except Exception as e:
                 return await interaction.followup.send(embed=embed_error(f"Could not connect: {e}"), ephemeral=True)
         elif vc.channel != user_channel:
@@ -1777,7 +2024,7 @@ class MusicCog(commands.Cog):
 
     @app_commands.command(name="stop", description="Stop music and disconnect.")
     async def stop(self, interaction: discord.Interaction):
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc:
             return await interaction.response.send_message(embed=embed_error("Not connected."), ephemeral=True)
         gp = self.get_gp(interaction.guild.id)
@@ -1786,11 +2033,14 @@ class MusicCog(commands.Cog):
             await set_voice_channel_status(self.bot, vc.channel.id, "")
         vc.queue.clear()
         await vc.disconnect()
+        # FEATURE: an explicit stop also counts as "music session finished" —
+        # hand the channel back to Radio if it was paused for this handoff.
+        await restore_voice_from(self.bot, interaction.guild, "music")
         await interaction.response.send_message(embed=embed_success("Stopped", "Stopped and disconnected."))
 
     @app_commands.command(name="skip", description="Skip the current track.")
     async def skip(self, interaction: discord.Interaction):
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or not vc.playing:
             return await interaction.response.send_message(embed=embed_error("Nothing playing."), ephemeral=True)
         await vc.skip(force=True)
@@ -1798,7 +2048,7 @@ class MusicCog(commands.Cog):
 
     @app_commands.command(name="pause", description="Pause the current track.")
     async def pause(self, interaction: discord.Interaction):
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or not vc.playing:
             return await interaction.response.send_message(embed=embed_error("Nothing playing."), ephemeral=True)
         await vc.pause(True)
@@ -1808,7 +2058,7 @@ class MusicCog(commands.Cog):
 
     @app_commands.command(name="resume", description="Resume playback.")
     async def resume(self, interaction: discord.Interaction):
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or not vc.paused:
             return await interaction.response.send_message(embed=embed_error("Not paused."), ephemeral=True)
         await vc.pause(False)
@@ -1822,7 +2072,7 @@ class MusicCog(commands.Cog):
     async def volume(self, interaction: discord.Interaction, level: int):
         if not 0 <= level <= 100:
             return await interaction.response.send_message(embed=embed_error("Volume must be 0–100."), ephemeral=True)
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc:
             return await interaction.response.send_message(embed=embed_error("Not connected."), ephemeral=True)
         await vc.set_volume(level)
@@ -1830,7 +2080,7 @@ class MusicCog(commands.Cog):
 
     @app_commands.command(name="filter", description="Open the audio filter control panel.")
     async def filter_cmd(self, interaction: discord.Interaction):
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc:
             return await interaction.response.send_message(embed=embed_error("Bot is not connected to voice."), ephemeral=True)
         gp = self.get_gp(interaction.guild.id)
@@ -1850,7 +2100,7 @@ class MusicCog(commands.Cog):
 
     @app_commands.command(name="queue", description="Show the music queue.")
     async def queue_cmd(self, interaction: discord.Interaction):
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc:
             return await interaction.response.send_message(embed=embed_error("Not connected."), ephemeral=True)
 
@@ -1881,15 +2131,18 @@ class MusicCog(commands.Cog):
 
     @app_commands.command(name="nowplaying", description="Show the now playing panel with controls.")
     async def nowplaying(self, interaction: discord.Interaction):
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or not vc.playing:
             return await interaction.response.send_message(embed=embed_error("Nothing is currently playing."), ephemeral=True)
 
         gp = self.get_gp(interaction.guild.id)
-        embed = gp.build_embed(vc, vc.current)
+        embed, gif_file = gp.build_embed(vc, vc.current)
         view = MusicControlView(gp)
 
-        await interaction.response.send_message(embed=embed, view=view)
+        kwargs = {"embed": embed, "view": view}
+        if gif_file:
+            kwargs["file"] = gif_file
+        await interaction.response.send_message(**kwargs)
         gp.panel_message = await interaction.original_response()
 
     @app_commands.command(name="loop", description="Toggle loop mode (single → queue → off).")
@@ -1903,7 +2156,7 @@ class MusicCog(commands.Cog):
 
     @app_commands.command(name="shuffle", description="Shuffle the queue.")
     async def shuffle(self, interaction: discord.Interaction):
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or vc.queue.is_empty:
             return await interaction.response.send_message(embed=embed_error("Queue is empty."), ephemeral=True)
         items = list(vc.queue)
@@ -1916,7 +2169,7 @@ class MusicCog(commands.Cog):
     @app_commands.command(name="remove", description="Remove a track from the queue by position.")
     @app_commands.describe(index="Position in queue (1 = first)")
     async def remove(self, interaction: discord.Interaction, index: int):
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or vc.queue.is_empty:
             return await interaction.response.send_message(embed=embed_error("Queue is empty."), ephemeral=True)
         items = list(vc.queue)
@@ -1930,7 +2183,7 @@ class MusicCog(commands.Cog):
 
     @app_commands.command(name="clear", description="Clear the entire queue.")
     async def clear(self, interaction: discord.Interaction):
-        vc: Optional[wavelink.Player] = interaction.guild.voice_client
+        vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc:
             return await interaction.response.send_message(embed=embed_error("Not connected."), ephemeral=True)
         vc.queue.clear()

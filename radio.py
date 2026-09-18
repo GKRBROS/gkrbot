@@ -38,6 +38,7 @@ from gkr_ui import (
     embed_warning,
     fmt_ts,
 )
+from voice_handoff import is_connected, is_playing, is_paused, yield_voice_to, restore_voice_from
 
 logger = logging.getLogger("gkr_radio")
 DB_PATH = os.path.join(os.path.dirname(__file__), "radio.sqlite3")
@@ -53,71 +54,41 @@ DB_PATH = os.path.join(os.path.dirname(__file__), "radio.sqlite3")
 # `.playing` / `.paused` properties instead of `.is_connected()` /
 # `.is_playing()` / `.is_paused()` methods. That mismatch is what caused:
 #   AttributeError: 'Player' object has no attribute 'is_connected'
-# These helpers work with either kind of voice client, and
-# _get_or_create_plain_vc() makes sure radio playback always ends up with a
-# plain discord.VoiceClient (required for discord.FFmpegPCMAudio), taking
-# over from wavelink.Player if the music cog currently owns the connection.
+# `is_connected`/`is_playing`/`is_paused` (imported above from voice_handoff,
+# shared with music.py) work with either kind of voice client.
+#
+# FEATURE: rather than radio just barging in and killing whatever Music was
+# doing (losing the queue/position), `_get_or_create_plain_vc` now asks
+# Music (via `yield_voice_to`) to save its state and step aside first, so it
+# can be resumed later via `restore_voice_from` once Radio stops.
 
 
-def _is_connected(vc) -> bool:
-    if vc is None:
-        return False
-    fn = getattr(vc, "is_connected", None)
-    if callable(fn):
-        try:
-            return bool(fn())
-        except Exception:
-            pass
-    if hasattr(vc, "connected"):
-        return bool(vc.connected)
-    return getattr(vc, "channel", None) is not None
-
-
-def _is_playing(vc) -> bool:
-    if vc is None:
-        return False
-    fn = getattr(vc, "is_playing", None)
-    if callable(fn):
-        try:
-            return bool(fn())
-        except Exception:
-            pass
-    return bool(getattr(vc, "playing", False))
-
-
-def _is_paused(vc) -> bool:
-    if vc is None:
-        return False
-    fn = getattr(vc, "is_paused", None)
-    if callable(fn):
-        try:
-            return bool(fn())
-        except Exception:
-            pass
-    return bool(getattr(vc, "paused", False))
-
-
-async def _get_or_create_plain_vc(guild: discord.Guild, channel: discord.VoiceChannel, **connect_kwargs) -> discord.VoiceClient:
+async def _get_or_create_plain_vc(bot: commands.Bot, guild: discord.Guild, channel: discord.VoiceChannel, **connect_kwargs) -> discord.VoiceClient:
     """Get a plain discord.VoiceClient connected to `channel`, taking over
     from another audio system's voice client if necessary.
 
-    Radio streams raw audio via discord.FFmpegPCMAudio through the standard
-    discord.py VoiceClient interface, which is NOT compatible with
-    wavelink.Player (the music cog's Lavalink-backed voice client) — calling
-    .play() with an FFmpeg source on a wavelink.Player fails, and it doesn't
-    share the same connection-check API. So if this guild's voice_client
-    currently belongs to another system, disconnect it first and open a
-    fresh plain connection here.
+    Radio streams raw audio via discord.FFmpegPCMAudio/FFmpegOpusAudio through
+    the standard discord.py VoiceClient interface, which is NOT compatible
+    with wavelink.Player (the music cog's Lavalink-backed voice client) —
+    calling .play() with an FFmpeg source on a wavelink.Player fails, and it
+    doesn't share the same connection-check API. So if this guild's
+    voice_client currently belongs to Music, ask Music to suspend itself
+    (saving its queue/position for later) before we take the channel.
     """
     vc = guild.voice_client
     if vc is not None and not isinstance(vc, discord.VoiceClient):
-        try:
-            await vc.disconnect(force=True)
-        except Exception:
-            pass
-        vc = None
+        await yield_voice_to(bot, guild, "radio")
+        vc = guild.voice_client
+        if vc is not None and not isinstance(vc, discord.VoiceClient):
+            # Fallback safety net if Music couldn't clean up for some reason —
+            # better to still connect radio than crash / do nothing.
+            try:
+                await vc.disconnect(force=True)
+            except Exception:
+                pass
+            vc = None
 
-    if vc is None or not _is_connected(vc):
+    if vc is None or not is_connected(vc):
         return await channel.connect(**connect_kwargs)
 
     if vc.channel.id != channel.id:
@@ -433,9 +404,9 @@ class StationSelectDropdown(discord.ui.Select):
         await interaction.response.defer()
         guild = interaction.guild
         vc = guild.voice_client if guild else None
-        if not vc or not _is_connected(vc) or not isinstance(vc, discord.VoiceClient):
+        if not vc or not is_connected(vc) or not isinstance(vc, discord.VoiceClient):
             if interaction.user.voice and interaction.user.voice.channel:
-                vc = await _get_or_create_plain_vc(guild, interaction.user.voice.channel, self_deaf=True)
+                vc = await _get_or_create_plain_vc(self.cog.bot, guild, interaction.user.voice.channel, self_deaf=True)
             else:
                 await interaction.followup.send("❌ Bot is not connected to a voice channel. Join one first!", ephemeral=True)
                 return
@@ -479,10 +450,10 @@ class RadioControlView(discord.ui.View):
             return
 
         state = get_radio_state(self.guild_id) or {}
-        if _is_playing(vc):
+        if is_playing(vc):
             vc.pause()
             set_radio_state(self.guild_id, is_paused=1)
-        elif _is_paused(vc):
+        elif is_paused(vc):
             vc.resume()
             set_radio_state(self.guild_id, is_paused=0)
         else:
@@ -535,8 +506,10 @@ class RadioControlView(discord.ui.View):
         guild = interaction.guild
         vc = guild.voice_client if guild else None
         set_radio_state(self.guild_id, is_active=0, mode_247=0)
-        if vc and _is_connected(vc):
+        if vc and is_connected(vc):
             await vc.disconnect(force=True)
+        if guild:
+            await restore_voice_from(self.cog.bot, guild, "radio")
         await interaction.response.edit_message(
             embed=embed_info("Radio Stopped", "24/7 Radio has been stopped and disconnected."),
             view=None
@@ -556,6 +529,10 @@ class RadioCog(commands.Cog, name="Radio System"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._locks: Dict[int, asyncio.Lock] = {}
+        # Guild ids where radio was disconnected specifically to hand the
+        # voice channel to Music (as opposed to a manual /radio pause), so we
+        # know to give it back via restore_voice_from() once Music finishes.
+        self._handoff_paused: set = set()
         init_db()
 
     async def cog_load(self):
@@ -626,7 +603,7 @@ class RadioCog(commands.Cog, name="Radio System"):
         """
         set_radio_state(guild_id, volume=new_volume)
         vc = guild.voice_client if guild else None
-        if not guild or not vc or not _is_connected(vc) or not isinstance(vc, discord.VoiceClient):
+        if not guild or not vc or not is_connected(vc) or not isinstance(vc, discord.VoiceClient):
             return False
 
         state = get_radio_state(guild_id) or {}
@@ -639,6 +616,91 @@ class RadioCog(commands.Cog, name="Radio System"):
         station_name = state.get("station_name", "Live Radio")
         stream_url = state.get("stream_url", STATIONS[DEFAULT_STATION_KEY]["url"])
         return await self.start_stream(guild, vc, station_key, station_name, stream_url, new_volume)
+
+    # -----------------------------------------------------------------------
+    # Music <-> Radio voice handoff (see voice_handoff.py)
+    # -----------------------------------------------------------------------
+
+    async def suspend_for_handoff(self, guild: discord.Guild) -> bool:
+        """Called by the Music cog (via voice_handoff.yield_voice_to) right
+        before it wants to connect and play a track. If Radio currently owns
+        this guild's voice connection and is actively playing, stop and
+        disconnect cleanly, keeping the DB row marked is_active=1/is_paused=1
+        so we know to resume the SAME station once Music finishes."""
+        vc = guild.voice_client
+        if not isinstance(vc, discord.VoiceClient):
+            return False  # radio isn't the one holding the connection right now
+
+        state = get_radio_state(guild.id)
+        if not state or not state.get("is_active"):
+            return False
+
+        try:
+            if is_playing(vc) or is_paused(vc):
+                vc.stop()
+            await vc.disconnect(force=True)
+        except Exception as e:
+            logger.debug(f"[Radio] suspend_for_handoff disconnect error: {e}")
+
+        self._handoff_paused.add(guild.id)
+        set_radio_state(guild.id, is_paused=1)
+        return True
+
+    async def resume_from_handoff(self, guild: discord.Guild) -> bool:
+        """Called by the Music cog (via voice_handoff.restore_voice_from)
+        once its own session naturally ends (queue empty & not 24/7, or
+        explicitly stopped). Reconnects and resumes the station that was
+        playing before the handoff, if any."""
+        if guild.id not in self._handoff_paused:
+            return False
+        self._handoff_paused.discard(guild.id)
+
+        state = get_radio_state(guild.id)
+        if not state or not state.get("is_active"):
+            return False
+
+        vc_id = state.get("voice_channel_id")
+        channel = guild.get_channel(int(vc_id)) if vc_id else None
+        if not isinstance(channel, discord.VoiceChannel):
+            return False
+
+        # Reconnecting the instant Music disconnects races Discord's voice
+        # gateway, which needs a brief moment to fully process the previous
+        # session's teardown — trying too soon can silently time out inside
+        # _get_or_create_plain_vc's connect() call, which is exactly what
+        # made Radio not come back after Music stopped. Back off and retry
+        # once instead of giving up after a single immediate attempt.
+        vc = None
+        last_err: Optional[Exception] = None
+        for attempt, delay in enumerate((1.5, 3.0), start=1):
+            await asyncio.sleep(delay)
+            try:
+                vc = await _get_or_create_plain_vc(self.bot, guild, channel, timeout=15, self_deaf=True)
+                break
+            except Exception as e:
+                last_err = e
+                logger.warning(f"[Radio] Reconnect attempt {attempt} after handoff failed: {e}")
+
+        if vc is None:
+            logger.error(f"[Radio] Failed to reconnect after handoff (guild {guild.id}): {last_err}")
+            # Don't fail completely silently — let the channel know it needs
+            # a manual restart instead of leaving people wondering where the
+            # radio went.
+            text_channel_id = state.get("text_channel_id")
+            if text_channel_id:
+                try:
+                    tc = guild.get_channel(int(text_channel_id))
+                    if tc:
+                        await tc.send("📻 I couldn't automatically resume the radio after music finished — try `/radio play` again to restart it.")
+                except Exception:
+                    pass
+            return False
+
+        station_key = state.get("station_key", DEFAULT_STATION_KEY)
+        station_name = state.get("station_name", "Live Radio")
+        stream_url = state.get("stream_url", STATIONS[DEFAULT_STATION_KEY]["url"])
+        volume = state.get("volume", 100)
+        return await self.start_stream(guild, vc, station_key, station_name, stream_url, volume)
 
     def build_now_playing_embed(self, guild_id: int) -> discord.Embed:
         state = get_radio_state(guild_id) or {}
@@ -690,6 +752,16 @@ class RadioCog(commands.Cog, name="Radio System"):
             guild_id_str = s.get("guild_id")
             if not guild_id_str:
                 continue
+
+            # Don't fight over the voice channel while paused — this covers
+            # both a manual `/radio pause` (vc stays connected, nothing to do)
+            # AND a handoff suspension where Music currently owns the
+            # connection (radio was disconnected on purpose, to be resumed
+            # via voice_handoff.restore_voice_from() once Music finishes, not
+            # by this loop yanking the channel back mid-song).
+            if bool(s.get("is_paused", 0)):
+                continue
+
             guild = self.bot.get_guild(int(guild_id_str))
             if not guild:
                 continue
@@ -703,19 +775,19 @@ class RadioCog(commands.Cog, name="Radio System"):
                 continue
 
             vc = guild.voice_client
-            needs_connect = (vc is None) or (not _is_connected(vc)) or (not isinstance(vc, discord.VoiceClient))
+            needs_connect = (vc is None) or (not is_connected(vc)) or (not isinstance(vc, discord.VoiceClient))
 
             if needs_connect:
                 try:
                     logger.info(f"[Radio] 24/7 Auto-reconnecting to {voice_channel.name} in {guild.name}...")
-                    vc = await _get_or_create_plain_vc(guild, voice_channel, timeout=20, reconnect=True, self_deaf=True)
+                    vc = await _get_or_create_plain_vc(self.bot, guild, voice_channel, timeout=20, reconnect=True, self_deaf=True)
                 except Exception as e:
                     logger.warning(f"[Radio] Could not reconnect to {voice_channel.name}: {e}")
                     continue
 
             # Check if playback stopped unexpectedly while marked active and not paused
             is_paused = bool(s.get("is_paused", 0))
-            if vc and not _is_playing(vc) and not is_paused:
+            if vc and not is_playing(vc) and not is_paused:
                 station_key = s.get("station_key", DEFAULT_STATION_KEY)
                 station_name = s.get("station_name", "Live Radio")
                 stream_url = s.get("stream_url", STATIONS[DEFAULT_STATION_KEY]["url"])
@@ -737,6 +809,12 @@ class RadioCog(commands.Cog, name="Radio System"):
         state = get_radio_state(guild.id)
         if not state or not state.get("is_active") or not state.get("mode_247"):
             return
+        if bool(state.get("is_paused", 0)):
+            # Radio was intentionally disconnected — either a manual pause or
+            # a handoff suspension while Music is using the channel. Don't
+            # auto-reconnect out from under that; restore_voice_from() will
+            # bring it back once Music finishes.
+            return
 
         # If disconnected from voice channel
         if before.channel and not after.channel:
@@ -748,9 +826,14 @@ class RadioCog(commands.Cog, name="Radio System"):
             if isinstance(target_ch, discord.VoiceChannel):
                 await asyncio.sleep(4)  # Grace period for gateway handoffs
                 vc = guild.voice_client
-                if not vc or not _is_connected(vc) or not isinstance(vc, discord.VoiceClient):
+                # Re-check state in case a handoff suspension happened during
+                # the grace period above.
+                fresh_state = get_radio_state(guild.id) or {}
+                if bool(fresh_state.get("is_paused", 0)):
+                    return
+                if not vc or not is_connected(vc) or not isinstance(vc, discord.VoiceClient):
                     try:
-                        new_vc = await _get_or_create_plain_vc(guild, target_ch, timeout=15, self_deaf=True)
+                        new_vc = await _get_or_create_plain_vc(self.bot, guild, target_ch, timeout=15, self_deaf=True)
                         station_key = state.get("station_key", DEFAULT_STATION_KEY)
                         station_name = state.get("station_name", "Live Radio")
                         stream_url = state.get("stream_url", STATIONS[DEFAULT_STATION_KEY]["url"])
@@ -800,9 +883,9 @@ class RadioCog(commands.Cog, name="Radio System"):
             station_info = STATIONS[DEFAULT_STATION_KEY]
 
         vc = guild.voice_client
-        if not vc or not _is_connected(vc) or not isinstance(vc, discord.VoiceClient):
+        if not vc or not is_connected(vc) or not isinstance(vc, discord.VoiceClient):
             try:
-                vc = await _get_or_create_plain_vc(guild, voice_channel, timeout=15, self_deaf=True)
+                vc = await _get_or_create_plain_vc(self.bot, guild, voice_channel, timeout=15, self_deaf=True)
             except Exception as e:
                 await interaction.followup.send(f"❌ Failed to connect to voice channel: {e}", ephemeral=True)
                 return
@@ -864,9 +947,9 @@ class RadioCog(commands.Cog, name="Radio System"):
             return
 
         vc = guild.voice_client
-        if not vc or not _is_connected(vc) or not isinstance(vc, discord.VoiceClient):
+        if not vc or not is_connected(vc) or not isinstance(vc, discord.VoiceClient):
             try:
-                vc = await _get_or_create_plain_vc(guild, voice_channel, timeout=15, self_deaf=True)
+                vc = await _get_or_create_plain_vc(self.bot, guild, voice_channel, timeout=15, self_deaf=True)
             except Exception as e:
                 await interaction.followup.send(f"❌ Failed to connect to voice channel: {e}", ephemeral=True)
                 return
@@ -972,7 +1055,7 @@ class RadioCog(commands.Cog, name="Radio System"):
         """Pause radio."""
         guild = interaction.guild
         vc = guild.voice_client if guild else None
-        if not vc or not _is_playing(vc):
+        if not vc or not is_playing(vc):
             await interaction.response.send_message("❌ Nothing is currently playing.", ephemeral=True)
             return
 
@@ -989,7 +1072,7 @@ class RadioCog(commands.Cog, name="Radio System"):
             await interaction.response.send_message("❌ Bot is not connected to a voice channel.", ephemeral=True)
             return
 
-        if _is_paused(vc):
+        if is_paused(vc):
             vc.resume()
             set_radio_state(guild.id, is_paused=0)
             await interaction.response.send_message(embed=embed_success("Radio Resumed", "Stream playback resumed."), ephemeral=True)
@@ -1006,8 +1089,9 @@ class RadioCog(commands.Cog, name="Radio System"):
         guild = interaction.guild
         vc = guild.voice_client if guild else None
         set_radio_state(guild.id, is_active=0, mode_247=0)
-        if vc and _is_connected(vc):
+        if vc and is_connected(vc):
             await vc.disconnect(force=True)
+        await restore_voice_from(self.bot, guild, "radio")
         await interaction.response.send_message(
             embed=embed_info("Radio Stopped", "24/7 Radio stopped and bot disconnected."),
             ephemeral=True
@@ -1021,13 +1105,14 @@ class RadioCog(commands.Cog, name="Radio System"):
         """Stop radio and disconnect (called from dashboard API)."""
         vc = guild.voice_client
         set_radio_state(guild.id, is_active=0, mode_247=0, is_paused=0)
-        if vc and _is_connected(vc):
+        if vc and is_connected(vc):
             await vc.disconnect(force=True)
+        await restore_voice_from(self.bot, guild, "radio")
 
     async def api_pause(self, guild: discord.Guild):
         """Pause radio (called from dashboard API)."""
         vc = guild.voice_client
-        if vc and _is_playing(vc):
+        if vc and is_playing(vc):
             vc.pause()
             set_radio_state(guild.id, is_paused=1)
 
@@ -1036,7 +1121,7 @@ class RadioCog(commands.Cog, name="Radio System"):
         vc = guild.voice_client
         if not vc:
             return
-        if _is_paused(vc):
+        if is_paused(vc):
             vc.resume()
             set_radio_state(guild.id, is_paused=0)
         else:
@@ -1064,12 +1149,12 @@ class RadioCog(commands.Cog, name="Radio System"):
         vc = guild.voice_client
         state = get_radio_state(guild.id) or {}
         vc_id = state.get("voice_channel_id")
-        if not vc or not _is_connected(vc) or not isinstance(vc, discord.VoiceClient):
+        if not vc or not is_connected(vc) or not isinstance(vc, discord.VoiceClient):
             if vc_id:
                 voice_channel = guild.get_channel(int(vc_id))
                 if isinstance(voice_channel, discord.VoiceChannel):
-                    vc = await _get_or_create_plain_vc(guild, voice_channel, timeout=20, reconnect=True, self_deaf=True)
-        if vc and _is_connected(vc):
+                    vc = await _get_or_create_plain_vc(self.bot, guild, voice_channel, timeout=20, reconnect=True, self_deaf=True)
+        if vc and is_connected(vc):
             await self.start_stream(guild, vc, station_key, station["name"], station["url"])
 
 
