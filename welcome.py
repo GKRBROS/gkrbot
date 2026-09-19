@@ -13,8 +13,8 @@ from gkr_ui import embed_success, embed_error, embed_info, C
 DB_PATH = os.path.join(os.path.dirname(__file__), "font_sync.sqlite3")
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "welcome_assets")
 
-FONT_BOLD_URL = "https://github.com/google/fonts/raw/main/ofl/outfit/Outfit-Bold.ttf"
-FONT_REGULAR_URL = "https://github.com/google/fonts/raw/main/ofl/outfit/Outfit-Regular.ttf"
+FONT_BOLD_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/outfit/Outfit%5Bwght%5D.ttf"
+FONT_REGULAR_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/outfit/Outfit%5Bwght%5D.ttf"
 
 FONT_BOLD_PATH = os.path.join(ASSETS_DIR, "Outfit-Bold.ttf")
 FONT_REGULAR_PATH = os.path.join(ASSETS_DIR, "Outfit-Regular.ttf")
@@ -254,20 +254,24 @@ class WelcomeDatabase:
 
 # Helper to download fonts
 async def download_fonts() -> None:
-    async with aiohttp.ClientSession() as session:
-        for url, path in [(FONT_BOLD_URL, FONT_BOLD_PATH), (FONT_REGULAR_URL, FONT_REGULAR_PATH)]:
-            if not os.path.exists(path):
-                print(f"[Welcome] Downloading font from {url}...")
-                try:
-                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                        if resp.status == 200:
-                            with open(path, "wb") as f:
-                                f.write(await resp.read())
-                            print(f"[Welcome] Font saved to {path}")
-                        else:
-                            print(f"[Welcome] Failed to download font: HTTP {resp.status}")
-                except Exception as exc:
-                    print(f"[Welcome] Failed to download font: {exc}")
+    missing = [p for p in (FONT_BOLD_PATH, FONT_REGULAR_PATH) if not os.path.exists(p)]
+    if not missing:
+        return
+    url = FONT_BOLD_URL
+    print(f"[Welcome] Downloading font from {url}...")
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status == 200:
+                    data = await resp.read()
+                    for p in missing:
+                        with open(p, "wb") as f:
+                            f.write(data)
+                        print(f"[Welcome] Font saved to {p}")
+                else:
+                    print(f"[Welcome] Failed to download font: HTTP {resp.status}")
+    except Exception as exc:
+        print(f"[Welcome] Failed to download font: {exc}")
 
 
 def generate_default_bg() -> Image.Image:
