@@ -331,7 +331,7 @@ async def create_low_usage_radio_source(stream_url: str, volume: float = 1.0) ->
     before_opts = (
         "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 "
         "-analyzeduration 1000000 -probesize 1000000 "
-        "-thread_queue_size 512 "
+        "-thread_queue_size 8192 "
         "-nostats -loglevel error"
     )
     clamped_volume = max(0.0, min(2.0, volume))
