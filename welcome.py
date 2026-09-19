@@ -44,7 +44,12 @@ class WelcomeConfig:
     draw_text: bool = True          # Text overlay drawing toggle
     welcome_role_id: Optional[int] = None # Auto-assign role on join
     bot_role_id: Optional[int] = None # Auto-assign role for bots on join
-    
+
+    # If True, the welcome post is JUST the rendered card image — no embed
+    # text/description/fields/footer, no "{member} welcome!" content line,
+    # and welcome_message is not required to be set up at all.
+    card_only: bool = False
+
     # Leave settings
     leave_enabled: bool = False
     leave_channel_id: Optional[int] = None
@@ -131,6 +136,8 @@ class WelcomeDatabase:
                 conn.execute("ALTER TABLE welcome_configs ADD COLUMN leave_image_url TEXT")
             if "card_style" not in columns:
                 conn.execute("ALTER TABLE welcome_configs ADD COLUMN card_style TEXT NOT NULL DEFAULT 'legacy'")
+            if "card_only" not in columns:
+                conn.execute("ALTER TABLE welcome_configs ADD COLUMN card_only INTEGER NOT NULL DEFAULT 0")
             conn.commit()
 
         # One-time migration: replace any literal \n in stored messages
@@ -193,6 +200,7 @@ class WelcomeDatabase:
             leave_channel_id=int(row["leave_channel_id"]) if "leave_channel_id" in row.keys() and row["leave_channel_id"] else None,
             leave_message=row["leave_message"].replace("\\n", "\n") if "leave_message" in row.keys() else "**{user}** left the server.",
             leave_image_url=row["leave_image_url"] if "leave_image_url" in row.keys() else None,
+            card_only=bool(row["card_only"]) if "card_only" in row.keys() else False,
         )
 
     def save_config(self, config: WelcomeConfig) -> None:
@@ -201,8 +209,8 @@ class WelcomeDatabase:
                 """
                 INSERT INTO welcome_configs (
                     guild_id, enabled, channel_id, welcome_message, background_path, card_style, show_avatar, show_guild_icon, draw_avatar, draw_text, welcome_role_id, bot_role_id,
-                    leave_enabled, leave_channel_id, leave_message, leave_image_url
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    leave_enabled, leave_channel_id, leave_message, leave_image_url, card_only
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(guild_id) DO UPDATE SET
                     enabled         = excluded.enabled,
                     channel_id      = excluded.channel_id,
@@ -218,7 +226,8 @@ class WelcomeDatabase:
                     leave_enabled    = excluded.leave_enabled,
                     leave_channel_id = excluded.leave_channel_id,
                     leave_message    = excluded.leave_message,
-                    leave_image_url  = excluded.leave_image_url
+                    leave_image_url  = excluded.leave_image_url,
+                    card_only        = excluded.card_only
                 """,
                 (
                     str(config.guild_id),
@@ -237,6 +246,7 @@ class WelcomeDatabase:
                     str(config.leave_channel_id) if config.leave_channel_id else None,
                     config.leave_message,
                     config.leave_image_url,
+                    1 if config.card_only else 0,
                 ),
             )
             conn.commit()
@@ -942,6 +952,17 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
         discord_file = discord.File(card_file_bytes, filename=f"welcome_{member.id}.jpg")
         image_url = f"attachment://welcome_{member.id}.jpg"
 
+    # ── FEATURE: card-only mode ────────────────────────────────────────────
+    # If enabled, skip the custom welcome_message entirely (it isn't needed
+    # and doesn't have to be set up) and post just the rendered card — a
+    # bare embed containing only the image, no author row/description/
+    # fields/footer, and no "{member} welcome!" content line.
+    if config.card_only:
+        card_embed = discord.Embed(color=0x8250FF)
+        card_embed.set_image(url=image_url)
+        await channel.send(embed=card_embed, file=discord_file)
+        return
+
     # ── Format the custom welcome message ────────────────────────────────────
     import string
     class SafeDict(dict):
@@ -1167,8 +1188,17 @@ def build_setup_embed(config: "WelcomeConfig", guild: discord.Guild) -> discord.
     embed.add_field(name="Avatar on Card", value="✅" if config.draw_avatar else "❌", inline=True)
     embed.add_field(name="Text on Card", value="✅" if config.draw_text else "❌", inline=True)
 
-    msg_preview = config.welcome_message[:150] + ("…" if len(config.welcome_message) > 150 else "")
-    embed.add_field(name="Message Preview", value=f"```{msg_preview}```", inline=False)
+    embed.add_field(
+        name="Post Mode",
+        value="🖼️ Card Only (no text message needed)" if config.card_only else "📝 Card + Welcome Message",
+        inline=False,
+    )
+
+    # A welcome message that isn't used in card-only mode is just clutter —
+    # only show its preview when it's actually going to be posted.
+    if not config.card_only:
+        msg_preview = config.welcome_message[:150] + ("…" if len(config.welcome_message) > 150 else "")
+        embed.add_field(name="Message Preview", value=f"```{msg_preview}```", inline=False)
 
     embed.set_footer(text="Panel is private to you • expires in 5 minutes of inactivity")
     return embed
@@ -1457,7 +1487,10 @@ class WelcomeSetupView(discord.ui.View):
         self.add_item(role_select)
 
         # ── Row 3: action buttons ────────────────────────────────────────
-        edit_msg_btn = discord.ui.Button(label="Edit Message", emoji="✏️", style=discord.ButtonStyle.secondary, row=3)
+        edit_msg_btn = discord.ui.Button(
+            label="Edit Message" + (" (optional)" if config.card_only else ""),
+            emoji="✏️", style=discord.ButtonStyle.secondary, row=3,
+        )
 
         async def on_edit_message(interaction: discord.Interaction):
             await interaction.response.send_modal(SetupMessageModal(self.cog, self.guild_id, interaction.message))
@@ -1563,6 +1596,26 @@ class WelcomeSetupView(discord.ui.View):
 
         enabled_btn.callback = on_toggle_enabled
         self.add_item(enabled_btn)
+
+        # ── FEATURE: card-only mode — when on, no welcome_message is needed
+        # at all; send_welcome() just posts the rendered card with no text.
+        card_only_btn = discord.ui.Button(
+            label=f"Post Mode: {'Card Only' if config.card_only else 'Card + Message'}",
+            emoji="🖼️" if config.card_only else "📝",
+            style=discord.ButtonStyle.success if config.card_only else discord.ButtonStyle.secondary, row=4,
+        )
+
+        async def on_toggle_card_only(interaction: discord.Interaction):
+            c = self.cog.db.get_config(self.guild_id)
+            c.card_only = not c.card_only
+            self.cog.db.save_config(c)
+            await interaction.response.edit_message(
+                embed=build_setup_embed(c, interaction.guild),
+                view=WelcomeSetupView(self.cog, self.guild_id),
+            )
+
+        card_only_btn.callback = on_toggle_card_only
+        self.add_item(card_only_btn)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not interaction.user.guild_permissions.manage_guild:
@@ -1710,8 +1763,14 @@ class WelcomeCog(commands.Cog):
             if br:
                 bot_role_val = br.mention
         embed.add_field(name="Auto-Role (Bots)", value=bot_role_val, inline=True)
-        
-        embed.add_field(name="Message Text", value=f"`{config.welcome_message}`", inline=False)
+
+        embed.add_field(
+            name="Post Mode",
+            value="🖼️ Card Only" if config.card_only else "📝 Card + Welcome Message",
+            inline=True,
+        )
+        if not config.card_only:
+            embed.add_field(name="Message Text", value=f"`{config.welcome_message}`", inline=False)
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

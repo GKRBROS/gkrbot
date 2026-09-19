@@ -1412,6 +1412,8 @@ class StreamAlertsCog(commands.Cog):
                 except Exception:
                     pass
                 return
+
+    async def _send_video_alert(self, alert: AlertConfig, info: dict) -> None:
         guild = self.bot.get_guild(alert.guild_id)
         if not guild:
             return

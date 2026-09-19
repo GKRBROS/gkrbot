@@ -7,6 +7,7 @@ import Landing from './pages/Landing';
 import AuthCallback from './pages/AuthCallback';
 import ServerSelector from './pages/ServerSelector';
 import DashboardLayout from './pages/DashboardLayout';
+import Overview from './pages/features/Overview';
 import StreamAlerts from './pages/features/StreamAlerts';
 import Tickets from './pages/features/Tickets';
 import Welcome from './pages/features/Welcome';
@@ -21,6 +22,16 @@ import CustomCommands from './pages/features/CustomCommands';
 import Economy from './pages/features/Economy';
 import TempVC from './pages/features/TempVC';
 import Registration from './pages/features/Registration';
+import RoleSync from './pages/features/RoleSync';
+import AISystem from './pages/features/AISystem';
+import VoiceAnnounce from './pages/features/VoiceAnnounce';
+import Giveaways from './pages/features/Giveaways';
+import Polls from './pages/features/Polls';
+import SelfRoles from './pages/features/SelfRoles';
+import ServerLogs from './pages/features/ServerLogs';
+import Birthdays from './pages/features/Birthdays';
+import Leaderboard from './pages/features/Leaderboard';
+import Community from './pages/features/Community';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -58,8 +69,9 @@ function App() {
       <Route path="/dashboard" element={user ? <ServerSelector /> : <Navigate to="/" />} />
       
       <Route path="/dashboard/:guildId" element={user ? <DashboardLayout user={user} /> : <Navigate to="/" />}>
-        {/* Default route inside a guild dashboard defaults to Welcome */}
-        <Route index element={<Navigate to="welcome" replace />} />
+        {/* Default route inside a guild dashboard defaults to Overview */}
+        <Route index element={<Navigate to="overview" replace />} />
+        <Route path="overview" element={<Overview />} />
         <Route path="welcome" element={<Welcome />} />
         <Route path="stream-alerts" element={<StreamAlerts />} />
         <Route path="tickets" element={<Tickets />} />
@@ -73,10 +85,20 @@ function App() {
         <Route path="music" element={<Music />} />
         <Route path="radio" element={<Radio />} />
         <Route path="economy" element={<Economy />} />
+        <Route path="giveaways" element={<Giveaways />} />
+        <Route path="polls" element={<Polls />} />
+        <Route path="self-roles" element={<SelfRoles />} />
+        <Route path="server-logs" element={<ServerLogs />} />
+        <Route path="birthdays" element={<Birthdays />} />
+        <Route path="leaderboard" element={<Leaderboard />} />
+        <Route path="community" element={<Community />} />
+        <Route path="ai" element={<AISystem />} />
+        <Route path="voice-announce" element={<VoiceAnnounce />} />
+        <Route path="role-sync" element={<RoleSync />} />
         <Route path="sync" element={<ServerSync />} />
       </Route>
 
-      {/* Fallback route for unknown paths like /undefined */}
+      {/* Fallback route for unknown paths */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

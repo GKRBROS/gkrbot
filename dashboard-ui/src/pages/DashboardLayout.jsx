@@ -3,12 +3,43 @@ import { useEffect, useState } from 'react';
 import api from '../api';
 import { autoSyncEnabled, setAutoSyncEnabled } from '../sync';
 import { useBotName } from '../BotContext';
+import { useTheme } from '../hooks/useTheme';
+
+// Page name map for breadcrumbs
+const PAGE_NAMES = {
+  overview: '📊 Overview',
+  welcome: '👋 Welcome & Leave',
+  registration: '📝 Registration & Forms',
+  'stream-alerts': '📺 Stream Alerts',
+  tickets: '🎫 Tickets',
+  security: '🛡️ Security',
+  moderation: '⚖️ Moderation',
+  sticky: '📌 Sticky Messages',
+  'auto-reactions': '⚡ Auto Reactions',
+  'custom-commands': '💬 Custom Commands',
+  'temp-vc': '🎙️ Temp Voice',
+  music: '🎵 Music',
+  radio: '📻 Radio',
+  economy: '🪙 Economy',
+  giveaways: '🎉 Giveaways',
+  polls: '📊 Polls',
+  'self-roles': '🎭 Self Roles',
+  'server-logs': '📋 Server Logs',
+  birthdays: '🎂 Birthdays',
+  leaderboard: '🏆 Leaderboard',
+  community: '🤝 Community',
+  ai: '🤖 AI System',
+  'voice-announce': '🔊 Voice Announce',
+  'role-sync': '🔗 Role Sync',
+  sync: '🔄 Multi-Server Sync',
+};
 
 function DashboardLayout({ user }) {
   const { guildId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   const botName = useBotName();
+  const { theme, toggle: toggleTheme, isDark } = useTheme();
   const [guild, setGuild] = useState(null);
   const [autoSync, setAutoSync] = useState(autoSyncEnabled());
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -25,21 +56,31 @@ function DashboardLayout({ user }) {
   }, [location.pathname]);
 
   useEffect(() => {
-    // Fetch guild details from user's guilds
     api.get('/users/@me').then(res => {
       const found = res.data.guilds.find(g => g.id === guildId);
       if (found) setGuild(found);
     }).catch(console.error);
   }, [guildId]);
 
+  // Derive current page name for breadcrumb
+  const pathSegments = location.pathname.split('/').filter(Boolean);
+  const currentPage = pathSegments[pathSegments.length - 1];
+  const currentPageName = PAGE_NAMES[currentPage] || '';
+
   const navGroups = [
+    {
+      label: 'Overview',
+      items: [
+        { name: '📊 Overview', path: `/dashboard/${guildId}/overview`, icon: '📊' },
+      ]
+    },
     {
       label: 'Core Features',
       items: [
         { name: 'Welcome & Leave', path: `/dashboard/${guildId}/welcome`, icon: '👋' },
-        { name: 'Registration & Forms', path: `/dashboard/${guildId}/registration`, icon: '📝' },
-        { name: 'Stream Alerts', path: `/dashboard/${guildId}/stream-alerts`, icon: '📺' },
         { name: 'Tickets System', path: `/dashboard/${guildId}/tickets`, icon: '🎫' },
+        { name: 'Stream Alerts', path: `/dashboard/${guildId}/stream-alerts`, icon: '📺' },
+        { name: 'Registration & Forms', path: `/dashboard/${guildId}/registration`, icon: '📝' },
       ]
     },
     {
@@ -47,6 +88,18 @@ function DashboardLayout({ user }) {
       items: [
         { name: 'Security & Anti-Spam', path: `/dashboard/${guildId}/security`, icon: '🛡️' },
         { name: 'Staff Roles & Mod', path: `/dashboard/${guildId}/moderation`, icon: '⚖️' },
+        { name: 'Server Logs', path: `/dashboard/${guildId}/server-logs`, icon: '📋' },
+      ]
+    },
+    {
+      label: 'Community',
+      items: [
+        { name: 'Giveaways', path: `/dashboard/${guildId}/giveaways`, icon: '🎉' },
+        { name: 'Polls', path: `/dashboard/${guildId}/polls`, icon: '📊' },
+        { name: 'Community & Suggestions', path: `/dashboard/${guildId}/community`, icon: '🤝' },
+        { name: 'Birthdays', path: `/dashboard/${guildId}/birthdays`, icon: '🎂' },
+        { name: 'Self Roles', path: `/dashboard/${guildId}/self-roles`, icon: '🎭' },
+        { name: 'Leaderboard & XP', path: `/dashboard/${guildId}/leaderboard`, icon: '🏆' },
       ]
     },
     {
@@ -66,13 +119,15 @@ function DashboardLayout({ user }) {
         { name: 'Economy & Shop', path: `/dashboard/${guildId}/economy`, icon: '🪙' },
       ]
     },
-
     {
-      label: 'Multi-Server Tools',
+      label: 'Advanced Features',
       items: [
+        { name: 'AI System Studio', path: `/dashboard/${guildId}/ai`, icon: '🤖' },
+        { name: 'Voice Announcer', path: `/dashboard/${guildId}/voice-announce`, icon: '🔊' },
+        { name: 'Cross-Server Role Sync', path: `/dashboard/${guildId}/role-sync`, icon: '🔗' },
         { name: 'Sync To Other Servers', path: `/dashboard/${guildId}/sync`, icon: '🔄' },
       ]
-    }
+    },
   ];
 
   const isActive = (path) => location.pathname === path;
@@ -155,6 +210,14 @@ function DashboardLayout({ user }) {
           <div className="sidebar-user-name">
             {user?.username || 'User'}
           </div>
+          {/* Theme toggle */}
+          <button
+            onClick={toggleTheme}
+            className="theme-toggle"
+            title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          >
+            {isDark ? '☀️' : '🌙'}
+          </button>
           <button
             onClick={() => {
               localStorage.removeItem('bot_dashboard_token');
@@ -188,16 +251,31 @@ function DashboardLayout({ user }) {
             ☰
           </button>
 
-          <Link to="/dashboard" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '17px' }}>🏰</span>
-            <span style={{
-              fontSize: '14px', fontWeight: 700, color: 'var(--text-main)',
-              fontFamily: 'var(--font-display)', whiteSpace: 'nowrap',
-              overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px'
-            }}>
-              {guild?.name || 'Dashboard'}
-            </span>
-          </Link>
+          {/* Breadcrumb in topbar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1, minWidth: 0 }}>
+            <Link to="/dashboard" style={{ textDecoration: 'none', color: 'var(--text-muted)', fontSize: '13px', whiteSpace: 'nowrap' }}>
+              🏰 Servers
+            </Link>
+            {guild && (
+              <>
+                <span style={{ color: 'var(--text-muted)', opacity: 0.5 }}>/</span>
+                <Link
+                  to={`/dashboard/${guildId}/overview`}
+                  style={{ textDecoration: 'none', color: 'var(--text-muted)', fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }}
+                >
+                  {guild.name}
+                </Link>
+              </>
+            )}
+            {currentPageName && currentPage !== guildId && (
+              <>
+                <span style={{ color: 'var(--text-muted)', opacity: 0.5, flexShrink: 0 }}>/</span>
+                <span style={{ fontSize: '13px', color: 'var(--text-sub)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                  {currentPageName}
+                </span>
+              </>
+            )}
+          </div>
 
           {/* Global Auto-Sync Toggle */}
           <div
@@ -215,16 +293,16 @@ function DashboardLayout({ user }) {
             <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-main)' }}>🔄</span>
             <span className="autosync-label-text">
               <span style={{ fontSize: '12.5px', fontWeight: 700, color: autoSync ? '#a5b4fc' : 'var(--text-sub)', display: 'block', lineHeight: 1.2 }}>
-                Auto-sync to ALL servers: {autoSync ? 'ON' : 'OFF'}
+                Auto-sync: {autoSync ? 'ON' : 'OFF'}
               </span>
               <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'block', lineHeight: 1.3 }}>
-                {autoSync ? 'Edits apply everywhere' : 'Edits affect this server only'}
+                {autoSync ? 'All servers' : 'This server only'}
               </span>
             </span>
           </div>
         </div>
 
-        <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '36px 40px 56px' }}>
+        <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px 36px 56px' }}>
           <Outlet />
         </div>
       </div>
