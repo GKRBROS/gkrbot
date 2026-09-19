@@ -1591,3 +1591,261 @@ h1, h2, h3, h4, h5, h6 {
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Landing Page Specialized Styles ────────────────────────── */
+.landing-viewport {
+  min-height: 100vh;
+  min-height: 100dvh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  background-color: #090b10;
+  position: relative;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.landing-glow-top {
+  position: absolute;
+  top: -120px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 720px;
+  max-width: 96vw;
+  height: 420px;
+  background: radial-gradient(ellipse at center, rgba(88, 101, 242, 0.18) 0%, rgba(56, 189, 248, 0.06) 45%, transparent 72%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.landing-glow-bottom {
+  position: absolute;
+  bottom: -150px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 580px;
+  max-width: 90vw;
+  height: 360px;
+  background: radial-gradient(ellipse at center, rgba(88, 101, 242, 0.08) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.landing-container {
+  position: relative;
+  z-index: 10;
+  width: 100%;
+  max-width: 580px;
+  margin: 0 auto;
+}
+
+.landing-card-elevated {
+  background: rgba(15, 18, 26, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 24px;
+  padding: 46px 42px;
+  text-align: center;
+  box-shadow: 0 24px 64px -12px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  position: relative;
+  overflow: hidden;
+}
+
+.landing-card-elevated::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 15%;
+  right: 15%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+}
+
+.landing-brand-icon {
+  width: 68px;
+  height: 68px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #5865F2 0%, #4752c4 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 20px auto;
+  color: #ffffff;
+  box-shadow: 0 10px 28px -4px rgba(88, 101, 242, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.landing-brand-icon:hover {
+  transform: translateY(-2px) scale(1.04);
+}
+
+.landing-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 14px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #a5b4fc;
+  background: rgba(88, 101, 242, 0.12);
+  border: 1px solid rgba(88, 101, 242, 0.28);
+  margin-bottom: 16px;
+  letter-spacing: 0.02em;
+}
+
+.landing-heading {
+  font-size: clamp(26px, 4vw, 36px);
+  font-weight: 800;
+  color: #f8fafc;
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  margin-bottom: 12px;
+}
+
+.landing-description {
+  font-size: 14.5px;
+  color: #94a3b8;
+  line-height: 1.6;
+  max-width: 440px;
+  margin: 0 auto 28px auto;
+}
+
+.landing-features-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 32px;
+}
+
+.landing-feature-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.landing-feature-chip:hover {
+  background: rgba(88, 101, 242, 0.1);
+  border-color: rgba(88, 101, 242, 0.3);
+  color: #ffffff;
+}
+
+.landing-feature-chip svg {
+  color: #818cf8;
+}
+
+.landing-btn-wrapper {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+.landing-discord-btn {
+  width: 100%;
+  max-width: 360px;
+  min-height: 48px;
+  padding: 13px 24px;
+  border-radius: 12px;
+  background: #5865F2;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  box-shadow: 0 8px 24px -4px rgba(88, 101, 242, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  outline: none;
+}
+
+.landing-discord-btn:hover:not(:disabled) {
+  background: #4752c4;
+  transform: translateY(-1.5px);
+  box-shadow: 0 12px 30px -4px rgba(88, 101, 242, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.landing-discord-btn:active:not(:disabled) {
+  transform: translateY(0);
+  background: #3c45a5;
+  box-shadow: 0 4px 12px -2px rgba(88, 101, 242, 0.4);
+}
+
+.landing-discord-btn:focus-visible {
+  box-shadow: 0 0 0 2px #090b10, 0 0 0 4px #5865F2;
+}
+
+.landing-discord-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.landing-permission-note {
+  margin-top: 18px;
+  font-size: 12px;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.landing-footer {
+  margin-top: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+@media (max-width: 640px) {
+  .landing-viewport {
+    padding: 24px 16px;
+  }
+  .landing-card-elevated {
+    padding: 32px 20px;
+    border-radius: 20px;
+  }
+  .landing-heading {
+    font-size: 24px;
+  }
+  .landing-description {
+    font-size: 13.5px;
+    margin-bottom: 22px;
+  }
+  .landing-features-grid {
+    gap: 6px;
+    margin-bottom: 24px;
+  }
+  .landing-feature-chip {
+    padding: 5px 10px;
+    font-size: 11.5px;
+  }
+  .landing-discord-btn {
+    max-width: 100%;
+    min-height: 46px;
+    font-size: 14px;
+  }
+}
+
