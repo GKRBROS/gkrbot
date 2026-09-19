@@ -1,15 +1,34 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  RefreshCw,
+  CheckCircle2,
+  AlertCircle,
+  Server,
+  Layers,
+  Check,
+  ArrowRight,
+  Shield,
+  MessageSquare,
+  Sparkles,
+  Ticket,
+  Tv,
+  Scale
+} from 'lucide-react';
 import api from '../../api';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardHeader, CardTitle, CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Badge from '../../components/Badge';
 
 const MODULE_OPTIONS = [
-  { id: 'welcome', label: '👋 Welcome & Leave Setup', desc: 'Welcome and leave messages, image attachments, and channel configs' },
-  { id: 'security', label: '🛡️ Security & Anti-Spam', desc: 'Message limits, time windows, mass mention limits, and image scanner' },
-  { id: 'sticky', label: '📌 Sticky Messages', desc: 'Channel stickies (matches channels by name on target servers)' },
-  { id: 'autoreact', label: '⚡ Auto Reactions', desc: 'Emoji reaction triggers (matches channels by name on target servers)' },
-  { id: 'tickets', label: '🎫 Tickets System', desc: 'Ticket categories and transcript log channel (channels matched by name)' },
-  { id: 'streamalerts', label: '📺 Stream Alerts', desc: 'YouTube / Twitch / Kick alerts (notification channels matched by name)' },
-  { id: 'moderation', label: '⚖️ Staff Roles & Moderation', desc: 'Designated staff roles (matched by role name on target servers)' },
+  { id: 'welcome', label: 'Welcome & Leave Setup', desc: 'Welcome/leave messages, banners, embed cards & auto-roles', icon: Sparkles },
+  { id: 'security', label: 'Security & Anti-Spam', desc: 'Message velocity limits, time windows, mass mention caps & image scanning', icon: Shield },
+  { id: 'sticky', label: 'Sticky Messages', desc: 'Persistent channel sticky banners (matches target channel names)', icon: MessageSquare },
+  { id: 'autoreact', label: 'Auto Reactions', desc: 'Keyword emoji triggers and reactions (matches channel names)', icon: Sparkles },
+  { id: 'tickets', label: 'Tickets System', desc: 'Ticket categories, modal questions & transcripts log routing', icon: Ticket },
+  { id: 'streamalerts', label: 'Stream Alerts', desc: 'YouTube / Twitch / Kick notifications and target alert channels', icon: Tv },
+  { id: 'moderation', label: 'Staff Roles & Moderation', desc: 'Staff roles, mute durations & mod logs (matched by role names)', icon: Scale },
 ];
 
 function ServerSync() {
@@ -78,7 +97,7 @@ function ServerSync() {
       });
       setResult({
         type: 'success',
-        text: `✓ Successfully synced ${selectedModules.length} module(s) across ${res.data.synced_servers} target server(s)!`
+        text: `Successfully synced ${selectedModules.length} module(s) across ${res.data.synced_servers} target server(s)!`
       });
     } catch (err) {
       setResult({
@@ -91,175 +110,188 @@ function ServerSync() {
 
   if (loading) {
     return (
-      <div className="animate-fade-in stagger">
-        <div className="skeleton" style={{ height: '80px', marginBottom: '24px' }}></div>
-        <div className="skeleton" style={{ height: '300px' }}></div>
+      <div className="flex flex-col gap-6 animate-fade-in">
+        <div className="skeleton" style={{ height: '72px' }} />
+        <div className="skeleton" style={{ height: '100px' }} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="skeleton" style={{ height: '360px' }} />
+          <div className="skeleton" style={{ height: '360px' }} />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="animate-fade-in">
-      {/* Header */}
-      <div className="page-header" style={{ marginBottom: '24px' }}>
-        <h2 className="page-title">
-          <span>🔄</span> Multi-Server Settings Sync
-        </h2>
-        <p className="page-subtitle">
-          Replicate and keep settings identical across multiple Discord servers in a single click.
-        </p>
-      </div>
+    <div className="flex flex-col gap-6 animate-fade-in">
+      <PageHeader
+        icon={RefreshCw}
+        title="Multi-Server Settings Sync"
+        subtitle="Replicate and clone bot configurations across multiple Discord servers in a single click."
+      />
 
       {result && (
-        <div style={{
-          padding: '14px 18px',
-          borderRadius: '10px',
-          marginBottom: '24px',
-          background: result.type === 'success' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-          border: `1px solid ${result.type === 'success' ? 'var(--success)' : 'var(--danger)'}`,
-          color: result.type === 'success' ? 'var(--success)' : 'var(--danger)',
-          fontWeight: 500,
-          fontSize: '14px'
-        }}>
-          {result.text}
+        <div
+          className={`p-4 rounded-xl border flex items-center gap-3 text-sm font-medium ${
+            result.type === 'success'
+              ? 'bg-success/10 border-success/30 text-success'
+              : 'bg-danger/10 border-danger/30 text-danger'
+          }`}
+        >
+          {result.type === 'success' ? (
+            <CheckCircle2 size={18} className="shrink-0" />
+          ) : (
+            <AlertCircle size={18} className="shrink-0" />
+          )}
+          <span>{result.text}</span>
         </div>
       )}
 
       {/* Source Server Banner */}
-      <div className="card glass-panel flex items-center justify-between" style={{
-        marginBottom: '28px',
-        padding: '18px 24px',
-        background: 'linear-gradient(135deg, rgba(88,101,242,0.12) 0%, rgba(0,212,255,0.05) 100%)',
-        border: '1px solid rgba(88,101,242,0.3)'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          {currentGuild?.icon ? (
-            <img src={currentGuild.icon} alt="" style={{ width: '48px', height: '48px', borderRadius: '12px' }} />
-          ) : (
-            <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 'bold' }}>
-              {currentGuild?.name?.charAt(0) || 'G'}
-            </div>
-          )}
-          <div>
-            <span style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '1px', color: 'var(--accent)', fontWeight: 700 }}>
-              SOURCE SERVER (MASTER)
-            </span>
-            <div style={{ fontSize: '18px', fontWeight: 700, color: 'var(--text-main)' }}>
-              {currentGuild?.name}
+      <Card className="p-5 bg-gradient-to-r from-primary/10 via-card to-card border-primary/20">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            {currentGuild?.icon ? (
+              <img
+                src={currentGuild.icon}
+                alt=""
+                className="w-14 h-14 rounded-2xl object-cover shadow-sm ring-2 ring-primary/30"
+              />
+            ) : (
+              <div className="w-14 h-14 rounded-2xl bg-primary text-white font-bold flex items-center justify-center text-xl shadow-sm ring-2 ring-primary/30">
+                {currentGuild?.name?.charAt(0) || 'G'}
+              </div>
+            )}
+            <div>
+              <div className="flex items-center gap-2">
+                <Badge variant="primary" size="sm">SOURCE SERVER (MASTER)</Badge>
+              </div>
+              <h3 className="text-lg font-bold text-main mt-1">
+                {currentGuild?.name}
+              </h3>
             </div>
           </div>
+          <p className="text-xs text-muted max-w-xs">
+            Configurations from this server will be safely cloned and applied to selected target guilds.
+          </p>
         </div>
-        <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-          Settings will be copied <strong>FROM</strong> this server.
-        </div>
-      </div>
+      </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', marginBottom: '32px' }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Step 1: Select Modules */}
-        <div className="card glass-panel">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span>1️⃣</span> Select Modules to Clone
-            </h3>
-            <button
-              type="button"
+        <Card className="p-6 flex flex-col">
+          <CardHeader className="p-0 pb-4 mb-3 border-b border-border flex flex-row items-center justify-between">
+            <CardTitle icon={Layers}>
+              <span>1. Choose Modules to Clone</span>
+            </CardTitle>
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleSelectAllModules}
-              style={{ background: 'transparent', border: 'none', color: 'var(--primary)', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}
+              className="text-xs text-primary hover:text-primary-hover"
             >
               {selectedModules.length === MODULE_OPTIONS.length ? 'Deselect All' : 'Select All'}
-            </button>
-          </div>
+            </Button>
+          </CardHeader>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            {MODULE_OPTIONS.map(mod => {
+          <div className="flex flex-col gap-2.5 flex-1 overflow-y-auto max-h-[460px] pr-1">
+            {MODULE_OPTIONS.map((mod) => {
               const isChecked = selectedModules.includes(mod.id);
+              const Icon = mod.icon;
               return (
                 <div
                   key={mod.id}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => toggleModule(mod.id)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'flex-start',
-                    justifyContent: 'space-between',
-                    gap: '12px',
-                    padding: '12px 14px',
-                    borderRadius: '8px',
-                    background: isChecked ? 'rgba(88,101,242,0.12)' : 'rgba(255,255,255,0.02)',
-                    border: `1px solid ${isChecked ? 'var(--primary)' : 'var(--border)'}`,
-                    cursor: 'pointer',
-                    transition: 'all 0.15s'
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') toggleModule(mod.id);
                   }}
+                  className={`p-3.5 rounded-xl border flex items-start justify-between gap-3 cursor-pointer transition-all duration-150 ${
+                    isChecked
+                      ? 'bg-primary/10 border-primary/50 shadow-sm shadow-primary/5'
+                      : 'bg-card-sub/50 hover:bg-card-sub border-border hover:border-border-hover'
+                  }`}
                 >
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-main)' }}>
-                      {mod.label}
+                  <div className="flex items-start gap-3 min-w-0">
+                    <div className={`p-2 rounded-lg mt-0.5 shrink-0 ${isChecked ? 'bg-primary text-white' : 'bg-border text-muted'}`}>
+                      <Icon size={16} />
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      {mod.desc}
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-main">
+                        {mod.label}
+                      </div>
+                      <div className="text-xs text-muted mt-0.5 leading-relaxed">
+                        {mod.desc}
+                      </div>
                     </div>
                   </div>
                   <input
                     type="checkbox"
                     checked={isChecked}
                     onChange={() => {}}
-                    style={{ width: '16px', height: '16px', accentColor: 'var(--primary)', cursor: 'pointer', marginTop: '3px' }}
+                    className="w-4 h-4 mt-1 accent-primary cursor-pointer shrink-0"
                   />
                 </div>
               );
             })}
           </div>
-        </div>
+        </Card>
 
         {/* Step 2: Select Target Servers */}
-        <div className="card glass-panel">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ fontSize: '16px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span>2️⃣</span> Select Target Servers ({selectedGuilds.length})
-            </h3>
+        <Card className="p-6 flex flex-col">
+          <CardHeader className="p-0 pb-4 mb-3 border-b border-border flex flex-row items-center justify-between">
+            <CardTitle icon={Server}>
+              <span>2. Select Target Servers ({selectedGuilds.length})</span>
+            </CardTitle>
             {guilds.length > 0 && (
-              <button
-                type="button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={handleSelectAllGuilds}
-                style={{ background: 'transparent', border: 'none', color: 'var(--primary)', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}
+                className="text-xs text-primary hover:text-primary-hover"
               >
                 {selectedGuilds.length === guilds.length ? 'Deselect All' : 'Select All'}
-              </button>
+              </Button>
             )}
-          </div>
+          </CardHeader>
 
           {guilds.length === 0 ? (
-            <div style={{ padding: '30px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
-              You don&apos;t have any other servers where you are an Administrator and where the bot is invited.
+            <div className="py-16 text-center text-muted text-sm flex flex-col items-center justify-center flex-1">
+              <Server size={36} className="mb-2 opacity-40" />
+              <p>No other servers found where you have Administrator permissions and the bot is invited.</p>
             </div>
           ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '360px', overflowY: 'auto' }}>
-              {guilds.map(guild => {
+            <div className="flex flex-col gap-2.5 flex-1 overflow-y-auto max-h-[460px] pr-1">
+              {guilds.map((guild) => {
                 const isChecked = selectedGuilds.includes(guild.id);
                 return (
                   <div
                     key={guild.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => toggleGuild(guild.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '10px 14px',
-                      borderRadius: '8px',
-                      background: isChecked ? 'rgba(88,101,242,0.12)' : 'rgba(255,255,255,0.02)',
-                      border: `1px solid ${isChecked ? 'var(--primary)' : 'var(--border)'}`,
-                      cursor: 'pointer',
-                      transition: 'all 0.15s'
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') toggleGuild(guild.id);
                     }}
+                    className={`p-3 rounded-xl border flex items-center justify-between gap-3 cursor-pointer transition-all duration-150 ${
+                      isChecked
+                        ? 'bg-primary/10 border-primary/50 shadow-sm shadow-primary/5'
+                        : 'bg-card-sub/50 hover:bg-card-sub border-border hover:border-border-hover'
+                    }`}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div className="flex items-center gap-3 min-w-0">
                       {guild.icon ? (
-                        <img src={guild.icon} alt="" style={{ width: '32px', height: '32px', borderRadius: '8px', objectFit: 'cover' }} />
+                        <img
+                          src={guild.icon}
+                          alt=""
+                          className="w-10 h-10 rounded-xl object-cover shrink-0"
+                        />
                       ) : (
-                        <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                        <div className="w-10 h-10 rounded-xl bg-primary/20 text-primary font-bold flex items-center justify-center shrink-0">
                           {guild.name.charAt(0)}
                         </div>
                       )}
-                      <span style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-main)' }}>
+                      <span className="text-sm font-semibold text-main truncate">
                         {guild.name}
                       </span>
                     </div>
@@ -267,44 +299,47 @@ function ServerSync() {
                       type="checkbox"
                       checked={isChecked}
                       onChange={() => {}}
-                      style={{ cursor: 'pointer', width: '16px', height: '16px', accentColor: 'var(--primary)' }}
+                      className="w-4 h-4 accent-primary cursor-pointer shrink-0"
                     />
                   </div>
                 );
               })}
             </div>
           )}
-        </div>
+        </Card>
       </div>
 
-      {/* Action Bar */}
-      <div className="card glass-panel flex items-center justify-between" style={{ padding: '20px 24px', flexWrap: 'wrap', gap: '16px' }}>
+      {/* Action Footer Bar */}
+      <Card className="p-5 bg-card flex flex-col sm:flex-row items-center justify-between gap-4 border-border">
         <div>
-          <div style={{ fontWeight: 600, fontSize: '15px' }}>
-            Ready to synchronize?
+          <div className="text-sm font-semibold text-main">
+            Ready to Synchronize?
           </div>
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-            This will overwrite the selected modules on {selectedGuilds.length} target server(s) with the master settings from {currentGuild?.name}.
+          <div className="text-xs text-muted mt-0.5">
+            This will replicate {selectedModules.length} module(s) to {selectedGuilds.length} target server(s) using master settings from {currentGuild?.name}.
           </div>
         </div>
 
-        <button
-          type="button"
+        <Button
+          variant="primary"
+          size="lg"
           onClick={handleExecuteSync}
           disabled={syncing || selectedGuilds.length === 0 || selectedModules.length === 0}
-          className="btn btn-primary"
-          style={{
-            padding: '12px 28px',
-            fontSize: '15px',
-            fontWeight: 700,
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}
+          className="w-full sm:w-auto font-bold shadow-md shadow-primary/20"
         >
-          {syncing ? 'Synchronizing Servers...' : `⚡ Clone & Sync to ${selectedGuilds.length} Server(s)`}
-        </button>
-      </div>
+          {syncing ? (
+            <>
+              <RefreshCw size={18} className="animate-spin" />
+              <span>Synchronizing Servers...</span>
+            </>
+          ) : (
+            <>
+              <RefreshCw size={18} />
+              <span>Clone & Sync to {selectedGuilds.length} Server(s)</span>
+            </>
+          )}
+        </Button>
+      </Card>
     </div>
   );
 }

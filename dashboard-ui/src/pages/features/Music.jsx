@@ -1,6 +1,24 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  Music2,
+  SkipBack,
+  SkipForward,
+  Play,
+  Pause,
+  Square,
+  Repeat,
+  Volume2,
+  Clock,
+  ListMusic
+} from 'lucide-react';
 import api from '../../api';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Badge from '../../components/Badge';
+import EmptyState from '../../components/EmptyState';
+import Skeleton from '../../components/Skeleton';
 
 function Music() {
   const { guildId } = useParams();
@@ -19,148 +37,224 @@ function Music() {
       } else {
         setError('Failed to load music player state.');
       }
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
     fetchMusic();
-    const interval = setInterval(fetchMusic, 3000); // Poll every 3 seconds for live updates
+    const interval = setInterval(fetchMusic, 3000);
     return () => clearInterval(interval);
   }, [guildId]);
 
   const controlAction = async (action) => {
     try {
       await api.post(`/guilds/${guildId}/music/control`, { action });
-      fetchMusic(); // refresh immediately
+      fetchMusic();
     } catch (err) {
       alert(err.response?.data?.error || 'Action failed');
     }
   };
 
-  if (loading) {
-    return (
-      <div className="animate-fade-in stagger">
-        <div className="skeleton" style={{ height: '350px', marginBottom: '24px' }}></div>
-      </div>
-    );
-  }
-
-  if (!playerInfo || !playerInfo.is_playing) {
-    return (
-      <div className="animate-fade-in">
-        <div className="page-header">
-          <h1 className="page-title">🎵 Music Player</h1>
-          <p className="page-subtitle">Control the bot's audio playback directly from the dashboard.</p>
-        </div>
-        <div className="empty-state glass-panel">
-          <div className="empty-state-icon">🎧</div>
-          <h3 className="empty-state-title">Nothing playing</h3>
-          <p className="empty-state-desc">Join a voice channel and use the play command to start the party.</p>
-        </div>
-      </div>
-    );
-  }
-
-  const { current, queue, volume, paused, loop_mode } = playerInfo;
-  
-  // Calculate progress percentage
-  const progressPercent = current.length > 0 ? (current.position / current.length) * 100 : 0;
-
   const formatTime = (ms) => {
-    if (!ms) return "0:00";
+    if (!ms) return '0:00';
     const totalSeconds = Math.floor(ms / 1000);
     const m = Math.floor(totalSeconds / 60);
     const s = Math.floor(totalSeconds % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
-  return (
-    <div className="animate-fade-in">
-      <div className="page-header">
-        <h1 className="page-title">🎵 Music Player</h1>
-        <p className="page-subtitle">Live playback control</p>
+  if (loading) {
+    return (
+      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <Skeleton height="70px" />
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <Skeleton height="400px" />
+          <Skeleton height="400px" />
+        </div>
       </div>
+    );
+  }
 
-      <div className="grid-2">
-        {/* Now Playing Card */}
-        <div className="glass-panel flex flex-col" style={{ padding: '24px' }}>
-          <div style={{
-            width: '100%', aspectRatio: '16/9', borderRadius: '12px', marginBottom: '20px',
-            backgroundImage: `url(${current.thumbnail || 'https://images.unsplash.com/photo-1614149162883-504ce4d13909?q=80&w=600'})`,
-            backgroundSize: 'cover', backgroundPosition: 'center',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)', position: 'relative'
-          }}>
-            {paused && (
-              <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '48px' }}>
-                ⏸️
-              </div>
-            )}
-          </div>
-          
-          <h2 style={{ fontSize: '20px', fontWeight: 'bold', marginBottom: '8px', lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-            {current.title}
-          </h2>
-          <p style={{ color: 'var(--text-muted)', fontSize: '14px', marginBottom: '20px' }}>{current.author}</p>
+  if (!playerInfo || !playerInfo.is_playing) {
+    return (
+      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <PageHeader
+          icon={Music2}
+          title="Music Player"
+          subtitle="Control the bot's live audio playback directly from the dashboard in real-time."
+        />
+        <EmptyState
+          icon={Music2}
+          title="Nothing Playing Right Now"
+          description="Join a voice channel and use the /play command to start the music session. The player will appear here."
+        />
+      </div>
+    );
+  }
 
-          <div style={{ marginBottom: '24px' }}>
-            <div className="music-progress-bar">
-              <div className="music-progress-fill" style={{ width: `${progressPercent}%` }}></div>
-            </div>
-            <div className="flex justify-between mt-2" style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-              <span>{formatTime(current.position)}</span>
-              <span>{formatTime(current.length)}</span>
-            </div>
-          </div>
+  const { current, queue, volume, paused, loop_mode } = playerInfo;
+  const progressPercent = current.length > 0 ? (current.position / current.length) * 100 : 0;
 
-          <div className="flex justify-center gap-4 mt-auto">
-            <button className="btn btn-icon btn-ghost" title="Previous" onClick={() => controlAction('previous')}>⏮️</button>
-            <button className="btn btn-icon btn-primary" style={{ width: '48px', height: '48px', borderRadius: '50%', fontSize: '20px' }} onClick={() => controlAction(paused ? 'resume' : 'pause')}>
-              {paused ? '▶️' : '⏸️'}
-            </button>
-            <button className="btn btn-icon btn-ghost" title="Skip" onClick={() => controlAction('skip')}>⏭️</button>
-            <button className="btn btn-icon btn-ghost" title="Stop" onClick={() => controlAction('stop')}>⏹️</button>
-          </div>
+  return (
+    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <PageHeader
+        icon={Music2}
+        title="Music Player"
+        subtitle="Live playback controller — polls every 3 seconds for real-time state."
+      />
+
+      {error && (
+        <div style={{ padding: '12px 16px', borderRadius: 'var(--radius-md)', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)', color: '#f87171', fontSize: '13.5px' }}>
+          {error}
         </div>
+      )}
 
-        {/* Up Next / Queue */}
-        <div className="glass-panel flex flex-col" style={{ padding: '24px' }}>
-          <div className="flex justify-between items-center" style={{ marginBottom: '16px' }}>
-            <h3 style={{ fontSize: '18px', margin: 0 }}>Up Next</h3>
-            <span className="badge badge-primary">{queue.length} tracks</span>
-          </div>
-          
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {queue.length === 0 ? (
-              <div style={{ textAlign: 'center', color: 'var(--text-muted)', marginTop: '40px' }}>
-                Queue is empty
-              </div>
-            ) : (
-              queue.map((track, idx) => (
-                <div key={idx} className="queue-item">
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', width: '20px' }}>{idx + 1}</div>
-                  <div style={{ flex: 1, overflow: 'hidden' }}>
-                    <div style={{ fontSize: '14px', fontWeight: '500', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{track.title}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-sub)' }}>{track.author}</div>
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{formatTime(track.length)}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 1fr) minmax(280px, 1fr)', gap: '24px' }}>
+        {/* Now Playing */}
+        <Card>
+          <CardContent style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Thumbnail */}
+            <div style={{
+              width: '100%',
+              aspectRatio: '16/9',
+              borderRadius: 'var(--radius-md)',
+              backgroundImage: `url(${current.thumbnail || ''})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              background: current.thumbnail ? undefined : 'var(--bg-surface)',
+              border: '1px solid var(--border)',
+              position: 'relative',
+              overflow: 'hidden',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}>
+              {!current.thumbnail && <Music2 size={48} color="var(--text-muted)" />}
+              {paused && (
+                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Pause size={48} color="white" />
                 </div>
-              ))
-            )}
-          </div>
-          
-          <div style={{ marginTop: '20px', paddingTop: '16px', borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div className="flex items-center gap-2">
-              <button className={`btn btn-sm ${loop_mode ? 'btn-primary' : 'btn-ghost'}`} onClick={() => controlAction('loop')}>
-                🔁 Loop: {loop_mode || 'Off'}
+              )}
+            </div>
+
+            {/* Track info */}
+            <div>
+              <h3 style={{ margin: '0 0 4px', fontSize: '17px', fontWeight: 700, color: 'var(--text-main)', lineHeight: 1.3, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                {current.title}
+              </h3>
+              <p style={{ margin: 0, fontSize: '13.5px', color: 'var(--text-muted)' }}>{current.author}</p>
+            </div>
+
+            {/* Progress bar */}
+            <div>
+              <div style={{ height: '4px', borderRadius: '2px', background: 'var(--bg-surface)', border: '1px solid var(--border)', overflow: 'hidden' }}>
+                <div style={{ height: '100%', width: `${progressPercent}%`, background: 'var(--primary)', transition: 'width 1s linear', borderRadius: '2px' }} />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '6px', fontSize: '12px', color: 'var(--text-muted)' }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><Clock size={11} />{formatTime(current.position)}</span>
+                <span>{formatTime(current.length)}</span>
+              </div>
+            </div>
+
+            {/* Controls */}
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px' }}>
+              <Button variant="ghost" size="sm" icon={SkipBack} onClick={() => controlAction('previous')} title="Previous" />
+              <button
+                onClick={() => controlAction(paused ? 'resume' : 'pause')}
+                style={{
+                  width: '48px', height: '48px', borderRadius: '50%',
+                  background: 'var(--primary)', border: 'none',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: 'pointer', color: 'white', transition: 'opacity 150ms ease',
+                }}
+                title={paused ? 'Resume' : 'Pause'}
+              >
+                {paused ? <Play size={22} fill="white" /> : <Pause size={22} fill="white" />}
               </button>
+              <Button variant="ghost" size="sm" icon={SkipForward} onClick={() => controlAction('skip')} title="Skip" />
+              <Button variant="ghost" size="sm" icon={Square} onClick={() => controlAction('stop')} title="Stop" />
             </div>
-            <div className="flex items-center gap-2">
-              <span style={{ fontSize: '14px' }}>🔈</span>
-              <input type="range" min="0" max="100" value={volume} readOnly style={{ width: '80px', accentColor: 'var(--primary)' }} />
+
+            {/* Volume & Loop */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
+              <button
+                onClick={() => controlAction('loop')}
+                style={{
+                  background: loop_mode ? 'rgba(88, 101, 242, 0.15)' : 'transparent',
+                  border: `1px solid ${loop_mode ? 'rgba(88, 101, 242, 0.4)' : 'var(--border)'}`,
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '6px 12px',
+                  fontSize: '12.5px',
+                  fontWeight: 600,
+                  color: loop_mode ? 'var(--primary)' : 'var(--text-muted)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <Repeat size={14} />
+                Loop: {loop_mode || 'Off'}
+              </button>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-muted)', fontSize: '13px' }}>
+                <Volume2 size={16} />
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={volume}
+                  readOnly
+                  style={{ width: '80px', accentColor: 'var(--primary)' }}
+                />
+                <span style={{ fontSize: '12px', minWidth: '28px' }}>{volume}%</span>
+              </div>
             </div>
-          </div>
-        </div>
+          </CardContent>
+        </Card>
+
+        {/* Queue */}
+        <Card>
+          <CardContent style={{ padding: '20px', display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: 'var(--text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <ListMusic size={17} color="var(--primary)" /> Up Next
+              </h3>
+              <Badge variant="primary" size="sm">{queue.length} tracks</Badge>
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {queue.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', paddingTop: '48px', fontSize: '13px' }}>
+                  Queue is empty — queue more tracks with /play
+                </div>
+              ) : (
+                queue.map((track, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      padding: '10px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border)',
+                    }}
+                  >
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)', width: '18px', textAlign: 'right', flexShrink: 0 }}>{idx + 1}</span>
+                    <div style={{ flex: 1, overflow: 'hidden' }}>
+                      <div style={{ fontSize: '13.5px', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', color: 'var(--text-main)' }}>{track.title}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{track.author}</div>
+                    </div>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)', flexShrink: 0 }}>{formatTime(track.length)}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

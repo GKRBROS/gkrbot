@@ -1,9 +1,28 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  ShieldAlert,
+  Users,
+  Share2,
+  Plus,
+  Trash2,
+  Terminal,
+  CheckCircle2,
+  AlertCircle,
+  BookOpen,
+  Shield,
+  Tag
+} from 'lucide-react';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync, syncParams } from '../../sync';
 import { Select } from '../../components/Select';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Badge from '../../components/Badge';
+import EmptyState from '../../components/EmptyState';
+import Skeleton from '../../components/Skeleton';
 
 function Moderation() {
   const { guildId } = useParams();
@@ -29,8 +48,10 @@ function Moderation() {
       }
     } catch (err) {
       console.error('Failed to load moderation settings', err);
+      setError(err.response?.data?.error || 'Failed to load moderation settings');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [guildId, selectedRole]);
 
   useEffect(() => {
@@ -46,9 +67,10 @@ function Moderation() {
       await api.post(`/guilds/${guildId}/moderation/staff-roles`, withSync({ role_id: selectedRole }));
       await fetchData();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to add staff role');
+      setError(err.response?.data?.error || 'Failed to designate staff role');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   };
 
   const handleRemoveRole = async (roleId) => {
@@ -57,184 +79,234 @@ function Moderation() {
       setStaffRoleIds(prev => prev.filter(id => id !== roleId));
     } catch (err) {
       console.error('Failed to remove staff role', err);
+      setError(err.response?.data?.error || 'Failed to remove staff role');
     }
   };
 
   if (loading) {
     return (
-      <div className="animate-fade-in stagger">
-        <div className="skeleton" style={{ height: '80px', marginBottom: '24px' }}></div>
-        <div className="skeleton" style={{ height: '260px' }}></div>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <Skeleton height="70px" />
+        <Skeleton height="240px" />
+        <Skeleton height="200px" />
       </div>
     );
   }
 
   const getRole = (id) => {
-    return roles.find(r => r.id === id) || { id, name: `Role ${id}`, color: '#99aab5' };
+    return roles.find(r => String(r.id) === String(id)) || { id, name: `Role ${id}`, color: '#99aab5' };
   };
 
+  const roleOptions = roles.map(r => ({
+    value: r.id,
+    label: `@${r.name}`
+  }));
+
+  const commandsList = [
+    { cmd: '/mute <user> <duration> [reason]', desc: 'Timeouts a member with rich infraction logging.' },
+    { cmd: '/unmute <user> [reason]', desc: 'Lifts an active timeout from a server member.' },
+    { cmd: '/mutelist', desc: 'Lists all currently timed-out or muted server members.' },
+    { cmd: '/warn <user> <reason>', desc: 'Issues an official warning and advances the punishment ladder.' },
+    { cmd: '/warnings <user>', desc: 'Shows complete warning history and active disciplinary records.' },
+    { cmd: '/saye <message> /sayt', desc: 'Broadcasts official announcements as rich embeds or plaintext.' },
+  ];
+
   return (
-    <div className="animate-fade-in">
-      {/* Header */}
-      <div className="page-header flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px' }}>
-        <div>
-          <h2 className="page-title">
-            <span>⚖️</span> Moderation & Staff Roles
-          </h2>
-          <p className="page-subtitle">
-            Manage moderator permissions, staff roles, and administrative bot capabilities.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setSyncOpen(true)}
-          className="btn"
-          style={{
-            background: 'rgba(88,101,242,0.15)',
-            border: '1px solid var(--primary)',
-            color: 'var(--text-main)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px'
-          }}
-        >
-          <span>🔄</span> Sync to Other Servers
-        </button>
-      </div>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <PageHeader
+        icon={ShieldAlert}
+        title="Moderation & Staff Roles"
+        subtitle="Authorize specific moderator roles to execute bot discipline commands without granting full server admin rights."
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            icon={Share2}
+            onClick={() => setSyncOpen(true)}
+          >
+            Sync to Servers
+          </Button>
+        }
+      />
 
       {error && (
         <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
           padding: '12px 16px',
-          borderRadius: '8px',
-          marginBottom: '20px',
-          background: 'rgba(239, 68, 68, 0.15)',
-          border: '1px solid var(--danger)',
-          color: 'var(--danger)',
-          fontSize: '14px'
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          color: '#f87171',
+          fontSize: '13.5px'
         }}>
-          {error}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <AlertCircle size={17} />
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={() => setError('')}
+            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
         </div>
       )}
 
-      {/* Staff Roles Card */}
-      <div className="card glass-panel" style={{ marginBottom: '28px' }}>
-        <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px' }}>
-          🛡️ Designated Staff Roles
-        </h3>
-        <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '20px' }}>
-          Members holding any of these roles can use moderation commands (/mute, /unmute, /warn, /say) without needing full Discord Administrator permission.
-        </p>
-
-        {/* Add Role Form */}
-        <form onSubmit={handleAddRole} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start', marginBottom: '24px' }}>
-          <div style={{ maxWidth: '320px', flex: 1 }}>
-            <Select
-              value={selectedRole}
-              onChange={setSelectedRole}
-              options={roles.map(r => ({ value: r.id, label: r.name }))}
-              placeholder="Select a role..."
-              searchable
-            />
-          </div>
-          <button
-            type="submit"
-            disabled={submitting || !selectedRole}
-            className="btn btn-primary"
-          >
-            {submitting ? 'Adding...' : '+ Add Staff Role'}
-          </button>
-        </form>
-
-        {/* Active Staff Roles */}
-        <div>
-          <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-sub)', marginBottom: '10px' }}>
-            Current Staff Roles ({staffRoleIds.length})
-          </div>
-
-          {staffRoleIds.length === 0 ? (
-            <div style={{ color: 'var(--text-muted)', fontSize: '13px' }}>
-              No custom staff roles designated yet. Only users with Administrator permissions can moderate.
+      {/* Designated Staff Roles Card */}
+      <Card>
+        <CardHeader>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <CardTitle>Designated Staff Roles</CardTitle>
+              <CardDescription>
+                Members holding any of these roles gain permission to use bot moderation commands (/warn, /mute, /unmute).
+              </CardDescription>
             </div>
-          ) : (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-              {staffRoleIds.map(id => {
-                const role = getRole(id);
-                return (
-                  <div
-                    key={id}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '8px',
-                      background: 'rgba(255,255,255,0.06)',
-                      border: `1px solid ${role.color}`,
-                      borderRadius: '8px',
-                      padding: '6px 12px',
-                    }}
-                  >
-                    <span style={{
-                      width: '10px',
-                      height: '10px',
-                      borderRadius: '50%',
-                      background: role.color
-                    }} />
-                    <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-main)' }}>
-                      {role.name}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveRole(id)}
+            <Badge variant="primary" size="sm">{staffRoleIds.length} Active Roles</Badge>
+          </div>
+        </CardHeader>
+        <CardContent style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Add Staff Role Form */}
+          <form onSubmit={handleAddRole} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ flex: '1', minWidth: '260px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Select Server Role
+              </label>
+              <Select
+                value={selectedRole}
+                onChange={setSelectedRole}
+                options={roleOptions}
+                placeholder="Choose a role to grant staff access..."
+                searchable
+              />
+            </div>
+            <Button
+              type="submit"
+              variant="primary"
+              icon={Plus}
+              loading={submitting}
+              disabled={!selectedRole}
+            >
+              Add Staff Role
+            </Button>
+          </form>
+
+          {/* Active Staff Roles Badges */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+            <span style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Assigned Moderator Roles
+            </span>
+
+            {staffRoleIds.length === 0 ? (
+              <div style={{
+                padding: '16px',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border)',
+                color: 'var(--text-muted)',
+                fontSize: '13px'
+              }}>
+                No specific roles assigned yet. Currently only server members with native Discord Administrator permissions can invoke moderation commands.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
+                {staffRoleIds.map(id => {
+                  const role = getRole(id);
+                  return (
+                    <div
+                      key={id}
                       style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: 'var(--danger)',
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                        marginLeft: '4px',
-                        padding: '0 4px'
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: '7px 12px'
                       }}
-                      title="Remove Role"
                     >
-                      ✕
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
+                      <span
+                        style={{
+                          width: '10px',
+                          height: '10px',
+                          borderRadius: '50%',
+                          background: role.color && role.color !== '#000000' ? role.color : 'var(--primary)'
+                        }}
+                      />
+                      <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-main)' }}>
+                        @{role.name}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRole(id)}
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: '#f87171',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '2px',
+                          marginLeft: '2px'
+                        }}
+                        title="Remove staff role"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Moderation Toolkit Reference */}
-      <div className="card glass-panel">
-        <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px' }}>
-          📖 Moderation Commands
-        </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px' }}>
-          {[
-            { cmd: '/mute <user> <duration> [reason]', desc: 'Timeouts a member with rich infraction logging.' },
-            { cmd: '/unmute <user> [reason]', desc: 'Lifts a timeout early from a member.' },
-            { cmd: '/mutelist', desc: 'Displays all currently muted server members.' },
-            { cmd: '/warn <user> <reason>', desc: 'Issues an official warning and triggers punishment ladder.' },
-            { cmd: '/warnings <user>', desc: 'Reviews warning history and active infractions.' },
-            { cmd: '/saye <message> /sayt', desc: 'Broadcasts official announcements as embeds or plain text.' },
-          ].map(c => (
-            <div key={c.cmd} style={{
-              background: 'rgba(0,0,0,0.2)',
-              border: '1px solid var(--border)',
-              borderRadius: '8px',
-              padding: '12px 14px'
-            }}>
-              <code style={{ color: 'var(--accent)', fontWeight: 600, fontSize: '13px', display: 'block', marginBottom: '4px' }}>
-                {c.cmd}
-              </code>
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{c.desc}</span>
+      {/* Moderation Command Reference Card */}
+      <Card>
+        <CardHeader>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Terminal size={19} color="var(--primary)" />
+            <div>
+              <CardTitle>Moderation Command Reference</CardTitle>
+              <CardDescription>Slash commands accessible to members with designated staff roles.</CardDescription>
             </div>
-          ))}
-        </div>
-      </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
+            {commandsList.map(c => (
+              <div
+                key={c.cmd}
+                style={{
+                  background: 'var(--bg-surface)',
+                  border: '1px solid var(--border)',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '14px 16px'
+                }}
+              >
+                <code style={{
+                  color: 'var(--primary)',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  display: 'block',
+                  marginBottom: '4px',
+                  fontFamily: 'monospace'
+                }}>
+                  {c.cmd}
+                </code>
+                <span style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>
+                  {c.desc}
+                </span>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
-      {/* Sync Modal */}
+      {/* Cross Server Sync Modal */}
       <SyncModal
         isOpen={syncOpen}
         onClose={() => setSyncOpen(false)}

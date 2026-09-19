@@ -1,10 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
+import { ChevronDown, Check, Search, X } from 'lucide-react';
 
 /**
  * Custom styled dropdown — replaces native <select> so it matches the theme.
  * options: [{ value, label }]
  */
-export function Select({ value, onChange, options = [], placeholder = 'Select...', searchable = false, style = {}, disabled = false }) {
+export function Select({
+  value,
+  onChange,
+  options = [],
+  placeholder = 'Select an option...',
+  searchable = false,
+  style = {},
+  disabled = false,
+  className = '',
+}) {
   const [open, setOpen] = useState(false);
   const [dropUp, setDropUp] = useState(false);
   const [query, setQuery] = useState('');
@@ -13,9 +23,10 @@ export function Select({ value, onChange, options = [], placeholder = 'Select...
   const selected = options.find(o => String(o.value) === String(value));
 
   const toggleOpen = () => {
+    if (disabled) return;
     if (!open && ref.current) {
       const rect = ref.current.getBoundingClientRect();
-      setDropUp(window.innerHeight - rect.bottom < 300 && rect.top > 320);
+      setDropUp(window.innerHeight - rect.bottom < 280 && rect.top > 300);
     }
     setOpen(!open);
     setQuery('');
@@ -33,58 +44,66 @@ export function Select({ value, onChange, options = [], placeholder = 'Select...
   }, []);
 
   const filtered = searchable
-    ? options.filter(o => o.label.toLowerCase().includes(query.trim().toLowerCase()))
+    ? options.filter(o => String(o.label).toLowerCase().includes(query.trim().toLowerCase()))
     : options;
 
   return (
-    <div ref={ref} style={{ position: 'relative', width: '100%', ...style }}>
+    <div ref={ref} className={`select-wrapper ${className}`} style={{ position: 'relative', width: '100%', ...style }}>
       <button
         type="button"
         disabled={disabled}
-        className={`select-trigger ${open ? 'open' : ''}`}
+        className={`select-trigger ${open ? 'open' : ''} ${disabled ? 'disabled' : ''}`}
         onClick={toggleOpen}
+        aria-haspopup="listbox"
+        aria-expanded={open}
       >
-        <span style={{
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          color: selected ? 'var(--text-main)' : 'var(--text-muted)'
-        }}>
+        <span className={`select-label ${!selected ? 'placeholder' : ''}`}>
           {selected ? selected.label : placeholder}
         </span>
-        <svg
-          width="12" height="12" viewBox="0 0 12 12"
-          style={{ flexShrink: 0, transition: 'transform 0.2s', transform: open ? 'rotate(180deg)' : 'none' }}
-        >
-          <path fill="currentColor" d="M6 8L1 3h10z" />
-        </svg>
+        <ChevronDown
+          size={16}
+          className={`select-chevron ${open ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {open && (
         <div className={`select-menu ${dropUp ? 'drop-up' : ''}`}>
           {searchable && options.length > 6 && (
-            <input
-              autoFocus
-              className="select-search"
-              placeholder="Type to filter..."
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-            />
+            <div className="select-search-box">
+              <Search size={14} className="select-search-icon" />
+              <input
+                autoFocus
+                className="select-search-input"
+                placeholder="Search options..."
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+              />
+            </div>
           )}
-          <div className="select-options">
+          <div className="select-options" role="listbox">
             {filtered.length === 0 ? (
-              <div className="select-empty">No matches found</div>
-            ) : filtered.map(o => {
-              const isSelected = String(o.value) === String(value);
-              return (
-                <div
-                  key={o.value}
-                  className={`select-option ${isSelected ? 'selected' : ''}`}
-                  onClick={() => { onChange(o.value); setOpen(false); setQuery(''); }}
-                >
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
-                  {isSelected && <span style={{ color: 'var(--accent)', flexShrink: 0 }}>✓</span>}
-                </div>
-              );
-            })}
+              <div className="select-empty">No options found</div>
+            ) : (
+              filtered.map(o => {
+                const isSelected = String(o.value) === String(value);
+                return (
+                  <div
+                    key={o.value}
+                    role="option"
+                    aria-selected={isSelected}
+                    className={`select-option ${isSelected ? 'selected' : ''}`}
+                    onClick={() => {
+                      onChange(o.value);
+                      setOpen(false);
+                      setQuery('');
+                    }}
+                  >
+                    <span className="select-option-text">{o.label}</span>
+                    {isSelected && <Check size={15} className="select-option-check" />}
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       )}
@@ -96,7 +115,15 @@ export function Select({ value, onChange, options = [], placeholder = 'Select...
  * Multi-select dropdown with removable chips — used for role pickers etc.
  * values: array of selected option values
  */
-export function MultiSelect({ values = [], onChange, options = [], placeholder = 'Select...', style = {} }) {
+export function MultiSelect({
+  values = [],
+  onChange,
+  options = [],
+  placeholder = 'Select options...',
+  style = {},
+  disabled = false,
+  className = '',
+}) {
   const [open, setOpen] = useState(false);
   const [dropUp, setDropUp] = useState(false);
   const [query, setQuery] = useState('');
@@ -118,33 +145,40 @@ export function MultiSelect({ values = [], onChange, options = [], placeholder =
   };
 
   const toggleOpen = () => {
+    if (disabled) return;
     if (!open && ref.current) {
       const rect = ref.current.getBoundingClientRect();
-      setDropUp(window.innerHeight - rect.bottom < 300 && rect.top > 320);
+      setDropUp(window.innerHeight - rect.bottom < 280 && rect.top > 300);
     }
     setOpen(!open);
     setQuery('');
   };
 
-  const filtered = options.filter(o => o.label.toLowerCase().includes(query.trim().toLowerCase()));
-  const selectedLabels = values
+  const filtered = options.filter(o =>
+    String(o.label).toLowerCase().includes(query.trim().toLowerCase())
+  );
+  
+  const selectedItems = values
     .map(v => options.find(o => String(o.value) === String(v)))
     .filter(Boolean);
 
   return (
-    <div ref={ref} style={{ position: 'relative', width: '100%', ...style }}>
-      {selectedLabels.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
-          {selectedLabels.map(o => (
-            <span key={o.value} className="badge badge-primary" style={{ gap: '6px' }}>
-              {o.label}
+    <div ref={ref} className={`select-wrapper ${className}`} style={{ position: 'relative', width: '100%', ...style }}>
+      {selectedItems.length > 0 && (
+        <div className="select-chips-container">
+          {selectedItems.map(o => (
+            <span key={o.value} className="select-chip">
+              <span className="select-chip-label">{o.label}</span>
               <button
                 type="button"
-                onClick={() => toggle(o.value)}
-                style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, fontSize: '12px', lineHeight: 1 }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggle(o.value);
+                }}
+                className="select-chip-remove"
                 title="Remove"
               >
-                ✕
+                <X size={12} />
               </button>
             </span>
           ))}
@@ -153,54 +187,55 @@ export function MultiSelect({ values = [], onChange, options = [], placeholder =
 
       <button
         type="button"
-        className={`select-trigger ${open ? 'open' : ''}`}
+        disabled={disabled}
+        className={`select-trigger ${open ? 'open' : ''} ${disabled ? 'disabled' : ''}`}
         onClick={toggleOpen}
       >
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-main)' }}>
-          {selectedLabels.length > 0
-            ? `${selectedLabels.length} selected`
-            : <span style={{ color: 'var(--text-muted)' }}>{placeholder}</span>}
+        <span className="select-label">
+          {selectedItems.length > 0
+            ? `${selectedItems.length} selected`
+            : <span className="placeholder">{placeholder}</span>}
         </span>
-        <svg width="12" height="12" viewBox="0 0 12 12" style={{ flexShrink: 0, transition: 'transform 0.2s', transform: open ? 'rotate(180deg)' : 'none' }}>
-          <path fill="currentColor" d="M6 8L1 3h10z" />
-        </svg>
+        <ChevronDown
+          size={16}
+          className={`select-chevron ${open ? 'rotate-180' : ''}`}
+        />
       </button>
 
       {open && (
         <div className={`select-menu ${dropUp ? 'drop-up' : ''}`}>
-          <input
-            autoFocus
-            className="select-search"
-            placeholder="Type to filter..."
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-          />
+          <div className="select-search-box">
+            <Search size={14} className="select-search-icon" />
+            <input
+              autoFocus
+              className="select-search-input"
+              placeholder="Filter options..."
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+            />
+          </div>
           <div className="select-options">
             {filtered.length === 0 ? (
-              <div className="select-empty">No matches found</div>
-            ) : filtered.map(o => {
-              const isSelected = values.includes(o.value);
-              return (
-                <div
-                  key={o.value}
-                  className={`select-option ${isSelected ? 'selected' : ''}`}
-                  onClick={() => toggle(o.value)}
-                >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
-                    <span style={{
-                      width: '15px', height: '15px', borderRadius: '4px', flexShrink: 0,
-                      border: isSelected ? 'none' : '1.5px solid var(--border-hover)',
-                      background: isSelected ? 'var(--brand-gradient)' : 'transparent',
-                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: '10px', color: 'white'
-                    }}>
-                      {isSelected ? '✓' : ''}
-                    </span>
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
-                  </span>
-                </div>
-              );
-            })}
+              <div className="select-empty">No options found</div>
+            ) : (
+              filtered.map(o => {
+                const isSelected = values.includes(o.value);
+                return (
+                  <div
+                    key={o.value}
+                    className={`select-option ${isSelected ? 'selected' : ''}`}
+                    onClick={() => toggle(o.value)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className={`select-checkbox ${isSelected ? 'checked' : ''}`}>
+                        {isSelected && <Check size={12} />}
+                      </div>
+                      <span className="select-option-text">{o.label}</span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       )}

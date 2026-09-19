@@ -936,7 +936,9 @@ async def handle_welcome_get(request: web.Request):
             "channel_id": str(config.channel_id) if config.channel_id else "",
             "message": config.welcome_message,
             "card_style": getattr(config, "card_style", "legacy") or "legacy",
+            "card_only": getattr(config, "card_only", False),
             "background_path": config.background_path or "",
+            "has_background": bool(config.background_path),
             "show_avatar": getattr(config, "show_avatar", True),
             "show_guild_icon": getattr(config, "show_guild_icon", False),
             "draw_avatar": getattr(config, "draw_avatar", True),
@@ -977,6 +979,9 @@ async def handle_welcome_post(request: web.Request):
         if style in ["legacy", "glass", "ticket", "cinematic"]:
             config.card_style = style
             
+    if "card_only" in data:
+        config.card_only = bool(data["card_only"])
+
     if "show_avatar" in data:
         config.show_avatar = bool(data["show_avatar"])
     if "show_guild_icon" in data:
@@ -991,10 +996,12 @@ async def handle_welcome_post(request: web.Request):
     if "bot_role_id" in data:
         config.bot_role_id = int(data["bot_role_id"]) if data["bot_role_id"] else None
         
-    # Background URL handling
-    if "background_url" in data:
+    # Background URL handling - safe preservation
+    if data.get("clear_background"):
+        config.background_path = None
+    elif "background_url" in data:
         bg_url = (data["background_url"] or "").strip()
-        if not bg_url or bg_url.lower() == "none" or bg_url == "":
+        if bg_url.lower() == "none":
             config.background_path = None
         elif bg_url.startswith("http://") or bg_url.startswith("https://"):
             try:
@@ -1488,8 +1495,24 @@ async def handle_economy_get(request: web.Request):
     db = economy.EconomyDatabase()
     db.initialize()
     items = db.get_shop_items(guild_id)
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
     with db._conn() as conn:
         row = conn.execute("SELECT rob_enabled, crime_enabled FROM eco_settings WHERE guild_id = ?", (str(guild_id),)).fetchone()
+        stats_row = conn.execute("SELECT COUNT(*) as accounts, COALESCE(SUM(wallet + bank), 0) as total FROM balances WHERE guild_id = ?", (str(guild_id),)).fetchone()
+        top_rows = conn.execute("SELECT user_id, wallet, bank, (wallet + bank) as total FROM balances WHERE guild_id = ? ORDER BY total DESC LIMIT 5", (str(guild_id),)).fetchall()
+        top_users = []
+        for r in top_rows:
+            uid = int(r["user_id"])
+            m = guild.get_member(uid) if guild else None
+            top_users.append({
+                "user_id": str(uid),
+                "username": m.display_name if m else f"User {uid}",
+                "avatar": str(m.display_avatar.url) if m else None,
+                "wallet": r["wallet"],
+                "bank": r["bank"],
+                "total": r["total"],
+            })
     return web.json_response({
         "shop_items": [
             {"id": i["id"], "name": i["name"], "description": i["description"],
@@ -1499,7 +1522,12 @@ async def handle_economy_get(request: web.Request):
         "settings": {
             "rob_enabled": bool(row["rob_enabled"]) if row else True,
             "crime_enabled": bool(row["crime_enabled"]) if row else True,
-        }
+        },
+        "stats": {
+            "total_currency": stats_row["total"] if stats_row else 0,
+            "accounts": stats_row["accounts"] if stats_row else 0,
+        },
+        "top_users": top_users,
     })
 
 async def handle_economy_shop_post(request: web.Request):
@@ -2929,17 +2957,17 @@ async def handle_birthdays_get(request: web.Request):
     guild_id = int(request.match_info["guild_id"])
     import birthdays
     db = birthdays.BirthdayDatabase()
-    channel_id = db.get_channel(guild_id)
-    b_list = db.get_birthdays_for_guild(guild_id)
+    channel_id = db.get_birthday_channel(guild_id)
+    b_list = db.get_all_birthdays(guild_id)  # returns list of dicts: user_id, username, day, month
     return web.json_response({
         "channel_id": str(channel_id) if channel_id else None,
         "birthdays": [
             {
-                "user_id": str(b[0]),
-                "username": b[1],
-                "birth_day": b[2],
-                "birth_month": b[3],
-                "month_name": birthdays.MONTH_NAMES[b[3]] if 1 <= b[3] <= 12 else "",
+                "user_id": str(b["user_id"]),
+                "username": b["username"],
+                "birth_day": b["day"],
+                "birth_month": b["month"],
+                "month_name": birthdays.MONTH_NAMES[b["month"]] if 1 <= b["month"] <= 12 else "",
             }
             for b in b_list
         ],
@@ -2959,7 +2987,7 @@ async def handle_birthdays_post(request: web.Request):
         return web.json_response({"error": "Invalid birthday details"}, status=400)
     import birthdays
     db = birthdays.BirthdayDatabase()
-    db.set_birthday(guild_id, int(user_id), username, day, month)
+    db.add_birthday(guild_id, int(user_id), username, day, month)
     return web.json_response({"success": True})
 
 async def handle_birthdays_channel_post(request: web.Request):
@@ -2971,7 +2999,7 @@ async def handle_birthdays_channel_post(request: web.Request):
     import birthdays
     db = birthdays.BirthdayDatabase()
     if channel_id:
-        db.set_channel(guild_id, int(channel_id))
+        db.set_birthday_channel(guild_id, int(channel_id))
     return web.json_response({"success": True})
 
 async def handle_birthdays_delete(request: web.Request):
@@ -3156,6 +3184,339 @@ async def handle_economy_balance_post(request: web.Request):
     return web.json_response({"success": True, "wallet": new_wallet, "bank": new_bank})
 
 
+# ---------------------------------------------------------------------------
+# AI System Endpoints
+# ---------------------------------------------------------------------------
+
+async def handle_ai_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    
+    import ai_system
+    cfg = ai_system.get_guild_config(guild_id)
+    
+    memories = []
+    try:
+        with ai_system.sqlite3.connect(ai_system.DB_PATH) as conn:
+            conn.row_factory = ai_system.sqlite3.Row
+            rows = conn.execute(
+                "SELECT id, topic, fact, learned_from, access_count, created_at, updated_at FROM ai_learned_memories WHERE guild_id = ? ORDER BY id DESC LIMIT 100",
+                (str(guild_id),)
+            ).fetchall()
+            for r in rows:
+                memories.append({
+                    "id": r["id"],
+                    "topic": r["topic"],
+                    "fact": r["fact"],
+                    "learned_from": r["learned_from"],
+                    "access_count": r["access_count"],
+                    "created_at": str(r["created_at"]),
+                    "updated_at": str(r["updated_at"]),
+                })
+    except Exception as e:
+        print(f"[DashboardAPI] AI get memories error: {e}")
+
+    return web.json_response({
+        "config": cfg,
+        "memories": memories,
+    })
+
+async def handle_ai_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    
+    import ai_system
+    allowed_keys = {
+        "ai_channel_id", "model_name", "ollama_url", "system_prompt",
+        "persona", "mood", "enabled", "mention_enabled", "research_enabled",
+        "image_enabled", "comedy_enabled", "tts_enabled", "thread_mode",
+        "self_learning", "cooldown_seconds"
+    }
+    updates = {}
+    for k, v in data.items():
+        if k in allowed_keys:
+            if isinstance(v, bool):
+                updates[k] = 1 if v else 0
+            else:
+                updates[k] = v
+
+    ai_system.update_guild_config(guild_id, **updates)
+    return web.json_response({"success": True})
+
+async def handle_ai_memories_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    topic = data.get("topic", "").strip()
+    fact = data.get("fact", "").strip()
+    if not topic or not fact:
+        return web.json_response({"error": "Topic and fact are required"}, status=400)
+    
+    import ai_system
+    user = sess.get("user") or {}
+    user_id = user.get("id", "dashboard")
+    user_name = user.get("username", "Dashboard Admin")
+    ok = ai_system.LearningMemoryEngine.add_memory(guild_id, user_id, user_name, topic, fact, learned_from="dashboard")
+    return web.json_response({"success": ok})
+
+async def handle_ai_memories_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    memory_id = int(request.match_info["id"])
+    
+    import ai_system
+    with ai_system.sqlite3.connect(ai_system.DB_PATH) as conn:
+        conn.execute("DELETE FROM ai_learned_memories WHERE guild_id = ? AND id = ?", (str(guild_id), memory_id))
+        conn.commit()
+    return web.json_response({"success": True})
+
+
+# ---------------------------------------------------------------------------
+# Voice Announce Endpoints
+# ---------------------------------------------------------------------------
+
+async def handle_voice_announce_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+
+    import voice_announce
+    voices = [{"code": code, "name": name} for code, (name, _) in voice_announce.VOICES.items()]
+
+    voice_channels = []
+    category_counts = {}
+    for c in guild.voice_channels:
+        voice_channels.append({
+            "id": str(c.id),
+            "name": c.name,
+            "user_count": len(c.members),
+            "category_id": str(c.category_id) if c.category_id else None
+        })
+        if c.category:
+            category_counts[c.category.id] = category_counts.get(c.category.id, 0) + 1
+
+    categories = []
+    for cat in guild.categories:
+        if cat.id in category_counts:
+            categories.append({
+                "id": str(cat.id),
+                "name": cat.name,
+                "voice_count": category_counts[cat.id]
+            })
+
+    return web.json_response({
+        "voice_channels": voice_channels,
+        "categories": categories,
+        "voices": voices
+    })
+
+async def handle_voice_announce_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+
+    data = await request.json()
+    target_type = data.get("target_type", "channel")
+    target_id = str(data.get("target_id", "")).strip()
+    message = str(data.get("message", "")).strip()
+    language = str(data.get("language", "en")).strip()
+
+    if not target_id or not message:
+        return web.json_response({"error": "Target and message are required"}, status=400)
+
+    import voice_announce
+    cog = bot.get_cog("Voice Announcer")
+    if not cog:
+        return web.json_response({"error": "Voice Announcer cog is not loaded"}, status=503)
+
+    audio_buf = await voice_announce.synthesize(message, language)
+    if not audio_buf:
+        return web.json_response({"error": "TTS synthesis failed. Please check text or language."}, status=500)
+
+    async with cog._lock(guild_id):
+        if target_type == "category":
+            category = guild.get_channel(int(target_id))
+            if not isinstance(category, discord.CategoryChannel):
+                return web.json_response({"error": "Category not found"}, status=404)
+            
+            vcs = [vc for vc in category.voice_channels if len(vc.members) > 0]
+            if not vcs:
+                vcs = category.voice_channels[:5]
+            if not vcs:
+                return web.json_response({"error": "No voice channels found in category"}, status=400)
+
+            announced = 0
+            for vc in vcs:
+                ok, _ = await cog._play_in_channel(vc, audio_buf)
+                if ok:
+                    announced += 1
+                await asyncio.sleep(0.5)
+
+            return web.json_response({"success": True, "announced_channels": announced})
+        else:
+            vc = guild.get_channel(int(target_id))
+            if not isinstance(vc, discord.VoiceChannel):
+                return web.json_response({"error": "Voice channel not found"}, status=404)
+
+            ok, err = await cog._play_in_channel(vc, audio_buf)
+            if not ok:
+                return web.json_response({"error": f"Failed to speak in #{vc.name}: {err}"}, status=500)
+
+            return web.json_response({"success": True, "announced_channel": vc.name})
+
+
+# ---------------------------------------------------------------------------
+# Role Sync Endpoints
+# ---------------------------------------------------------------------------
+
+async def _run_role_sync_backfill(bot: commands.Bot, target_guild_id: int, source_guild_id: int, source_role_id: int, target_role_id: int):
+    target_guild = bot.get_guild(target_guild_id)
+    source_guild = bot.get_guild(source_guild_id)
+    if not target_guild or not source_guild:
+        return 0, 0
+    target_role = target_guild.get_role(target_role_id)
+    if not target_role:
+        return 0, 0
+
+    qualifying = 0
+    synced = 0
+    for member in target_guild.members:
+        src_member = source_guild.get_member(member.id)
+        if not src_member:
+            continue
+        if any(r.id == source_role_id for r in src_member.roles):
+            qualifying += 1
+            if target_role not in member.roles:
+                try:
+                    await member.add_roles(target_role, reason=f"Role Sync backfill from {source_guild.name}")
+                    synced += 1
+                except Exception as e:
+                    print(f"[RoleSync] Backfill add_role failed for {member}: {e}")
+    return synced, qualifying
+
+async def handle_role_sync_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+
+    import role_sync
+    db = role_sync.RoleSyncDB()
+    raw_rules = db.get_rules_for_target(guild_id)
+
+    rules = []
+    for r in raw_rules:
+        sg_id = int(r["source_guild_id"])
+        sr_id = int(r["source_role_id"])
+        tr_id = int(r["target_role_id"])
+        sg = bot.get_guild(sg_id)
+        sr = sg.get_role(sr_id) if sg else None
+        tr = guild.get_role(tr_id)
+        rules.append({
+            "id": r["id"],
+            "source_guild_id": str(sg_id),
+            "source_guild_name": sg.name if sg else f"Server {sg_id}",
+            "source_role_id": str(sr_id),
+            "source_role_name": sr.name if sr else f"Role {sr_id}",
+            "target_role_id": str(tr_id),
+            "target_role_name": tr.name if tr else f"Role {tr_id}",
+        })
+
+    # Available source guilds: all other guilds bot is part of
+    available_sources = []
+    for g in bot.guilds:
+        if g.id != guild_id:
+            available_sources.append({
+                "id": str(g.id),
+                "name": g.name,
+                "icon": str(g.icon.url) if g.icon else None,
+                "roles": [
+                    {"id": str(ro.id), "name": ro.name, "color": f"#{ro.color.value:06x}" if ro.color.value else None}
+                    for ro in g.roles if not ro.is_default()
+                ]
+            })
+
+    target_roles = [
+        {"id": str(ro.id), "name": ro.name, "color": f"#{ro.color.value:06x}" if ro.color.value else None}
+        for ro in guild.roles if not ro.is_default() and not ro.managed
+    ]
+
+    return web.json_response({
+        "rules": rules,
+        "available_sources": available_sources,
+        "target_roles": target_roles,
+    })
+
+async def handle_role_sync_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    source_guild_id = int(data["source_guild_id"])
+    source_role_id = int(data["source_role_id"])
+    target_role_id = int(data["target_role_id"])
+    backfill = bool(data.get("backfill", False))
+
+    import role_sync
+    db = role_sync.RoleSyncDB()
+    db.add_rule(guild_id, source_guild_id, source_role_id, target_role_id)
+
+    synced = 0
+    qualifying = 0
+    if backfill:
+        bot: commands.Bot = request.app["bot"]
+        synced, qualifying = await _run_role_sync_backfill(bot, guild_id, source_guild_id, source_role_id, target_role_id)
+
+    return web.json_response({"success": True, "synced": synced, "qualifying": qualifying})
+
+async def handle_role_sync_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    rule_id = int(request.match_info["rule_id"])
+
+    import role_sync
+    db = role_sync.RoleSyncDB()
+    ok = db.remove_rule(rule_id, guild_id)
+    return web.json_response({"success": ok})
+
+async def handle_role_sync_backfill_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    rule_id = int(request.match_info["rule_id"])
+
+    import role_sync
+    db = role_sync.RoleSyncDB()
+    rules = db.get_rules_for_target(guild_id)
+    target_rule = next((r for r in rules if r["id"] == rule_id), None)
+    if not target_rule:
+        return web.json_response({"error": "Rule not found"}, status=404)
+
+    bot: commands.Bot = request.app["bot"]
+    synced, qualifying = await _run_role_sync_backfill(
+        bot,
+        guild_id,
+        int(target_rule["source_guild_id"]),
+        int(target_rule["source_role_id"]),
+        int(target_rule["target_role_id"])
+    )
+    return web.json_response({"success": True, "synced": synced, "qualifying": qualifying})
+
+
 class DashboardAPI(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -3290,6 +3651,22 @@ class DashboardAPI(commands.Cog):
 
             # Economy Balance Adjust
             web.post("/api/guilds/{guild_id}/economy/balance", handle_economy_balance_post),
+
+            # AI System
+            web.get("/api/guilds/{guild_id}/ai", handle_ai_get),
+            web.post("/api/guilds/{guild_id}/ai", handle_ai_post),
+            web.post("/api/guilds/{guild_id}/ai/memories", handle_ai_memories_post),
+            web.delete("/api/guilds/{guild_id}/ai/memories/{id}", handle_ai_memories_delete),
+
+            # Voice Announce
+            web.get("/api/guilds/{guild_id}/voice-announce", handle_voice_announce_get),
+            web.post("/api/guilds/{guild_id}/voice-announce", handle_voice_announce_post),
+
+            # Role Sync
+            web.get("/api/guilds/{guild_id}/role-sync", handle_role_sync_get),
+            web.post("/api/guilds/{guild_id}/role-sync", handle_role_sync_post),
+            web.delete("/api/guilds/{guild_id}/role-sync/{rule_id}", handle_role_sync_delete),
+            web.post("/api/guilds/{guild_id}/role-sync/{rule_id}/backfill", handle_role_sync_backfill_post),
 
         ])
         

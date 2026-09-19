@@ -1,7 +1,22 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  Mic2,
+  Plus,
+  Trash2,
+  Volume2,
+  Folder,
+  CheckCircle2,
+  AlertCircle
+} from 'lucide-react';
 import api from '../../api';
 import { Select } from '../../components/Select';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Badge from '../../components/Badge';
+import EmptyState from '../../components/EmptyState';
+import Skeleton from '../../components/Skeleton';
 
 function TempVC() {
   const { guildId } = useParams();
@@ -11,7 +26,7 @@ function TempVC() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [saved, setSaved] = useState(false);
+  const [success, setSuccess] = useState('');
   const [form, setForm] = useState({ channel_id: '', category_id: '' });
 
   const fetchData = useCallback(async () => {
@@ -26,10 +41,13 @@ function TempVC() {
       if (vcRes.data.channels?.length > 0) {
         setForm(f => ({ ...f, channel_id: f.channel_id || vcRes.data.channels[0].id }));
       }
+      setError('');
     } catch (err) {
       console.error('Failed to load temp VC data', err);
+      setError(err.response?.data?.error || 'Failed to load temp VC configuration');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [guildId]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -38,131 +56,172 @@ function TempVC() {
     e.preventDefault();
     if (!form.channel_id) return;
     setError('');
+    setSuccess('');
     setSubmitting(true);
     try {
       await api.post(`/guilds/${guildId}/tempvc`, form);
-      setForm(f => ({ ...f, category_id: '' }));
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
+      setSuccess('Hub channel configured! Members who join it will get their own private temp VC.');
+      setTimeout(() => setSuccess(''), 4000);
       await fetchData();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to set hub channel');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   };
 
   const handleRemoveHub = async (channelId) => {
-    if (!window.confirm('Remove this Temp VC hub? Existing temp channels stay active until they are empty.')) return;
+    if (!window.confirm('Remove this Temp VC hub? Existing temp channels remain active until they are empty.')) return;
     try {
       await api.delete(`/guilds/${guildId}/tempvc/${channelId}`);
+      setSuccess('Hub removed.');
+      setTimeout(() => setSuccess(''), 2000);
       await fetchData();
     } catch (err) {
       console.error('Failed to remove hub', err);
+      setError(err.response?.data?.error || 'Failed to remove hub');
     }
   };
 
-  const getCatName = (id) => categories.find(c => c.id === id)?.name || null;
+  const getCatName = (id) => categories.find(c => String(c.id) === String(id))?.name || null;
 
   if (loading) {
     return (
-      <div className="animate-fade-in stagger">
-        <div className="skeleton" style={{ height: '80px', marginBottom: '24px' }}></div>
-        <div className="skeleton" style={{ height: '300px' }}></div>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <Skeleton height="70px" />
+        <Skeleton height="260px" />
+        <Skeleton height="200px" />
       </div>
     );
   }
 
   return (
-    <div className="animate-fade-in">
-      <div className="page-header">
-        <h2 className="page-title"><span>🎙️</span> Temp Voice Channels</h2>
-        <p className="page-subtitle">
-          Set hub voice channels — when a member joins a hub, the bot creates them a private temp VC with full owner controls (lock, rename, limit, ban &amp; more).
-        </p>
-      </div>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <PageHeader
+        icon={Mic2}
+        title="Temporary Voice Channels"
+        subtitle="Designate hub voice channels — members who join instantly receive a private temporary VC with full owner controls to lock, rename, limit, and ban."
+      />
 
-      {error && <div className="alert alert-error">{error}</div>}
-
-      {/* Set hub */}
-      <div className="glass-panel" style={{ padding: '24px', marginBottom: '32px', border: '1px solid var(--primary)' }}>
-        <h3 className="section-title" style={{ marginBottom: '6px', border: 'none', padding: 0 }}>📡 Set Hub Channel</h3>
-        <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '18px' }}>
-          Joining this voice channel spawns a new temporary voice channel. Existing hubs can be re-pointed by selecting them again.
-        </p>
-        <form onSubmit={handleAddHub}>
-          <div className="grid-2" style={{ alignItems: 'end' }}>
-            <div className="form-group">
-              <label className="form-label">Hub Voice Channel (Join to create)</label>
-              <Select
-                value={form.channel_id}
-                onChange={v => setForm(f => ({ ...f, channel_id: v }))}
-                options={voiceChannels.map(ch => ({ value: ch.id, label: '🔊 ' + ch.name }))}
-                placeholder="Select a voice channel..."
-                searchable
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Spawn Temp Channels Into (optional)</label>
-              <Select
-                value={form.category_id}
-                onChange={v => setForm(f => ({ ...f, category_id: v }))}
-                options={[{ value: '', label: 'Same category as hub' }, ...categories.map(c => ({ value: c.id, label: '📁 ' + c.name }))]}
-                placeholder="Select a category..."
-                searchable
-              />
-            </div>
-          </div>
-          <div className="flex justify-end">
-            <button type="submit" className={`btn ${saved ? 'btn-success' : 'btn-primary'}`} disabled={submitting || !form.channel_id}>
-              {saved ? '✅ Hub Set!' : (submitting ? 'Setting...' : '📡 Set Hub Channel')}
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {/* Active hubs */}
-      <div className="section-header">
-        <h3 className="section-title">Active Hubs <span className="section-count">{hubs.length}</span></h3>
-      </div>
-
-      {hubs.length === 0 ? (
-        <div className="empty-state glass-panel">
-          <div className="empty-state-icon">🎙️</div>
-          <h3 className="empty-state-title">No hub channels set</h3>
-          <p className="empty-state-desc">Pick a voice channel above — members who join it will get their own private temp voice channel.</p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {hubs.map(hub => (
-            <div key={hub.channel_id} className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: 0 }}>
-                <div style={{
-                  width: '44px', height: '44px', borderRadius: '12px', flexShrink: 0,
-                  background: 'var(--primary-dim)', border: '1px solid rgba(99,102,241,0.3)',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '19px'
-                }}>
-                  🔊
-                </div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: '14.5px', color: 'var(--text-main)' }}>
-                    {hub.channel_name}
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '3px' }}>
-                    Temp channels spawn {hub.category_id ? `into 📁 ${getCatName(hub.category_id) || 'category'}` : 'next to the hub'}
-                  </div>
-                </div>
-              </div>
-              <button
-                onClick={() => handleRemoveHub(hub.channel_id)}
-                className="btn btn-danger"
-                style={{ padding: '8px 16px', fontSize: '13px' }}
-              >
-                Remove Hub
-              </button>
-            </div>
-          ))}
+      {error && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderRadius: 'var(--radius-md)', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)', color: '#f87171', fontSize: '13.5px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><AlertCircle size={17} /><span>{error}</span></div>
+          <button onClick={() => setError('')} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '16px' }}>✕</button>
         </div>
       )}
+
+      {success && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderRadius: 'var(--radius-md)', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', color: '#34d399', fontSize: '13.5px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><CheckCircle2 size={17} /><span>{success}</span></div>
+          <button onClick={() => setSuccess('')} style={{ background: 'transparent', border: 'none', color: '#34d399', cursor: 'pointer', fontSize: '16px' }}>✕</button>
+        </div>
+      )}
+
+      {/* Hub Configuration Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Configure Hub Channel</CardTitle>
+          <CardDescription>
+            When a member joins the hub voice channel, the bot instantly creates a private temp VC for them. The hub itself is never occupied.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleAddHub} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                  Hub Voice Channel (Join to Create)
+                </label>
+                <Select
+                  value={form.channel_id}
+                  onChange={v => setForm(f => ({ ...f, channel_id: v }))}
+                  options={voiceChannels.map(ch => ({ value: ch.id, label: `🔊 ${ch.name}` }))}
+                  placeholder="Select a voice channel..."
+                  searchable
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                  Spawn Temp Channels Into (optional)
+                </label>
+                <Select
+                  value={form.category_id}
+                  onChange={v => setForm(f => ({ ...f, category_id: v }))}
+                  options={[
+                    { value: '', label: 'Same category as hub channel' },
+                    ...categories.map(c => ({ value: c.id, label: `📁 ${c.name}` }))
+                  ]}
+                  placeholder="Select target category..."
+                  searchable
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Button
+                type="submit"
+                variant="primary"
+                icon={Plus}
+                loading={submitting}
+                disabled={!form.channel_id}
+              >
+                Set Hub Channel
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Active hubs */}
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--text-main)' }}>Active Hub Channels</h3>
+            <p style={{ margin: '3px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>Voice channels currently configured to spawn temporary rooms.</p>
+          </div>
+          <Badge variant="primary" size="sm">{hubs.length} Hubs</Badge>
+        </div>
+
+        {hubs.length === 0 ? (
+          <EmptyState
+            icon={Mic2}
+            title="No Hub Channels Configured"
+            description="Select a voice channel above. Members who join it will instantly receive their own private temporary voice channel."
+          />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {hubs.map(hub => (
+              <Card key={hub.channel_id} style={{ padding: '16px 20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    <div style={{
+                      width: '44px', height: '44px', borderRadius: '12px', flexShrink: 0,
+                      background: 'rgba(88, 101, 242, 0.12)', border: '1px solid rgba(88, 101, 242, 0.25)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }}>
+                      <Volume2 size={20} color="var(--primary)" />
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '14.5px', color: 'var(--text-main)' }}>
+                        {hub.channel_name}
+                      </div>
+                      <div style={{ fontSize: '12.5px', color: 'var(--text-muted)', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <Folder size={12} />
+                        Spawns into: {hub.category_id ? (getCatName(hub.category_id) || 'category') : 'same category as hub'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <Button variant="danger" size="sm" icon={Trash2} onClick={() => handleRemoveHub(hub.channel_id)}>
+                    Remove Hub
+                  </Button>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -1,7 +1,27 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  MessageSquarePlus,
+  CheckCircle2,
+  XCircle,
+  Clock,
+  ThumbsUp,
+  ThumbsDown,
+  ShieldCheck,
+  AlertCircle,
+  RefreshCw,
+  Edit3,
+  UserCheck
+} from 'lucide-react';
 import api from '../../api';
 import { Select } from '../../components/Select';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Badge from '../../components/Badge';
+import Modal from '../../components/Modal';
+import EmptyState from '../../components/EmptyState';
+import Skeleton from '../../components/Skeleton';
 
 function Community() {
   const { guildId } = useParams();
@@ -11,6 +31,7 @@ function Community() {
   const [channels, setChannels] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -20,9 +41,10 @@ function Community() {
   const [staffNote, setStaffNote] = useState('');
   const [submittingReview, setSubmittingReview] = useState(false);
 
-  const fetchData = async () => {
+  const fetchData = async (isRefresh = false) => {
+    if (isRefresh) setRefreshing(true);
     try {
-      setLoading(true);
+      if (!isRefresh) setLoading(true);
       const [comRes, chRes, roRes] = await Promise.all([
         api.get(`/guilds/${guildId}/community`),
         api.get(`/guilds/${guildId}/channels`),
@@ -38,6 +60,7 @@ function Community() {
       setError(err.response?.data?.error || 'Failed to load community data');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
@@ -51,7 +74,8 @@ function Community() {
     setSuccess('');
     try {
       await api.post(`/guilds/${guildId}/community/verify`, verifyConfig);
-      setSuccess('✅ Member verification settings saved successfully!');
+      setSuccess('Member gate verification settings saved successfully!');
+      setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save verification settings');
     }
@@ -79,222 +103,362 @@ function Community() {
     }
   };
 
-  const channelOptions = [{ value: '', label: 'None' }, ...channels.map(c => ({ value: c.id, label: `#${c.name}` }))];
-  const roleOptions = [{ value: '', label: 'None' }, ...roles.map(r => ({ value: r.id, label: `@${r.name}` }))];
+  const channelOptions = [{ value: '', label: 'Disabled (No Channel)' }, ...channels.map(c => ({ value: c.id, label: `#${c.name}` }))];
+  const roleOptions = [{ value: '', label: 'None (No Role)' }, ...roles.map(r => ({ value: r.id, label: `@${r.name}` }))];
 
   const getStatusBadge = (status) => {
     switch (status) {
-      case 'approved': return <span className="badge badge-success">Approved</span>;
-      case 'denied': return <span className="badge badge-danger">Denied</span>;
-      case 'implemented': return <span className="badge badge-primary">Implemented</span>;
-      default: return <span className="badge badge-warning">Pending</span>;
+      case 'approved':
+        return <Badge variant="success" dot size="sm">Approved</Badge>;
+      case 'denied':
+        return <Badge variant="danger" dot size="sm">Denied</Badge>;
+      case 'implemented':
+        return <Badge variant="primary" dot size="sm">Implemented</Badge>;
+      default:
+        return <Badge variant="warning" dot size="sm">Under Review</Badge>;
     }
   };
 
   if (loading) {
-    return <div className="feature-page" style={{ padding: '40px', textAlign: 'center' }}>Loading Community System...</div>;
+    return (
+      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <Skeleton height="70px" />
+        <Skeleton height="50px" />
+        <Skeleton height="300px" />
+      </div>
+    );
   }
 
   return (
-    <div className="feature-page">
-      <div className="feature-header">
-        <div>
-          <h1 className="feature-title">🤝 Community & Suggestions</h1>
-          <p className="feature-desc">Member idea suggestion voting, staff approvals & verification gates.</p>
-        </div>
-      </div>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <PageHeader
+        icon={MessageSquarePlus}
+        title="Community & Suggestions"
+        subtitle="Manage member idea submissions, feedback voting, staff review verdicts, and server verification gates."
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            icon={RefreshCw}
+            loading={refreshing}
+            onClick={() => fetchData(true)}
+          >
+            Refresh
+          </Button>
+        }
+      />
 
       {error && (
-        <div className="alert alert-danger" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <span>{error}</span>
-          <button className="btn-secondary" onClick={() => setError('')} style={{ padding: '2px 8px' }}>✕</button>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          color: '#f87171',
+          fontSize: '13.5px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <AlertCircle size={17} />
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={() => setError('')}
+            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
         </div>
       )}
 
       {success && (
-        <div className="alert alert-success" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <span>{success}</span>
-          <button className="btn-secondary" onClick={() => setSuccess('')} style={{ padding: '2px 8px' }}>✕</button>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(16, 185, 129, 0.1)',
+          border: '1px solid rgba(16, 185, 129, 0.25)',
+          color: '#34d399',
+          fontSize: '13.5px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <CheckCircle2 size={17} />
+            <span>{success}</span>
+          </div>
+          <button
+            onClick={() => setSuccess('')}
+            style={{ background: 'transparent', border: 'none', color: '#34d399', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="tabs-container" style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--border-color)', marginBottom: '24px' }}>
+      {/* Tabs Row */}
+      <div style={{
+        display: 'flex',
+        gap: '6px',
+        padding: '4px',
+        borderRadius: 'var(--radius-lg)',
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border)',
+        width: 'fit-content'
+      }}>
         <button
-          className={`tab-btn ${activeTab === 'suggestions' ? 'active' : ''}`}
           onClick={() => setActiveTab('suggestions')}
           style={{
-            padding: '10px 18px', border: 'none', background: 'transparent',
-            cursor: 'pointer', fontWeight: '600',
-            color: activeTab === 'suggestions' ? 'var(--primary)' : 'var(--text-muted)',
-            borderBottom: activeTab === 'suggestions' ? '2px solid var(--primary)' : 'none'
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '8px 16px',
+            borderRadius: 'var(--radius-md)',
+            border: 'none',
+            background: activeTab === 'suggestions' ? 'var(--bg-card)' : 'transparent',
+            color: activeTab === 'suggestions' ? 'var(--text-main)' : 'var(--text-muted)',
+            fontWeight: activeTab === 'suggestions' ? 600 : 500,
+            fontSize: '13.5px',
+            cursor: 'pointer',
+            transition: 'all 150ms ease',
+            boxShadow: activeTab === 'suggestions' ? '0 1px 3px rgba(0, 0, 0, 0.2)' : 'none'
           }}
         >
-          💡 Suggestions Review ({suggestions.length})
+          <MessageSquarePlus size={16} color={activeTab === 'suggestions' ? 'var(--primary)' : 'currentColor'} />
+          <span>Suggestions Review</span>
+          <Badge variant={activeTab === 'suggestions' ? 'primary' : 'neutral'} size="sm">
+            {suggestions.length}
+          </Badge>
         </button>
+
         <button
-          className={`tab-btn ${activeTab === 'verify' ? 'active' : ''}`}
           onClick={() => setActiveTab('verify')}
           style={{
-            padding: '10px 18px', border: 'none', background: 'transparent',
-            cursor: 'pointer', fontWeight: '600',
-            color: activeTab === 'verify' ? 'var(--primary)' : 'var(--text-muted)',
-            borderBottom: activeTab === 'verify' ? '2px solid var(--primary)' : 'none'
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '8px 16px',
+            borderRadius: 'var(--radius-md)',
+            border: 'none',
+            background: activeTab === 'verify' ? 'var(--bg-card)' : 'transparent',
+            color: activeTab === 'verify' ? 'var(--text-main)' : 'var(--text-muted)',
+            fontWeight: activeTab === 'verify' ? 600 : 500,
+            fontSize: '13.5px',
+            cursor: 'pointer',
+            transition: 'all 150ms ease',
+            boxShadow: activeTab === 'verify' ? '0 1px 3px rgba(0, 0, 0, 0.2)' : 'none'
           }}
         >
-          🛡️ Member Verification
+          <ShieldCheck size={16} color={activeTab === 'verify' ? 'var(--primary)' : 'currentColor'} />
+          <span>Member Verification</span>
         </button>
       </div>
 
-      {/* SUGGESTIONS TAB */}
+      {/* TAB 1: SUGGESTIONS */}
       {activeTab === 'suggestions' && (
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 style={{ margin: 0, fontSize: '18px' }}>Submitted Ideas & Feedback</h3>
-            <button className="btn-secondary" onClick={fetchData} style={{ padding: '6px 14px' }}>🔄 Refresh</button>
-          </div>
-
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {suggestions.length === 0 ? (
-            <div className="dashboard-card" style={{ padding: '36px', textAlign: 'center', color: 'var(--text-muted)' }}>
-              <div style={{ fontSize: '32px', marginBottom: '8px' }}>💡</div>
-              <div>No community suggestions submitted yet.</div>
-            </div>
+            <EmptyState
+              icon={MessageSquarePlus}
+              title="No Suggestions Submitted"
+              description="Members can use the bot's suggestion command to propose community improvements and vote on ideas."
+            />
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {suggestions.map(s => (
-                <div key={s.id} className="dashboard-card" style={{ padding: '18px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
-                  <div style={{ flex: 1, minWidth: '280px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                      {getStatusBadge(s.status)}
-                      <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>#{s.id} • Author: {s.author_id}</span>
-                      <span style={{ fontSize: '12px', color: '#10b981', fontWeight: '600' }}>👍 {s.upvotes}</span>
-                      <span style={{ fontSize: '12px', color: '#ef4444', fontWeight: '600' }}>👎 {s.downvotes}</span>
-                    </div>
-
-                    <div style={{ fontSize: '15px', color: 'var(--text-main)', lineHeight: 1.5 }}>
-                      &ldquo;{s.content}&rdquo;
-                    </div>
-
-                    {s.staff_note && (
-                      <div style={{ marginTop: '8px', fontSize: '12px', color: 'var(--primary)', background: 'rgba(88,101,242,0.1)', padding: '4px 10px', borderRadius: '4px', display: 'inline-block' }}>
-                        Staff note: {s.staff_note}
+                <Card key={s.id} style={{ padding: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+                    <div style={{ flex: 1, minWidth: '280px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+                        {getStatusBadge(s.status)}
+                        <span style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>
+                          ID #{s.id} • Author: {s.author_id}
+                        </span>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: 'auto' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#10b981', fontSize: '12.5px', fontWeight: 600 }}>
+                            <ThumbsUp size={14} /> {s.upvotes}
+                          </span>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#f87171', fontSize: '12.5px', fontWeight: 600 }}>
+                            <ThumbsDown size={14} /> {s.downvotes}
+                          </span>
+                        </div>
                       </div>
-                    )}
-                  </div>
 
-                  <div>
-                    <button
-                      className="btn-primary"
-                      onClick={() => {
-                        setSelectedSuggestion(s);
-                        setReviewStatus(s.status === 'pending' ? 'approved' : s.status);
-                        setStaffNote(s.staff_note || '');
-                      }}
-                      style={{ padding: '6px 16px', fontSize: '13px' }}
-                    >
-                      Review Idea
-                    </button>
+                      <div style={{ fontSize: '14.5px', color: 'var(--text-main)', lineHeight: 1.5, marginBottom: s.staff_note ? '10px' : '0' }}>
+                        &ldquo;{s.content}&rdquo;
+                      </div>
+
+                      {s.staff_note && (
+                        <div style={{
+                          fontSize: '12.5px',
+                          color: 'var(--primary)',
+                          background: 'rgba(88, 101, 242, 0.08)',
+                          border: '1px solid rgba(88, 101, 242, 0.2)',
+                          padding: '6px 12px',
+                          borderRadius: 'var(--radius-sm)',
+                          display: 'inline-block'
+                        }}>
+                          <strong>Staff Verdict:</strong> {s.staff_note}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        icon={Edit3}
+                        onClick={() => {
+                          setSelectedSuggestion(s);
+                          setReviewStatus(s.status === 'pending' ? 'approved' : s.status);
+                          setStaffNote(s.staff_note || '');
+                        }}
+                      >
+                        Review Idea
+                      </Button>
+                    </div>
                   </div>
-                </div>
+                </Card>
               ))}
             </div>
           )}
         </div>
       )}
 
-      {/* VERIFICATION TAB */}
+      {/* TAB 2: VERIFICATION GATE */}
       {activeTab === 'verify' && (
-        <div className="dashboard-card" style={{ padding: '24px', maxWidth: '600px' }}>
-          <h3 style={{ margin: '0 0 16px', fontSize: '18px' }}>Verification System Setup</h3>
-          <form onSubmit={handleSaveVerify} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <div className="form-group">
-              <label className="form-label">Verified Member Role</label>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 6px' }}>Role assigned when a member completes verification.</p>
-              <Select
-                value={verifyConfig.verified_role_id || ''}
-                onChange={val => setVerifyConfig({ ...verifyConfig, verified_role_id: val })}
-                options={roleOptions}
-                placeholder="Select role..."
-                searchable
-              />
-            </div>
+        <div style={{ maxWidth: '640px' }}>
+          <Card>
+            <CardHeader>
+              <CardTitle>Member Verification Gate</CardTitle>
+              <CardDescription>
+                Screen incoming members before granting access to community chat channels.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleSaveVerify} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                    Verified Member Role
+                  </label>
+                  <Select
+                    value={verifyConfig.verified_role_id || ''}
+                    onChange={val => setVerifyConfig({ ...verifyConfig, verified_role_id: val })}
+                    options={roleOptions}
+                    placeholder="Select verified role..."
+                    searchable
+                  />
+                  <p style={{ margin: '5px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Assigned immediately once a new member successfully completes verification.
+                  </p>
+                </div>
 
-            <div className="form-group">
-              <label className="form-label">Verification Logs Channel</label>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 6px' }}>Channel where verification pass/fail audit logs are sent.</p>
-              <Select
-                value={verifyConfig.log_channel_id || ''}
-                onChange={val => setVerifyConfig({ ...verifyConfig, log_channel_id: val })}
-                options={channelOptions}
-                placeholder="Select channel..."
-                searchable
-              />
-            </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                    Verification Audit Logs Channel
+                  </label>
+                  <Select
+                    value={verifyConfig.log_channel_id || ''}
+                    onChange={val => setVerifyConfig({ ...verifyConfig, log_channel_id: val })}
+                    options={channelOptions}
+                    placeholder="Select log channel..."
+                    searchable
+                  />
+                  <p style={{ margin: '5px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Channel where pass/fail verification events are logged.
+                  </p>
+                </div>
 
-            <div className="form-group">
-              <label className="form-label">Minimum Account Age (Days)</label>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', margin: '0 0 6px' }}>Prevent accounts younger than this from verifying (anti-alt / anti-raid).</p>
-              <input
-                type="number"
-                className="form-input"
-                min={0}
-                value={verifyConfig.min_account_days || 0}
-                onChange={e => setVerifyConfig({ ...verifyConfig, min_account_days: Number(e.target.value) })}
-              />
-            </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                    Minimum Discord Account Age (Days)
+                  </label>
+                  <input
+                    type="number"
+                    className="form-input"
+                    min={0}
+                    value={verifyConfig.min_account_days || 0}
+                    onChange={e => setVerifyConfig({ ...verifyConfig, min_account_days: Number(e.target.value) })}
+                  />
+                  <p style={{ margin: '5px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    Rejects alt accounts or newly generated spam bots younger than this limit.
+                  </p>
+                </div>
 
-            <button type="submit" className="btn-primary" style={{ marginTop: '8px' }}>
-              Save Verification Config
-            </button>
-          </form>
+                <div style={{ display: 'flex', justifyContent: 'flex-start', marginTop: '6px' }}>
+                  <Button type="submit" variant="primary" icon={CheckCircle2}>
+                    Save Verification Rules
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
         </div>
       )}
 
       {/* Review Suggestion Modal */}
-      {selectedSuggestion && (
-        <div className="modal-overlay" onClick={() => setSelectedSuggestion(null)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '500px' }}>
-            <h3 style={{ marginTop: 0 }}>Review Suggestion #{selectedSuggestion.id}</h3>
-            <p style={{ background: 'rgba(255,255,255,0.05)', padding: '12px', borderRadius: '6px', fontSize: '14px', margin: '0 0 16px' }}>
-              {selectedSuggestion.content}
-            </p>
+      <Modal
+        isOpen={Boolean(selectedSuggestion)}
+        onClose={() => setSelectedSuggestion(null)}
+        title={selectedSuggestion ? `Review Suggestion #${selectedSuggestion.id}` : 'Review'}
+        maxWidth="500px"
+      >
+        {selectedSuggestion && (
+          <form onSubmit={handleReviewSuggestion} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{
+              padding: '14px',
+              borderRadius: 'var(--radius-sm)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border)',
+              fontSize: '13.5px',
+              color: 'var(--text-main)',
+              lineHeight: 1.45
+            }}>
+              &ldquo;{selectedSuggestion.content}&rdquo;
+            </div>
 
-            <form onSubmit={handleReviewSuggestion} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div className="form-group">
-                <label className="form-label">Decision Status</label>
-                <select
-                  className="form-input"
-                  value={reviewStatus}
-                  onChange={e => setReviewStatus(e.target.value)}
-                >
-                  <option value="pending">Pending</option>
-                  <option value="approved">Approved</option>
-                  <option value="denied">Denied</option>
-                  <option value="implemented">Implemented</option>
-                </select>
-              </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Status Decision
+              </label>
+              <select
+                className="form-input"
+                value={reviewStatus}
+                onChange={e => setReviewStatus(e.target.value)}
+              >
+                <option value="pending">Pending (Under Consideration)</option>
+                <option value="approved">Approved (Accepted by Staff)</option>
+                <option value="denied">Denied (Rejected)</option>
+                <option value="implemented">Implemented (Live in Server)</option>
+              </select>
+            </div>
 
-              <div className="form-group">
-                <label className="form-label">Staff Note / Reason</label>
-                <textarea
-                  className="form-input"
-                  rows={3}
-                  value={staffNote}
-                  onChange={e => setStaffNote(e.target.value)}
-                  placeholder="Optional note for the community..."
-                />
-              </div>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Staff Note / Reason (Optional)
+              </label>
+              <textarea
+                className="form-input"
+                rows={3}
+                value={staffNote}
+                onChange={e => setStaffNote(e.target.value)}
+                placeholder="Give the member context or reasoning..."
+              />
+            </div>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '14px' }}>
-                <button type="button" className="btn-secondary" onClick={() => setSelectedSuggestion(null)}>Cancel</button>
-                <button type="submit" className="btn-primary" disabled={submittingReview}>
-                  {submittingReview ? 'Submitting...' : 'Save Decision'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+              <Button type="button" variant="outline" onClick={() => setSelectedSuggestion(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" loading={submittingReview}>
+                Save Decision
+              </Button>
+            </div>
+          </form>
+        )}
+      </Modal>
     </div>
   );
 }

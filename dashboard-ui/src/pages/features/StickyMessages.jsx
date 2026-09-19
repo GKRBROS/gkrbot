@@ -1,9 +1,25 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  Pin,
+  Plus,
+  Trash2,
+  Hash,
+  Share2,
+  AlertCircle,
+  CheckCircle2,
+  MessageSquare
+} from 'lucide-react';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync, syncParams } from '../../sync';
 import { Select } from '../../components/Select';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Badge from '../../components/Badge';
+import EmptyState from '../../components/EmptyState';
+import Skeleton from '../../components/Skeleton';
 
 function StickyMessages() {
   const { guildId } = useParams();
@@ -12,6 +28,7 @@ function StickyMessages() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [syncOpen, setSyncOpen] = useState(false);
 
   const [selectedChannel, setSelectedChannel] = useState('');
@@ -29,10 +46,13 @@ function StickyMessages() {
       if (chList.length > 0 && !selectedChannel) {
         setSelectedChannel(chList[0].id);
       }
+      setError('');
     } catch (err) {
       console.error('Failed to load sticky messages', err);
+      setError(err.response?.data?.error || 'Failed to load sticky messages');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [guildId, selectedChannel]);
 
   useEffect(() => {
@@ -43,6 +63,7 @@ function StickyMessages() {
     e.preventDefault();
     if (!selectedChannel || !content.trim()) return;
     setError('');
+    setSuccess('');
     setSubmitting(true);
     try {
       await api.post(`/guilds/${guildId}/sticky`, withSync({
@@ -50,210 +71,220 @@ function StickyMessages() {
         content: content.trim()
       }));
       setContent('');
+      setSuccess('Sticky message pinned to channel successfully!');
+      setTimeout(() => setSuccess(''), 3000);
       await fetchData();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save sticky message');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitting(false);
   };
 
   const handleDelete = async (channelId) => {
+    if (!window.confirm('Remove sticky message from this channel?')) return;
     try {
       await api.delete(`/guilds/${guildId}/sticky/${channelId}`, { params: syncParams() });
       setStickies(prev => prev.filter(s => s.channel_id !== channelId));
+      setSuccess('Sticky message deleted.');
+      setTimeout(() => setSuccess(''), 2500);
     } catch (err) {
       console.error('Failed to delete sticky', err);
+      setError(err.response?.data?.error || 'Failed to delete sticky');
     }
   };
 
+  const channelOptions = channels.map(c => ({
+    value: c.id,
+    label: `#${c.name}`
+  }));
+
   if (loading) {
     return (
-      <div className="animate-fade-in stagger">
-        <div className="skeleton" style={{ height: '80px', marginBottom: '24px' }}></div>
-        <div className="skeleton" style={{ height: '240px' }}></div>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <Skeleton height="70px" />
+        <Skeleton height="240px" />
+        <Skeleton height="200px" />
       </div>
     );
   }
 
   const getChannelName = (id) => {
-    const ch = channels.find(c => c.id === id);
+    const ch = channels.find(c => String(c.id) === String(id));
     return ch ? `#${ch.name}` : `Channel ${id}`;
   };
 
   return (
-    <div className="animate-fade-in">
-      {/* Header */}
-      <div className="page-header flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px' }}>
-        <div>
-          <h2 className="page-title">
-            <span>📌</span> Sticky Messages
-          </h2>
-          <p className="page-subtitle">
-            Pins a dynamic message to the bottom of any channel. When new messages are sent, the bot repositions it.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setSyncOpen(true)}
-          className="btn"
-          style={{
-            background: 'rgba(88,101,242,0.15)',
-            border: '1px solid var(--primary)',
-            color: 'var(--text-main)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px'
-          }}
-        >
-          <span>🔄</span> Sync to Other Servers
-        </button>
-      </div>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <PageHeader
+        icon={Pin}
+        title="Sticky Channel Messages"
+        subtitle="Pins dynamic reminders and notices to the bottom of channels. When members chat, the bot automatically repositions the message."
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            icon={Share2}
+            onClick={() => setSyncOpen(true)}
+          >
+            Sync to Servers
+          </Button>
+        }
+      />
 
       {error && (
         <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
           padding: '12px 16px',
-          borderRadius: '8px',
-          marginBottom: '20px',
-          background: 'rgba(239, 68, 68, 0.15)',
-          border: '1px solid var(--danger)',
-          color: 'var(--danger)',
-          fontSize: '14px'
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          color: '#f87171',
+          fontSize: '13.5px'
         }}>
-          {error}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <AlertCircle size={17} />
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={() => setError('')}
+            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
         </div>
       )}
 
-      {/* Set Sticky Form */}
-      <div className="card glass-panel" style={{ marginBottom: '28px' }}>
-        <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px' }}>
-          Add or Update Sticky Message
-        </h3>
-        <form onSubmit={handleAddSticky}>
-          <div className="form-group" style={{ maxWidth: '400px', marginBottom: '16px' }}>
-            <label className="form-label">Target Channel</label>
-            <Select
-              value={selectedChannel}
-              onChange={setSelectedChannel}
-              options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
-              placeholder="Select a channel..."
-              searchable
-            />
+      {success && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(16, 185, 129, 0.1)',
+          border: '1px solid rgba(16, 185, 129, 0.25)',
+          color: '#34d399',
+          fontSize: '13.5px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <CheckCircle2 size={17} />
+            <span>{success}</span>
           </div>
-
-          <div className="form-group" style={{ marginBottom: '16px' }}>
-            <label className="form-label">Sticky Content</label>
-            <textarea
-              className="form-control"
-              rows="4"
-              placeholder="e.g. 📢 Remember to read server rules before chatting! Discord formatting and links supported."
-              value={content}
-              onChange={e => setContent(e.target.value)}
-              required
-            />
-          </div>
-
           <button
-            type="submit"
-            disabled={submitting || !content.trim()}
-            className="btn btn-primary"
+            onClick={() => setSuccess('')}
+            style={{ background: 'transparent', border: 'none', color: '#34d399', cursor: 'pointer', fontSize: '16px' }}
           >
-            {submitting ? 'Setting Sticky...' : '📌 Set Sticky Message'}
+            ✕
           </button>
-        </form>
-      </div>
+        </div>
+      )}
 
-      {/* Active Stickies List */}
+      {/* Create / Pin Sticky Message Card */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Pin New Sticky Notice</CardTitle>
+          <CardDescription>
+            Select a target channel and specify the message content to keep anchored at the bottom of the chat stream.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleAddSticky} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Discord Channel
+              </label>
+              <Select
+                value={selectedChannel}
+                onChange={setSelectedChannel}
+                options={channelOptions}
+                placeholder="Select channel..."
+                searchable
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Sticky Message Body (Markdown supported)
+              </label>
+              <textarea
+                className="form-input"
+                rows={3}
+                value={content}
+                onChange={e => setContent(e.target.value)}
+                placeholder="e.g. ⚠️ Remember: Keep discussion on-topic in this channel. See #rules for guidelines!"
+                required
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Button
+                type="submit"
+                variant="primary"
+                icon={Pin}
+                loading={submitting}
+                disabled={!selectedChannel || !content.trim()}
+              >
+                Pin Sticky Message
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Active Sticky Notices */}
       <div>
-        <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px' }}>
-          Active Sticky Messages ({stickies.length})
-        </h3>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--text-main)' }}>
+              Active Sticky Messages
+            </h3>
+            <p style={{ margin: '3px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
+              Channels where auto-repositioning sticky messages are currently enabled.
+            </p>
+          </div>
+          <Badge variant="primary" size="sm">{stickies.length} Active</Badge>
+        </div>
 
         {stickies.length === 0 ? (
-          <div className="card glass-panel" style={{ textAlign: 'center', padding: '36px', color: 'var(--text-muted)' }}>
-            No sticky messages configured for this server yet.
-          </div>
+          <EmptyState
+            icon={Pin}
+            title="No Sticky Messages Pinned"
+            description="Use the form above to pin an enduring notice or guideline message to any channel."
+          />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {stickies.map(s => (
-              <div
-                key={s.channel_id}
-                className="card glass-panel"
-                style={{
-                  display: 'flex',
-                  alignItems: 'flex-start',
-                  justifyContent: 'space-between',
-                  gap: '16px',
-                  padding: '16px 20px'
-                }}
-              >
-                <div style={{ flex: 1 }}>
-                  <div style={{
-                    display: 'inline-block',
-                    background: 'rgba(88,101,242,0.15)',
-                    border: '1px solid var(--primary)',
-                    borderRadius: '6px',
-                    padding: '3px 10px',
-                    fontSize: '12px',
-                    fontWeight: 600,
-                    color: 'var(--accent)',
-                    marginBottom: '8px'
-                  }}>
-                    {getChannelName(s.channel_id)}
+              <Card key={s.channel_id} style={{ padding: '18px 20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '14px' }}>
+                  <div style={{ flex: 1, minWidth: '280px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                      <Badge variant="primary" size="sm">
+                        {getChannelName(s.channel_id)}
+                      </Badge>
+                    </div>
+                    <div style={{ fontSize: '13.5px', color: 'var(--text-main)', lineHeight: 1.45, whiteSpace: 'pre-wrap' }}>
+                      {s.content}
+                    </div>
                   </div>
-                  <div style={{
-                    fontSize: '14px',
-                    color: 'var(--text-main)',
-                    whiteSpace: 'pre-wrap',
-                    background: 'rgba(0,0,0,0.2)',
-                    padding: '10px 14px',
-                    borderRadius: '8px',
-                    border: '1px solid var(--border)'
-                  }}>
-                    {s.content}
-                  </div>
-                </div>
 
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedChannel(s.channel_id);
-                      setContent(s.content);
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
-                    className="btn"
-                    style={{
-                      background: 'rgba(88,101,242,0.12)',
-                      border: '1px solid var(--primary)',
-                      color: 'var(--text-main)',
-                      padding: '8px 14px',
-                      fontSize: '13px'
-                    }}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    type="button"
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    icon={Trash2}
                     onClick={() => handleDelete(s.channel_id)}
-                    className="btn"
-                    style={{
-                      background: 'rgba(239,68,68,0.12)',
-                      border: '1px solid var(--danger)',
-                      color: 'var(--danger)',
-                      padding: '8px 14px',
-                      fontSize: '13px'
-                    }}
                   >
-                    Delete
-                  </button>
+                    Unpin
+                  </Button>
                 </div>
-              </div>
+              </Card>
             ))}
           </div>
         )}
       </div>
 
-      {/* Sync Modal */}
       <SyncModal
         isOpen={syncOpen}
         onClose={() => setSyncOpen(false)}

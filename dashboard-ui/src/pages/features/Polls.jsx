@@ -1,7 +1,28 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  BarChart2,
+  Plus,
+  Trash2,
+  Lock,
+  CheckCircle2,
+  AlertCircle,
+  Hash,
+  Users,
+  CheckSquare,
+  Clock,
+  Vote
+} from 'lucide-react';
 import api from '../../api';
 import { Select } from '../../components/Select';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Toggle from '../../components/Toggle';
+import Badge from '../../components/Badge';
+import Modal from '../../components/Modal';
+import EmptyState from '../../components/EmptyState';
+import Skeleton from '../../components/Skeleton';
 
 function Polls() {
   const { guildId } = useParams();
@@ -63,7 +84,7 @@ function Polls() {
     e.preventDefault();
     const cleanOptions = options.map(o => o.trim()).filter(Boolean);
     if (!question.trim() || !channelId || cleanOptions.length < 2) {
-      setError('Please provide a question, target channel, and at least 2 non-empty options.');
+      setError('Please provide a poll question, target channel, and at least 2 non-empty choices.');
       return;
     }
     setSubmitting(true);
@@ -78,7 +99,7 @@ function Polls() {
         anonymous,
         duration_minutes: durationMinutes,
       });
-      setSuccess('📊 Poll published to Discord successfully!');
+      setSuccess('Poll deployed to Discord channel successfully!');
       setShowModal(false);
       setQuestion('');
       setOptions(['', '']);
@@ -94,10 +115,10 @@ function Polls() {
   };
 
   const handleClosePoll = async (messageId) => {
-    if (!window.confirm('Close this poll and publish final results?')) return;
+    if (!window.confirm('Close this poll and publish final results in Discord?')) return;
     try {
       await api.post(`/guilds/${guildId}/polls/${messageId}/close`);
-      setSuccess('Poll closed and results locked!');
+      setSuccess('Poll closed and final vote tally locked!');
       fetchData();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to close poll');
@@ -106,226 +127,337 @@ function Polls() {
 
   const channelOptions = channels.map(c => ({ value: c.id, label: `#${c.name}` }));
 
-  const activePolls = polls.filter(p => !p.ended);
-  const endedPolls = polls.filter(p => p.ended);
+  if (loading) {
+    return (
+      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <Skeleton height="70px" />
+        <Skeleton height="240px" />
+        <Skeleton height="200px" />
+      </div>
+    );
+  }
 
   return (
-    <div className="feature-page">
-      <div className="feature-header">
-        <div>
-          <h1 className="feature-title">📊 Interactive Polls</h1>
-          <p className="feature-desc">Live community voting with graphical progress bars, anonymous options & auto-close timers.</p>
-        </div>
-        <button className="btn-primary" onClick={() => setShowModal(true)}>
-          + Create Poll
-        </button>
-      </div>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <PageHeader
+        icon={BarChart2}
+        title="Interactive Polls"
+        subtitle="Publish interactive single or multi-choice community polls with live Discord button voting and real-time tallies."
+        actions={
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Plus}
+            onClick={() => setShowModal(true)}
+          >
+            Create Poll
+          </Button>
+        }
+      />
 
       {error && (
-        <div className="alert alert-danger" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <span>{error}</span>
-          <button className="btn-secondary" onClick={() => setError('')} style={{ padding: '2px 8px' }}>✕</button>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          color: '#f87171',
+          fontSize: '13.5px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <AlertCircle size={17} />
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={() => setError('')}
+            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
         </div>
       )}
 
       {success && (
-        <div className="alert alert-success" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <span>{success}</span>
-          <button className="btn-secondary" onClick={() => setSuccess('')} style={{ padding: '2px 8px' }}>✕</button>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(16, 185, 129, 0.1)',
+          border: '1px solid rgba(16, 185, 129, 0.25)',
+          color: '#34d399',
+          fontSize: '13.5px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <CheckCircle2 size={17} />
+            <span>{success}</span>
+          </div>
+          <button
+            onClick={() => setSuccess('')}
+            style={{ background: 'transparent', border: 'none', color: '#34d399', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
         </div>
       )}
 
-      {/* Active Polls */}
-      <div style={{ marginBottom: '32px' }}>
-        <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px', color: 'var(--text-main)' }}>
-          Active Polls ({activePolls.length})
-        </h3>
-
-        {activePolls.length === 0 ? (
-          <div className="dashboard-card" style={{ padding: '36px', textAlign: 'center', color: 'var(--text-muted)' }}>
-            <div style={{ fontSize: '32px', marginBottom: '8px' }}>📊</div>
-            <div>No active polls running. Create a poll to gather community feedback!</div>
+      {/* Polls Grid */}
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--text-main)' }}>
+              Active & Past Polls
+            </h3>
+            <p style={{ margin: '3px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
+              Track member participation rates and manage live votes.
+            </p>
           </div>
+          <Badge variant="primary" size="sm">{polls.length} Total Polls</Badge>
+        </div>
+
+        {polls.length === 0 ? (
+          <EmptyState
+            icon={BarChart2}
+            title="No Polls Conducted"
+            description="Engage your community by asking questions with customizable response options and live tallies."
+            actionLabel="Create First Poll"
+            onAction={() => setShowModal(true)}
+          />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(360px, 1fr))', gap: '16px' }}>
-            {activePolls.map(p => {
-              const ch = channels.find(c => c.id === p.channel_id);
-              const totalVotes = p.total_votes || 0;
+            {polls.map(poll => {
+              const ch = channels.find(c => String(c.id) === String(poll.channel_id));
+              const totalVotes = poll.total_votes || (poll.options ? poll.options.reduce((acc, curr) => acc + (curr.votes || 0), 0) : 0);
+              const isClosed = poll.closed;
+
               return (
-                <div key={p.message_id} className="dashboard-card" style={{ padding: '20px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                    <span className="badge badge-success">Live Voting</span>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      #{ch ? ch.name : p.channel_id}
-                    </span>
-                  </div>
-
-                  <h4 style={{ fontSize: '17px', fontWeight: '700', margin: '0 0 16px', color: 'var(--text-main)' }}>
-                    {p.question}
-                  </h4>
-
-                  {/* Options Progress Bars */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' }}>
-                    {p.options.map(opt => {
-                      const count = p.distribution ? (p.distribution[opt] || 0) : 0;
-                      const pct = totalVotes > 0 ? Math.round((count / totalVotes) * 100) : 0;
-                      return (
-                        <div key={opt}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '4px' }}>
-                            <span style={{ fontWeight: '500' }}>{opt}</span>
-                            <span style={{ color: 'var(--text-muted)' }}>{count} ({pct}%)</span>
-                          </div>
-                          <div style={{ width: '100%', height: '8px', background: 'rgba(255,255,255,0.06)', borderRadius: '4px', overflow: 'hidden' }}>
-                            <div style={{ width: `${pct}%`, height: '100%', background: 'var(--primary)', borderRadius: '4px', transition: 'width 0.3s' }} />
-                          </div>
+                <Card key={poll.message_id || poll.id} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                  <CardContent style={{ padding: '20px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                      <div style={{ flex: 1, paddingRight: '10px' }}>
+                        <h4 style={{ margin: 0, fontSize: '15.5px', fontWeight: 700, color: 'var(--text-main)', lineHeight: 1.35 }}>
+                          {poll.question}
+                        </h4>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)', fontSize: '12px', marginTop: '4px' }}>
+                          <Hash size={13} />
+                          <span>{ch ? ch.name : poll.channel_id}</span>
+                          <span>•</span>
+                          <span>{totalVotes} vote(s) cast</span>
                         </div>
-                      );
-                    })}
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-color)', paddingTop: '14px' }}>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      {totalVotes} total vote(s) {p.multi_choice ? '• Multiple' : '• Single'} {p.anonymous ? '• Anon' : ''}
+                      </div>
+                      <Badge variant={isClosed ? 'neutral' : 'success'} dot={!isClosed} size="sm">
+                        {isClosed ? 'Closed' : 'Voting Open'}
+                      </Badge>
                     </div>
-                    <button className="btn-danger" onClick={() => handleClosePoll(p.message_id)} style={{ padding: '6px 14px', fontSize: '12px' }}>
-                      Close Poll
-                    </button>
-                  </div>
-                </div>
+
+                    {/* Options list with progress bars */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '14px' }}>
+                      {poll.options && poll.options.map((opt, i) => {
+                        const optVotes = opt.votes || 0;
+                        const pct = totalVotes > 0 ? Math.round((optVotes / totalVotes) * 100) : 0;
+                        return (
+                          <div
+                            key={i}
+                            style={{
+                              padding: '8px 10px',
+                              borderRadius: 'var(--radius-sm)',
+                              background: 'var(--bg-surface)',
+                              border: '1px solid var(--border)',
+                              position: 'relative',
+                              overflow: 'hidden'
+                            }}
+                          >
+                            <div
+                              style={{
+                                position: 'absolute',
+                                left: 0,
+                                top: 0,
+                                bottom: 0,
+                                width: `${pct}%`,
+                                background: 'rgba(88, 101, 242, 0.12)',
+                                transition: 'width 300ms ease'
+                              }}
+                            />
+                            <div style={{ position: 'relative', display: 'flex', justifyContent: 'space-between', fontSize: '12.5px', zIndex: 1 }}>
+                              <span style={{ fontWeight: 500, color: 'var(--text-main)' }}>
+                                {opt.text || opt}
+                              </span>
+                              <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>
+                                {pct}% ({optVotes})
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+
+                  {!isClosed && (
+                    <div style={{
+                      padding: '12px 20px',
+                      borderTop: '1px solid var(--border)',
+                      background: 'rgba(255, 255, 255, 0.01)',
+                      display: 'flex',
+                      justifyContent: 'flex-end'
+                    }}>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        icon={Lock}
+                        onClick={() => handleClosePoll(poll.message_id || poll.id)}
+                      >
+                        End Poll & Lock Results
+                      </Button>
+                    </div>
+                  )}
+                </Card>
               );
             })}
           </div>
         )}
       </div>
 
-      {/* Finished Polls */}
-      <div>
-        <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '16px', color: 'var(--text-main)' }}>
-          Poll History ({endedPolls.length})
-        </h3>
-
-        {endedPolls.length === 0 ? (
-          <div className="dashboard-card" style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)' }}>
-            No past closed polls.
+      {/* Creation Modal */}
+      <Modal
+        isOpen={showModal}
+        onClose={() => setShowModal(false)}
+        title="Create New Interactive Poll"
+        maxWidth="540px"
+      >
+        <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+              Poll Question
+            </label>
+            <input
+              type="text"
+              className="form-input"
+              value={question}
+              onChange={e => setQuestion(e.target.value)}
+              placeholder="e.g. Which game should we play this community night?"
+              required
+            />
           </div>
-        ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
-            {endedPolls.map(p => (
-              <div key={p.message_id} className="dashboard-card" style={{ padding: '16px', opacity: 0.85 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                  <span className="badge badge-muted" style={{ fontSize: '11px' }}>Concluded</span>
-                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{p.total_votes || 0} votes</span>
-                </div>
-                <h5 style={{ margin: '0 0 10px', fontSize: '15px', color: 'var(--text-main)' }}>{p.question}</h5>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  Options: {p.options.join(', ')}
-                </div>
-              </div>
-            ))}
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+              Target Channel
+            </label>
+            <Select
+              value={channelId}
+              onChange={setChannelId}
+              options={channelOptions}
+              placeholder="Select destination channel..."
+              searchable
+            />
           </div>
-        )}
-      </div>
 
-      {/* Create Modal */}
-      {showModal && (
-        <div className="modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '540px' }}>
-            <h3 style={{ marginTop: 0 }}>Create New Interactive Poll</h3>
-            <form onSubmit={handleCreate} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div className="form-group">
-                <label className="form-label">Poll Question / Topic</label>
-                <input
-                  type="text"
-                  className="form-input"
-                  value={question}
-                  onChange={e => setQuestion(e.target.value)}
-                  placeholder="e.g. Which game should we play this weekend?"
-                  required
-                />
-              </div>
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-main)' }}>
+                Poll Options ({options.length}/10)
+              </label>
+              {options.length < 10 && (
+                <button
+                  type="button"
+                  onClick={handleAddOption}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: 'var(--primary)',
+                    fontSize: '12.5px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    padding: 0
+                  }}
+                >
+                  + Add Option
+                </button>
+              )}
+            </div>
 
-              <div className="form-group">
-                <label className="form-label">Destination Discord Channel</label>
-                <Select
-                  value={channelId}
-                  onChange={setChannelId}
-                  options={channelOptions}
-                  placeholder="Select channel..."
-                  searchable
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Choices / Options (2 - 10)</span>
-                  {options.length < 10 && (
-                    <button type="button" onClick={handleAddOption} style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '12px', fontWeight: '600' }}>
-                      + Add Option
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {options.map((opt, index) => (
+                <div key={index} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    type="text"
+                    className="form-input"
+                    value={opt}
+                    onChange={e => handleOptionChange(e.target.value, index)}
+                    placeholder={`Option ${index + 1}`}
+                    required
+                  />
+                  {options.length > 2 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveOption(index)}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: '#f87171',
+                        cursor: 'pointer',
+                        padding: '6px'
+                      }}
+                      title="Remove option"
+                    >
+                      <Trash2 size={16} />
                     </button>
                   )}
-                </label>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                  {options.map((opt, i) => (
-                    <div key={i} style={{ display: 'flex', gap: '8px' }}>
-                      <input
-                        type="text"
-                        className="form-input"
-                        value={opt}
-                        onChange={e => handleOptionChange(e.target.value, i)}
-                        placeholder={`Option ${i + 1}`}
-                        required
-                      />
-                      {options.length > 2 && (
-                        <button type="button" className="btn-secondary" onClick={() => handleRemoveOption(i)} style={{ padding: '0 12px' }}>
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  ))}
                 </div>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px' }}>
-                  <input
-                    type="checkbox"
-                    checked={multiChoice}
-                    onChange={e => setMultiChoice(e.target.checked)}
-                  />
-                  <span>Allow Multiple Choices</span>
-                </label>
-
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '14px' }}>
-                  <input
-                    type="checkbox"
-                    checked={anonymous}
-                    onChange={e => setAnonymous(e.target.checked)}
-                  />
-                  <span>Anonymous Voting</span>
-                </label>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Auto-Close Timer (Minutes, 0 = Never)</label>
-                <input
-                  type="number"
-                  className="form-input"
-                  min={0}
-                  value={durationMinutes}
-                  onChange={e => setDurationMinutes(Number(e.target.value))}
-                />
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
-                <button type="button" className="btn-secondary" onClick={() => setShowModal(false)}>Cancel</button>
-                <button type="submit" className="btn-primary" disabled={submitting}>
-                  {submitting ? 'Publishing...' : '📊 Publish Poll'}
-                </button>
-              </div>
-            </form>
+              ))}
+            </div>
           </div>
-        </div>
-      )}
+
+          <div style={{
+            padding: '14px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px'
+          }}>
+            <Toggle
+              checked={multiChoice}
+              onChange={setMultiChoice}
+              label="Allow Multiple Selections"
+              description="Members can choose more than one option from the list."
+            />
+            <Toggle
+              checked={anonymous}
+              onChange={setAnonymous}
+              label="Anonymous Voting"
+              description="Hide who voted for which option to ensure private responses."
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+              Auto-Close Duration (Minutes, 0 = Keep Open Until Manually Closed)
+            </label>
+            <input
+              type="number"
+              min="0"
+              className="form-input"
+              value={durationMinutes}
+              onChange={e => setDurationMinutes(parseInt(e.target.value, 10) || 0)}
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+            <Button type="button" variant="outline" onClick={() => setShowModal(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" loading={submitting}>
+              Publish Poll
+            </Button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

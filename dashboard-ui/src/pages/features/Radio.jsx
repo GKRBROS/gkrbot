@@ -1,6 +1,27 @@
-﻿import { useEffect, useState, useRef } from "react";
-import { useParams } from "react-router-dom";
-import api from "../../api";
+import { useEffect, useState, useRef } from 'react';
+import { useParams } from 'react-router-dom';
+import {
+  Radio as RadioIcon,
+  Play,
+  Pause,
+  Square,
+  Volume2,
+  VolumeX,
+  Volume1,
+  Wifi,
+  Sparkles,
+  CheckCircle2,
+  AlertCircle,
+  RadioReceiver,
+  Headphones,
+  Signal
+} from 'lucide-react';
+import api from '../../api';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardHeader, CardTitle, CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Badge from '../../components/Badge';
+import Toggle from '../../components/Toggle';
 
 function groupByCategory(stations = []) {
   const groups = {};
@@ -15,7 +36,7 @@ function Radio() {
   const { guildId } = useParams();
   const [state, setState] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const [actionPending, setActionPending] = useState(false);
   const [localVolume, setLocalVolume] = useState(100);
   const volumeDebounce = useRef(null);
@@ -25,10 +46,10 @@ function Radio() {
     try {
       const res = await api.get(`/guilds/${guildId}/radio`);
       setState(res.data);
-      setError("");
+      setError('');
       if (!isDragging.current) setLocalVolume(res.data.volume ?? 100);
     } catch (err) {
-      if (err.response?.status !== 404) setError("Failed to load radio state.");
+      if (err.response?.status !== 404) setError('Failed to load radio state.');
     }
     setLoading(false);
   };
@@ -45,7 +66,7 @@ function Radio() {
       await api.post(`/guilds/${guildId}/radio/control`, { action, ...extra });
       await fetchState();
     } catch (err) {
-      alert(err.response?.data?.error || "Action failed");
+      alert(err.response?.data?.error || 'Action failed');
     }
     setActionPending(false);
   };
@@ -56,15 +77,18 @@ function Radio() {
     if (volumeDebounce.current) clearTimeout(volumeDebounce.current);
     volumeDebounce.current = setTimeout(() => {
       isDragging.current = false;
-      control("set_volume", { volume: val });
+      control('set_volume', { volume: val });
     }, 400);
   };
 
   if (loading) {
     return (
-      <div className="animate-fade-in stagger">
-        <div className="skeleton" style={{ height: "320px", marginBottom: "24px" }}></div>
-        <div className="skeleton" style={{ height: "220px" }}></div>
+      <div className="flex flex-col gap-6 animate-fade-in">
+        <div className="skeleton" style={{ height: '72px' }} />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="skeleton" style={{ height: '380px' }} />
+          <div className="skeleton" style={{ height: '380px' }} />
+        </div>
       </div>
     );
   }
@@ -77,438 +101,247 @@ function Radio() {
   const currentStationKey = state?.station_key;
   const currentStation = stations.find((s) => s.key === currentStationKey);
 
+  const getVolumeIcon = () => {
+    if (localVolume === 0) return VolumeX;
+    if (localVolume < 50) return Volume1;
+    return Volume2;
+  };
+  const VolIcon = getVolumeIcon();
+
   return (
-    <div className="animate-fade-in">
-      <div className="page-header">
-        <h1 className="page-title">📻 Radio Station</h1>
-        <p className="page-subtitle">
-          24/7 ultra-low CPU radio streaming — control stations directly from the dashboard.
-        </p>
-      </div>
+    <div className="flex flex-col gap-6 animate-fade-in">
+      <PageHeader
+        icon={RadioIcon}
+        title="Radio Station"
+        subtitle="24/7 ultra-low CPU radio streaming — select stations and control playback directly from your dashboard."
+        badge={
+          isActive ? (
+            <Badge variant={isPaused ? 'warning' : 'success'} dot>
+              {isPaused ? 'Paused' : 'Streaming Live'}
+            </Badge>
+          ) : (
+            <Badge variant="muted" dot>Offline</Badge>
+          )
+        }
+      />
 
       {error && (
-        <div
-          style={{
-            background: "rgba(237,66,69,0.12)",
-            border: "1px solid rgba(237,66,69,0.4)",
-            borderRadius: "12px",
-            padding: "14px 20px",
-            marginBottom: "20px",
-            color: "#ed4245",
-            fontSize: "14px",
-          }}
-        >
-          ⚠️ {error}
+        <div className="p-4 rounded-xl bg-danger/10 border border-danger/30 text-danger text-sm flex items-center gap-3">
+          <AlertCircle size={18} className="shrink-0" />
+          <span>{error}</span>
         </div>
       )}
 
-      <div className="grid-2" style={{ gap: "24px" }}>
-        {/* Left: Now Playing */}
-        <div
-          className="glass-panel"
-          style={{ padding: "28px", display: "flex", flexDirection: "column", gap: "20px" }}
-        >
-          {/* Station banner */}
-          <div
-            style={{
-              borderRadius: "16px",
-              overflow: "hidden",
-              position: "relative",
-              background: isActive
-                ? "linear-gradient(135deg, #6366f1 0%, #818cf8 40%, #22d3ee 100%)"
-                : "linear-gradient(135deg, #1e293b 0%, #0f172a 100%)",
-              padding: "32px 24px",
-              textAlign: "center",
-              boxShadow: isActive ? "0 8px 32px rgba(99,102,241,0.35)" : "none",
-              transition: "all 0.4s ease",
-            }}
-          >
-            {isActive && !isPaused && (
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  overflow: "hidden",
-                  borderRadius: "16px",
-                  opacity: 0.15,
-                }}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        {/* Left: Player & Controls (5 cols) */}
+        <div className="lg:col-span-5 flex flex-col gap-6">
+          <Card className="p-6 flex flex-col gap-6">
+            {/* Station Hero Banner */}
+            <div
+              className={`rounded-2xl p-6 text-center relative overflow-hidden transition-all duration-500 flex flex-col items-center justify-center min-h-[220px] ${
+                isActive
+                  ? 'bg-gradient-to-br from-primary/90 via-indigo-600/80 to-cyan-600/70 shadow-lg shadow-primary/20 text-white'
+                  : 'bg-card-sub border border-border text-muted'
+              }`}
+            >
+              {/* Radio Wave Effects */}
+              {isActive && !isPaused && (
+                <div className="absolute inset-0 pointer-events-none opacity-20">
+                  {[...Array(3)].map((_, i) => (
+                    <div
+                      key={i}
+                      className="absolute bottom-[-10px] left-1/2 -translate-x-1/2 rounded-full border-2 border-white"
+                      style={{
+                        width: `${100 + i * 50}px`,
+                        height: `${100 + i * 50}px`,
+                        animation: `radioWave 2.4s cubic-bezier(0.25, 0.8, 0.25, 1) ${i * 0.5}s infinite`
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+
+              <div className="text-5xl mb-3 relative drop-shadow-md">
+                {currentStation?.emoji ?? '📻'}
+              </div>
+              <h2 className="text-xl font-bold tracking-tight relative text-white">
+                {isActive ? (currentStation?.name ?? 'Unknown Station') : 'No Station Playing'}
+              </h2>
+              <p className="text-xs mt-1.5 opacity-85 relative max-w-xs text-center line-clamp-2">
+                {isActive
+                  ? currentStation?.desc ?? ''
+                  : 'Select a radio station from the library to begin broadcasting.'}
+              </p>
+
+              {/* Status pill */}
+              <div className="mt-4 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-2 bg-black/30 backdrop-blur-md text-white border border-white/10 relative">
+                <span
+                  className={`w-2 h-2 rounded-full ${
+                    isActive
+                      ? isPaused
+                        ? 'bg-amber-400'
+                        : 'bg-emerald-400 shadow-[0_0_8px_#34d399] animate-pulse'
+                      : 'bg-neutral-400'
+                  }`}
+                />
+                <span>
+                  {isActive ? (isPaused ? 'Playback Paused' : 'Live on Air') : 'Broadcaster Idle'}
+                </span>
+              </div>
+            </div>
+
+            {/* Playback Controls */}
+            <div className="flex items-center justify-center gap-4 py-2">
+              <Button
+                variant={isPaused ? 'primary' : 'secondary'}
+                size="lg"
+                className="rounded-full w-14 h-14 p-0 shadow-sm"
+                onClick={() => control(isPaused ? 'resume' : 'pause')}
+                disabled={!isActive || actionPending}
+                title={isPaused ? 'Resume Playback' : 'Pause Playback'}
               >
-                {[...Array(4)].map((_, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      position: "absolute",
-                      bottom: "-20px",
-                      left: "50%",
-                      transform: "translateX(-50%)",
-                      width: `${80 + i * 40}px`,
-                      height: `${80 + i * 40}px`,
-                      borderRadius: "50%",
-                      border: "2px solid white",
-                      animation: `radioWave 2s ease-out ${i * 0.4}s infinite`,
-                    }}
-                  />
-                ))}
+                {isPaused ? <Play size={22} className="ml-0.5" /> : <Pause size={22} />}
+              </Button>
+
+              <Button
+                variant="danger"
+                size="lg"
+                className="rounded-full w-14 h-14 p-0 shadow-sm"
+                onClick={() => control('stop')}
+                disabled={!isActive || actionPending}
+                title="Stop and Disconnect"
+              >
+                <Square size={20} />
+              </Button>
+            </div>
+
+            {/* Volume Control */}
+            <div className="space-y-2 pt-2 border-t border-border">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-sm font-medium text-main">
+                  <VolIcon size={16} className="text-muted" />
+                  <span>Stream Volume</span>
+                </div>
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-primary/10 text-primary">
+                  {localVolume}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="200"
+                value={localVolume}
+                onChange={(e) => handleVolumeChange(Number(e.target.value))}
+                className="w-full h-1.5 bg-border rounded-lg appearance-none cursor-pointer accent-primary"
+              />
+            </div>
+
+            {/* 24/7 Mode Switch */}
+            <div className="p-4 rounded-xl bg-card-sub border border-border flex items-center justify-between">
+              <div>
+                <div className="text-sm font-semibold text-main flex items-center gap-2">
+                  <Signal size={16} className="text-primary" />
+                  <span>24/7 Continuous Mode</span>
+                </div>
+                <div className="text-xs text-muted mt-0.5">
+                  Bot stays in voice channel and auto-reconnects on reboot
+                </div>
+              </div>
+              <Toggle
+                checked={Boolean(is247)}
+                disabled={actionPending}
+                onChange={() => control('toggle_247')}
+              />
+            </div>
+
+            {/* Connected Channel Info */}
+            {isActive && state?.voice_channel_name && (
+              <div className="p-3.5 rounded-xl bg-primary/5 border border-primary/20 flex items-center gap-3">
+                <Headphones size={20} className="text-primary shrink-0" />
+                <div className="overflow-hidden">
+                  <div className="text-xs text-muted">Transmitting in</div>
+                  <div className="text-sm font-bold text-main truncate">
+                    {state.voice_channel_name}
+                  </div>
+                </div>
               </div>
             )}
-
-            <div style={{ fontSize: "52px", marginBottom: "12px", position: "relative" }}>
-              {currentStation?.emoji ?? "📻"}
-            </div>
-            <div
-              style={{
-                fontSize: "20px",
-                fontWeight: 800,
-                color: "white",
-                lineHeight: 1.2,
-                position: "relative",
-              }}
-            >
-              {isActive ? currentStation?.name ?? "Unknown Station" : "No Station Playing"}
-            </div>
-            <div
-              style={{
-                fontSize: "13px",
-                color: isActive ? "rgba(255,255,255,0.8)" : "var(--text-muted)",
-                marginTop: "8px",
-                position: "relative",
-              }}
-            >
-              {isActive
-                ? currentStation?.desc ?? ""
-                : "Use /radio play in Discord or pick a station below"}
-            </div>
-
-            <div
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "6px",
-                marginTop: "16px",
-                padding: "5px 14px",
-                borderRadius: "999px",
-                background: "rgba(0,0,0,0.3)",
-                backdropFilter: "blur(8px)",
-                fontSize: "12px",
-                fontWeight: 700,
-                color: "white",
-                position: "relative",
-              }}
-            >
-              <span
-                style={{
-                  width: "8px",
-                  height: "8px",
-                  borderRadius: "50%",
-                  background: isActive ? (isPaused ? "#fbbf24" : "#4ade80") : "#6b7280",
-                  boxShadow: isActive && !isPaused ? "0 0 8px #4ade80" : "none",
-                  animation: isActive && !isPaused ? "pulse 2s ease-in-out infinite" : "none",
-                }}
-              />
-              {isActive ? (isPaused ? "⏸ Paused" : "🟢 Live") : "⏹ Offline"}
-            </div>
-          </div>
-
-          {/* Playback controls */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "12px",
-            }}
-          >
-            <button
-              className={`btn ${isPaused ? "btn-primary" : "btn-ghost"}`}
-              style={{ borderRadius: "50%", width: "44px", height: "44px", fontSize: "18px" }}
-              onClick={() => control(isPaused ? "resume" : "pause")}
-              disabled={!isActive || actionPending}
-              title={isPaused ? "Resume" : "Pause"}
-            >
-              {isPaused ? "▶️" : "⏸️"}
-            </button>
-            <button
-              className="btn btn-danger"
-              style={{ borderRadius: "50%", width: "44px", height: "44px", fontSize: "18px" }}
-              onClick={() => control("stop")}
-              disabled={!isActive || actionPending}
-              title="Stop and Disconnect"
-            >
-              ⏹️
-            </button>
-          </div>
-
-          {/* Volume */}
-          <div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                marginBottom: "8px",
-              }}
-            >
-              <span style={{ fontSize: "13px", color: "var(--text-sub)", fontWeight: 600 }}>
-                🔈 Volume
-              </span>
-              <span
-                style={{
-                  fontSize: "12px",
-                  fontWeight: 700,
-                  color: "var(--primary)",
-                  background: "rgba(99,102,241,0.12)",
-                  padding: "2px 10px",
-                  borderRadius: "999px",
-                }}
-              >
-                {localVolume}%
-              </span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="200"
-              value={localVolume}
-              onChange={(e) => handleVolumeChange(Number(e.target.value))}
-              style={{ width: "100%", accentColor: "var(--primary)", cursor: "pointer" }}
-            />
-          </div>
-
-          {/* 24/7 toggle */}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "14px 16px",
-              borderRadius: "12px",
-              background: is247 ? "rgba(99,102,241,0.12)" : "rgba(255,255,255,0.03)",
-              border: `1px solid ${is247 ? "rgba(99,102,241,0.35)" : "var(--border)"}`,
-              transition: "all 0.2s ease",
-              cursor: "pointer",
-            }}
-            onClick={() => !actionPending && control("toggle_247")}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") control("toggle_247");
-            }}
-          >
-            <div>
-              <div style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-main)" }}>
-                🔁 24/7 Mode
-              </div>
-              <div style={{ fontSize: "12px", color: "var(--text-muted)", marginTop: "2px" }}>
-                {is247
-                  ? "Bot auto-reconnects on drop or restart"
-                  : "Bot disconnects when not playing"}
-              </div>
-            </div>
-            <div
-              style={{
-                width: "44px",
-                height: "24px",
-                borderRadius: "999px",
-                background: is247 ? "var(--primary)" : "rgba(255,255,255,0.1)",
-                position: "relative",
-                transition: "background 0.2s ease",
-                flexShrink: 0,
-              }}
-            >
-              <div
-                style={{
-                  position: "absolute",
-                  top: "3px",
-                  left: is247 ? "22px" : "3px",
-                  width: "18px",
-                  height: "18px",
-                  borderRadius: "50%",
-                  background: "white",
-                  transition: "left 0.2s ease",
-                  boxShadow: "0 1px 4px rgba(0,0,0,0.3)",
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Voice channel */}
-          {isActive && state?.voice_channel_name && (
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: "10px",
-                padding: "12px 16px",
-                borderRadius: "10px",
-                background: "rgba(255,255,255,0.04)",
-                border: "1px solid var(--border)",
-              }}
-            >
-              <span style={{ fontSize: "18px" }}>🔊</span>
-              <div>
-                <div
-                  style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "2px" }}
-                >
-                  Connected to
-                </div>
-                <div
-                  style={{ fontSize: "14px", fontWeight: 700, color: "var(--text-main)" }}
-                >
-                  {state.voice_channel_name}
-                </div>
-              </div>
-            </div>
-          )}
+          </Card>
         </div>
 
-        {/* Right: Station Library */}
-        <div
-          className="glass-panel"
-          style={{
-            padding: "24px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "16px",
-            overflowY: "auto",
-            maxHeight: "600px",
-          }}
-        >
-          <div
-            style={{ fontSize: "16px", fontWeight: 700, color: "var(--text-main)", marginBottom: "4px" }}
-          >
-            📡 Station Library
-          </div>
+        {/* Right: Station Library (7 cols) */}
+        <div className="lg:col-span-7 flex flex-col gap-4">
+          <Card className="p-6 flex flex-col flex-1">
+            <CardHeader className="p-0 pb-4 mb-2 border-b border-border">
+              <CardTitle icon={RadioReceiver}>Station Library</CardTitle>
+            </CardHeader>
 
-          {Object.entries(stationGroups).map(([category, categoryStations]) => (
-            <div key={category}>
-              <div
-                style={{
-                  fontSize: "11px",
-                  fontWeight: 700,
-                  color: "var(--text-muted)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.08em",
-                  marginBottom: "8px",
-                  paddingLeft: "4px",
-                }}
-              >
-                {category}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                {categoryStations.map((station) => {
-                  const isSelected = station.key === currentStationKey && isActive;
-                  return (
-                    <div
-                      key={station.key}
-                      onClick={() => !actionPending && control("set_station", { station_key: station.key })}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ")
-                          control("set_station", { station_key: station.key });
-                      }}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: "12px",
-                        padding: "10px 14px",
-                        borderRadius: "10px",
-                        cursor: actionPending ? "not-allowed" : "pointer",
-                        background: isSelected
-                          ? "rgba(99,102,241,0.18)"
-                          : "rgba(255,255,255,0.03)",
-                        border: `1px solid ${
-                          isSelected ? "rgba(99,102,241,0.45)" : "var(--border)"
-                        }`,
-                        transition: "all 0.15s ease",
-                        opacity: actionPending ? 0.6 : 1,
-                      }}
-                    >
-                      <span style={{ fontSize: "22px", flexShrink: 0 }}>{station.emoji}</span>
-                      <div style={{ flex: 1, overflow: "hidden" }}>
+            <div className="flex flex-col gap-6 overflow-y-auto max-h-[640px] pr-1">
+              {Object.entries(stationGroups).map(([category, categoryStations]) => (
+                <div key={category} className="space-y-2.5">
+                  <div className="text-xs font-bold uppercase tracking-wider text-muted px-1">
+                    {category}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    {categoryStations.map((station) => {
+                      const isSelected = station.key === currentStationKey && isActive;
+                      return (
                         <div
-                          style={{
-                            fontSize: "14px",
-                            fontWeight: isSelected ? 700 : 500,
-                            color: isSelected ? "#a5b4fc" : "var(--text-main)",
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
+                          key={station.key}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() =>
+                            !actionPending && control('set_station', { station_key: station.key })
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              control('set_station', { station_key: station.key });
+                            }
                           }}
+                          className={`p-3.5 rounded-xl border flex items-center gap-3 cursor-pointer transition-all duration-150 ${
+                            isSelected
+                              ? 'bg-primary/10 border-primary shadow-sm shadow-primary/10'
+                              : 'bg-card-sub/60 hover:bg-card-sub border-border hover:border-border-hover'
+                          } ${actionPending ? 'opacity-60 pointer-events-none' : ''}`}
                         >
-                          {station.name}
+                          <span className="text-2xl shrink-0 drop-shadow-sm">
+                            {station.emoji}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold truncate text-main">
+                              {station.name}
+                            </div>
+                            <div className="text-xs text-muted truncate mt-0.5">
+                              {station.desc}
+                            </div>
+                          </div>
+                          {isSelected && (
+                            <Badge variant={isPaused ? 'warning' : 'success'} size="sm" dot>
+                              {isPaused ? 'PAUSED' : 'LIVE'}
+                            </Badge>
+                          )}
                         </div>
-                        <div
-                          style={{
-                            fontSize: "12px",
-                            color: "var(--text-muted)",
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}
-                        >
-                          {station.desc}
-                        </div>
-                      </div>
-                      {isSelected && (
-                        <div
-                          style={{
-                            fontSize: "10px",
-                            fontWeight: 800,
-                            color: "#4ade80",
-                            background: "rgba(74,222,128,0.12)",
-                            padding: "2px 8px",
-                            borderRadius: "999px",
-                            flexShrink: 0,
-                            display: "flex",
-                            alignItems: "center",
-                            gap: "4px",
-                          }}
-                        >
-                          <span
-                            style={{
-                              width: "6px",
-                              height: "6px",
-                              borderRadius: "50%",
-                              background: "#4ade80",
-                              display: "inline-block",
-                              animation: isPaused
-                                ? "none"
-                                : "pulse 1.5s ease-in-out infinite",
-                            }}
-                          />
-                          {isPaused ? "PAUSED" : "LIVE"}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
 
-          {stations.length === 0 && (
-            <div
-              style={{
-                textAlign: "center",
-                color: "var(--text-muted)",
-                padding: "40px 0",
-              }}
-            >
-              📻 No stations available
+              {stations.length === 0 && (
+                <div className="text-center text-muted py-12">
+                  <RadioIcon size={32} className="mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No radio stations available</p>
+                </div>
+              )}
             </div>
-          )}
+          </Card>
         </div>
       </div>
 
       <style>{`
         @keyframes radioWave {
-          0% { transform: translateX(-50%) scale(0.2); opacity: 1; }
-          100% { transform: translateX(-50%) scale(1); opacity: 0; }
-        }
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.4; }
+          0% { transform: translateX(-50%) scale(0.3); opacity: 1; }
+          100% { transform: translateX(-50%) scale(1.15); opacity: 0; }
         }
       `}</style>
     </div>

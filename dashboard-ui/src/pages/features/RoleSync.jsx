@@ -1,7 +1,25 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  GitCompare,
+  Plus,
+  Trash2,
+  RefreshCw,
+  CheckCircle2,
+  AlertCircle,
+  ArrowRight,
+  Shield,
+  Server
+} from 'lucide-react';
 import api from '../../api';
 import { Select } from '../../components/Select';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Toggle from '../../components/Toggle';
+import Badge from '../../components/Badge';
+import EmptyState from '../../components/EmptyState';
+import Skeleton from '../../components/Skeleton';
 
 export default function RoleSync() {
   const { guildId } = useParams();
@@ -39,7 +57,7 @@ export default function RoleSync() {
     fetchRoleSync();
   }, [fetchRoleSync]);
 
-  const selectedSourceGuildObj = availableSources.find(g => g.id === sourceGuildId);
+  const selectedSourceGuildObj = availableSources.find(g => String(g.id) === String(sourceGuildId));
   const sourceRoles = selectedSourceGuildObj?.roles || [];
 
   const handleAddRule = async (e) => {
@@ -65,8 +83,8 @@ export default function RoleSync() {
       const qualifying = res.data.qualifying ?? 0;
       setSuccess(
         backfill
-          ? `✅ Rule added! Backfilled ${synced} member(s) (${qualifying} qualifying checked).`
-          : '✅ Rule added successfully!'
+          ? `Rule configured! Backfilled ${synced} member(s) (${qualifying} qualifying checked).`
+          : 'Role sync rule added successfully!'
       );
 
       // Reset form
@@ -98,244 +116,254 @@ export default function RoleSync() {
     try {
       const res = await api.post(`/guilds/${guildId}/role-sync/${ruleId}/backfill`);
       const synced = res.data.synced ?? 0;
-      const qualifying = res.data.qualifying ?? 0;
-      setSuccess(`✅ Backfill complete: Synced ${synced} member(s) (${qualifying} checked).`);
+      setSuccess(`Backfill complete! Synced ${synced} member(s) across servers.`);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to execute backfill');
+      setError(err.response?.data?.error || 'Failed to trigger manual backfill');
     } finally {
       setBackfillingId(null);
     }
   };
 
+  const sourceGuildOptions = availableSources.map(g => ({
+    value: g.id,
+    label: g.name
+  }));
+
+  const sourceRoleOptions = sourceRoles.map(r => ({
+    value: r.id,
+    label: `@${r.name}`
+  }));
+
+  const targetRoleOptions = targetRoles.map(r => ({
+    value: r.id,
+    label: `@${r.name}`
+  }));
+
   if (loading) {
     return (
-      <div className="animate-fade-in stagger">
-        <div className="skeleton" style={{ height: '80px', marginBottom: '24px' }}></div>
-        <div className="skeleton" style={{ height: '300px' }}></div>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <Skeleton height="70px" />
+        <Skeleton height="260px" />
+        <Skeleton height="200px" />
       </div>
     );
   }
 
   return (
-    <div className="animate-fade-in">
-      {/* Header */}
-      <div className="page-header" style={{ marginBottom: '24px' }}>
-        <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span>🔄</span> Cross-Server Role Sync
-        </h1>
-        <p className="page-subtitle">
-          Synchronize member roles across your network of servers. When a user holds a verified role in Server A, they automatically receive the linked role in this server.
-        </p>
-      </div>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <PageHeader
+        icon={GitCompare}
+        title="Cross-Server Role Sync"
+        subtitle="Automatically synchronize VIP, Subscriber, Booster, or Staff roles from other community servers you manage."
+      />
 
-      {error && <div className="alert alert-error" style={{ marginBottom: '16px' }}>{error}</div>}
-      {success && <div className="alert alert-success" style={{ marginBottom: '16px' }}>{success}</div>}
-
-      <div className="grid-2 stagger" style={{ gap: '24px', alignItems: 'start' }}>
-        {/* Create Rule Panel */}
-        <div className="glass-panel" style={{ padding: '24px' }}>
-          <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none', marginBottom: '8px' }}>
-            ➕ Link New Roles
-          </h3>
-          <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '20px' }}>
-            Select a source server where the bot is also present, and choose which role should mirror to this server.
-          </p>
-
-          <form onSubmit={handleAddRule}>
-            {/* Step 1: Source Guild */}
-            <div className="form-group">
-              <label className="form-label">1. Source Server</label>
-              <Select
-                value={sourceGuildId}
-                onChange={(v) => {
-                  setSourceGuildId(v);
-                  setSourceRoleId('');
-                }}
-                options={availableSources.map(g => ({
-                  value: g.id,
-                  label: `${g.name} (${g.roles.length} roles)`,
-                }))}
-                placeholder="Select a source server..."
-                searchable
-              />
-              {availableSources.length === 0 && (
-                <span style={{ fontSize: '12px', color: 'var(--danger)', marginTop: '4px', display: 'block' }}>
-                  The bot is not present in any other servers yet. Invite the bot to the source server first.
-                </span>
-              )}
-            </div>
-
-            {/* Step 2: Source Role */}
-            <div className="form-group">
-              <label className="form-label">2. Source Role (In Source Server)</label>
-              <Select
-                value={sourceRoleId}
-                onChange={setSourceRoleId}
-                options={sourceRoles.map(r => ({
-                  value: r.id,
-                  label: r.name,
-                }))}
-                placeholder={sourceGuildId ? "Select role from source server..." : "Choose source server first"}
-                disabled={!sourceGuildId || sourceRoles.length === 0}
-                searchable
-              />
-            </div>
-
-            {/* Step 3: Target Role */}
-            <div className="form-group">
-              <label className="form-label">3. Target Role (In THIS Server)</label>
-              <Select
-                value={targetRoleId}
-                onChange={setTargetRoleId}
-                options={targetRoles.map(r => ({
-                  value: r.id,
-                  label: r.name,
-                }))}
-                placeholder="Select target role to grant..."
-                searchable
-              />
-            </div>
-
-            {/* Backfill Toggle */}
-            <div style={{
-              background: 'rgba(255,255,255,0.02)',
-              border: '1px solid var(--border)',
-              borderRadius: '8px',
-              padding: '12px 16px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '20px',
-            }}>
-              <div>
-                <div style={{ fontWeight: '600', fontSize: '14px', color: '#fff' }}>⚡ Backfill Existing Members</div>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                  Immediately assign this role to any existing members who already hold the source role.
-                </div>
-              </div>
-              <button
-                type="button"
-                className={`toggle ${backfill ? 'active' : ''}`}
-                onClick={() => setBackfill(!backfill)}
-                aria-label="Toggle Backfill"
-              ></button>
-            </div>
-
-            <button
-              type="submit"
-              disabled={saving || !sourceGuildId || !sourceRoleId || !targetRoleId}
-              className="btn btn-primary"
-              style={{ width: '100%', display: 'flex', justifyContent: 'center', gap: '8px' }}
-            >
-              <span>{saving ? '⏳' : '🔗'}</span>
-              {saving ? 'Linking & Syncing...' : 'Link & Activate Role Sync'}
-            </button>
-          </form>
-        </div>
-
-        {/* Active Rules List */}
-        <div className="glass-panel" style={{ padding: '24px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-            <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-              📋 Active Sync Rules ({rules.length})
-            </h3>
-            <button
-              type="button"
-              onClick={fetchRoleSync}
-              className="btn"
-              style={{ fontSize: '12px', padding: '4px 10px', background: 'var(--bg-surface)' }}
-            >
-              🔄 Refresh
-            </button>
+      {error && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          color: '#f87171',
+          fontSize: '13.5px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <AlertCircle size={17} />
+            <span>{error}</span>
           </div>
+          <button
+            onClick={() => setError('')}
+            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
-          {rules.length === 0 ? (
-            <div style={{
-              textAlign: 'center',
-              padding: '48px 16px',
-              color: 'var(--text-muted)',
-              background: 'rgba(255,255,255,0.01)',
-              borderRadius: '10px',
-              border: '1px dashed var(--border)',
-            }}>
-              <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔄</div>
-              <div style={{ fontWeight: '600', fontSize: '15px', color: '#fff', marginBottom: '4px' }}>No Role Sync Rules Configured</div>
-              <div style={{ fontSize: '13px', maxWidth: '340px', margin: '0 auto' }}>
-                Use the form on the left to link roles from any server where this bot is present.
+      {success && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(16, 185, 129, 0.1)',
+          border: '1px solid rgba(16, 185, 129, 0.25)',
+          color: '#34d399',
+          fontSize: '13.5px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <CheckCircle2 size={17} />
+            <span>{success}</span>
+          </div>
+          <button
+            onClick={() => setSuccess('')}
+            style={{ background: 'transparent', border: 'none', color: '#34d399', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Add Role Sync Rule Form */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Create Role Synchronization Bridge</CardTitle>
+          <CardDescription>
+            When a member holds a role in the source server, they automatically receive the target role in this server.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleAddRule} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '14px', alignItems: 'flex-end' }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                  Source Server
+                </label>
+                <Select
+                  value={sourceGuildId}
+                  onChange={val => {
+                    setSourceGuildId(val);
+                    setSourceRoleId('');
+                  }}
+                  options={sourceGuildOptions}
+                  placeholder="Select source server..."
+                  searchable
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                  Source Server Role
+                </label>
+                <Select
+                  value={sourceRoleId}
+                  onChange={setSourceRoleId}
+                  options={sourceRoleOptions}
+                  placeholder={sourceGuildId ? 'Select source role...' : 'Choose source server first'}
+                  disabled={!sourceGuildId}
+                  searchable
+                />
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                  Target Role (This Server)
+                </label>
+                <Select
+                  value={targetRoleId}
+                  onChange={setTargetRoleId}
+                  options={targetRoleOptions}
+                  placeholder="Select role to assign here..."
+                  searchable
+                />
               </div>
             </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {rules.map(rule => (
-                <div
-                  key={rule.id}
-                  style={{
-                    background: 'var(--bg-surface)',
-                    border: '1px solid var(--border)',
-                    borderRadius: '10px',
-                    padding: '16px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '12px',
-                    transition: 'all 0.2s',
-                  }}
-                >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
-                    {/* Source */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.5px' }}>
-                        From: {rule.source_guild_name}
+
+            <div style={{
+              padding: '14px',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--bg-surface)',
+              border: '1px solid var(--border)'
+            }}>
+              <Toggle
+                checked={backfill}
+                onChange={setBackfill}
+                label="Instant Backfill"
+                description="Immediately scans all current server members and assigns roles to those already eligible."
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '4px' }}>
+              <Button
+                type="submit"
+                variant="primary"
+                icon={Plus}
+                loading={saving}
+                disabled={!sourceGuildId || !sourceRoleId || !targetRoleId}
+              >
+                Create Sync Bridge
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Active Sync Bridges */}
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--text-main)' }}>
+              Active Sync Bridges
+            </h3>
+            <p style={{ margin: '3px 0 0', fontSize: '13px', color: 'var(--text-muted)' }}>
+              Live role synchronization rules active between your Discord communities.
+            </p>
+          </div>
+          <Badge variant="primary" size="sm">{rules.length} Active Rules</Badge>
+        </div>
+
+        {rules.length === 0 ? (
+          <EmptyState
+            icon={GitCompare}
+            title="No Sync Bridges Configured"
+            description="Link roles between your Discord servers above to automatically grant perks to cross-community members."
+          />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {rules.map(rule => (
+              <Card key={rule.id} style={{ padding: '16px 20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Server size={16} color="var(--text-muted)" />
+                      <span style={{ fontWeight: 600, fontSize: '13.5px', color: 'var(--text-main)' }}>
+                        {rule.source_guild_name || 'Source Server'}
                       </span>
-                      <span className="badge" style={{ background: 'rgba(99,102,241,0.15)', color: '#818cf8', border: '1px solid rgba(99,102,241,0.3)' }}>
-                        @{rule.source_role_name}
-                      </span>
+                      <Badge variant="neutral" size="sm">
+                        @{rule.source_role_name || rule.source_role_id}
+                      </Badge>
                     </div>
 
-                    <div style={{ fontSize: '20px', color: 'var(--text-muted)' }}>➔</div>
+                    <ArrowRight size={16} color="var(--primary)" />
 
-                    {/* Target */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                      <span style={{ fontSize: '11px', textTransform: 'uppercase', color: 'var(--text-muted)', letterSpacing: '0.5px' }}>
-                        To This Server:
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <Shield size={16} color="var(--primary)" />
+                      <span style={{ fontWeight: 600, fontSize: '13.5px', color: 'var(--text-main)' }}>
+                        This Server:
                       </span>
-                      <span className="badge" style={{ background: 'rgba(34,197,94,0.15)', color: '#4ade80', border: '1px solid rgba(34,197,94,0.3)' }}>
-                        @{rule.target_role_name}
-                      </span>
+                      <Badge variant="primary" size="sm">
+                        @{rule.target_role_name || rule.target_role_id}
+                      </Badge>
                     </div>
                   </div>
 
-                  {/* Actions */}
-                  <div style={{
-                    display: 'flex',
-                    justifyContent: 'flex-end',
-                    gap: '8px',
-                    borderTop: '1px solid rgba(255,255,255,0.04)',
-                    paddingTop: '10px',
-                  }}>
-                    <button
-                      type="button"
-                      disabled={backfillingId === rule.id}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      icon={RefreshCw}
+                      loading={backfillingId === rule.id}
                       onClick={() => handleManualBackfill(rule.id)}
-                      className="btn"
-                      style={{ fontSize: '12px', padding: '5px 12px', background: 'rgba(255,255,255,0.05)', color: '#fff' }}
-                      title="Scan members right now and grant the role to anyone who qualifies"
                     >
-                      {backfillingId === rule.id ? '⏳ Backfilling...' : '⚡ Backfill Now'}
-                    </button>
-                    <button
-                      type="button"
+                      Resync
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      icon={Trash2}
                       onClick={() => handleDeleteRule(rule.id)}
-                      className="btn btn-danger"
-                      style={{ fontSize: '12px', padding: '5px 12px' }}
                     >
-                      🗑️ Remove
-                    </button>
+                      Delete
+                    </Button>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+              </Card>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

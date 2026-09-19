@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import { FileText, Plus, RefreshCw, CheckCircle2, AlertCircle } from 'lucide-react';
 import api from '../../api';
 import { Select, MultiSelect } from '../../components/Select';
+import PageHeader from '../../components/PageHeader';
+import Button from '../../components/Button';
 
 const FIELD_TYPES = [
   { value: 'short_text', label: 'Short Text (Single Line)' },
@@ -372,52 +375,64 @@ function Registration() {
 
   return (
     <div className="animate-fade-in" style={{ paddingBottom: '60px' }}>
-      {/* Header */}
-      <div className="page-header flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '12px' }}>
-        <div>
-          <h1 className="page-title">📝 Dynamic Registration & Applications</h1>
-          <p className="page-subtitle">Build custom application forms, configure multi-role & nickname automations, and manage applicant submissions.</p>
-        </div>
-        <div className="flex gap-2">
-          <button className="btn btn-ghost" onClick={() => { setLoading(true); fetchData(); }}>
-            ↻ Refresh
-          </button>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              setEditingForm(null);
-              setFormData({
-                name: '',
-                description: '',
-                button_label: 'Register',
-                button_emoji: '📝',
-                button_style: 'primary',
-                channel_id: '',
-                enabled: true,
-                approval_mode: 'automatic',
-                review_channel_id: '',
-                log_channel_id: '',
-                auto_role_enabled: false,
-                add_role_ids: [],
-                remove_role_enabled: false,
-                remove_role_ids: [],
-                change_nickname_enabled: false,
-                nickname_question_id: null,
-                nickname_format: '{name}',
-                single_submission: true,
-                success_message: 'Your registration has been submitted successfully!',
-              });
-              setShowFormModal(true);
-            }}
-          >
-            ➕ Create Form
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        icon={FileText}
+        title="Dynamic Registration & Applications"
+        subtitle="Build custom application forms, configure multi-role & nickname automations, and manage applicant submissions."
+        actions={
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={() => { setLoading(true); fetchData(); }}>
+              <RefreshCw size={16} />
+              <span>Refresh</span>
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setEditingForm(null);
+                setFormData({
+                  name: '',
+                  description: '',
+                  button_label: 'Register',
+                  button_emoji: '📝',
+                  button_style: 'primary',
+                  channel_id: '',
+                  enabled: true,
+                  approval_mode: 'automatic',
+                  review_channel_id: '',
+                  log_channel_id: '',
+                  auto_role_enabled: false,
+                  add_role_ids: [],
+                  remove_role_enabled: false,
+                  remove_role_ids: [],
+                  change_nickname_enabled: false,
+                  nickname_question_id: null,
+                  nickname_format: '{name}',
+                  single_submission: true,
+                  success_message: 'Your registration has been submitted successfully!',
+                });
+                setShowFormModal(true);
+              }}
+            >
+              <Plus size={16} />
+              <span>Create Form</span>
+            </Button>
+          </div>
+        }
+      />
 
       {/* Alerts */}
-      {error && <div className="alert alert-error mb-4">⚠️ {error}</div>}
-      {success && <div className="alert alert-success mb-4">✅ {success}</div>}
+      {error && (
+        <div className="p-4 mb-4 rounded-xl bg-danger/10 border border-danger/30 text-danger text-sm flex items-center gap-3">
+          <AlertCircle size={18} className="shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+      {success && (
+        <div className="p-4 mb-4 rounded-xl bg-success/10 border border-success/30 text-success text-sm flex items-center gap-3">
+          <CheckCircle2 size={18} className="shrink-0" />
+          <span>{success}</span>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-2 mb-6 border-b border-border pb-2">

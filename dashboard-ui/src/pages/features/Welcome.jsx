@@ -1,42 +1,61 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync } from '../../sync';
 import { Select } from '../../components/Select';
+import { Button } from '../../components/Button';
+import { Badge } from '../../components/Badge';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
+import { Toggle } from '../../components/Toggle';
+import { PageHeader } from '../../components/PageHeader';
 import { useBotName } from '../../BotContext';
+import {
+  UserPlus,
+  Palette,
+  MessageSquare,
+  Shield,
+  LogOut,
+  Send,
+  RotateCcw,
+  Check,
+  Save,
+  Image as ImageIcon,
+  Sliders,
+  Sparkles,
+  Bot,
+  User,
+  AlertCircle,
+  HelpCircle
+} from 'lucide-react';
 
 const CARD_STYLES = [
   {
     id: 'legacy',
     label: 'Legacy Neon',
-    emoji: '🟣',
-    desc: 'Split-panel purple/cyan glow with avatar ring',
-    badge: 'Classic Original',
+    desc: 'Dual-tone glow with avatar ring and cyber accents',
+    badge: 'Classic',
     accent: '#8b5cf6',
   },
   {
     id: 'glass',
     label: 'Minimalist Glass',
-    emoji: '⚪',
-    desc: 'Centered avatar, soft halo glow & frosted glass',
-    badge: 'Modern Clean',
+    desc: 'Centered avatar with frosted blur and halo glow',
+    badge: 'Modern',
     accent: '#6366f1',
   },
   {
     id: 'ticket',
     label: 'Ticket Pass',
-    emoji: '🎫',
-    desc: 'VIP boarding pass with tear-off stub & barcode',
-    badge: 'Creative VIP',
+    desc: 'VIP boarding pass with tear-off stub and barcode',
+    badge: 'VIP Pass',
     accent: '#ec4899',
   },
   {
     id: 'cinematic',
     label: 'Cinematic Poster',
-    emoji: '🎬',
-    desc: 'Bold moody typography & wide letterbox banner',
-    badge: 'Bold Impact',
+    desc: 'Bold editorial typography with wide letterbox layout',
+    badge: 'Impact',
     accent: '#14b8a6',
   },
 ];
@@ -49,17 +68,17 @@ const PRESET_BACKGROUNDS = [
 ];
 
 const PLACEHOLDERS = [
-  { label: '{user}', desc: 'Mentions the new member (<@ID>)' },
+  { label: '{user}', desc: 'Mentions member (<@ID>)' },
   { label: '{username}', desc: "Member's display name" },
   { label: '{server}', desc: 'Server name' },
-  { label: '{count}', desc: 'Current member count' },
+  { label: '{count}', desc: 'Total member count' },
 ];
 
-function Welcome() {
+export function Welcome() {
   const { guildId } = useParams();
   const botName = useBotName();
 
-  const [activeTab, setActiveTab] = useState('card'); // 'card' | 'message' | 'autorole' | 'leave'
+  const [activeTab, setActiveTab] = useState('card');
   const [channels, setChannels] = useState([]);
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -78,7 +97,10 @@ function Welcome() {
     channel_id: '',
     message: 'Welcome to the server, {user}! 🎉',
     card_style: 'legacy',
+    card_only: false,
     background_url: '',
+    has_background: false,
+    clear_background: false,
     show_avatar: true,
     show_guild_icon: false,
     draw_avatar: true,
@@ -91,8 +113,11 @@ function Welcome() {
     leave_image_url: '',
   });
 
+  const [savedConfig, setSavedConfig] = useState(null);
+
   const fetchData = useCallback(async () => {
     try {
+      setLoading(true);
       const [welcomeRes, channelsRes, rolesRes] = await Promise.all([
         api.get(`/guilds/${guildId}/welcome`),
         api.get(`/guilds/${guildId}/channels`),
@@ -101,12 +126,15 @@ function Welcome() {
 
       if (welcomeRes.data.config) {
         const c = welcomeRes.data.config;
-        setConfig({
+        const normalized = {
           enabled: c.enabled ?? false,
           channel_id: c.channel_id || '',
           message: c.message || 'Welcome to the server, {user}! 🎉',
           card_style: c.card_style || 'legacy',
-          background_url: c.background_path ? '' : '', // will allow setting fresh URL
+          card_only: c.card_only ?? false,
+          background_url: '',
+          has_background: c.has_background ?? Boolean(c.background_path),
+          clear_background: false,
           show_avatar: c.show_avatar ?? true,
           show_guild_icon: c.show_guild_icon ?? false,
           draw_avatar: c.draw_avatar ?? true,
@@ -117,32 +145,74 @@ function Welcome() {
           leave_channel_id: c.leave_channel_id || '',
           leave_message: c.leave_message || '**{user}** left the server.',
           leave_image_url: c.leave_image_url || '',
-        });
+        };
+        setConfig(normalized);
+        setSavedConfig(normalized);
       }
       setChannels(channelsRes.data.channels || []);
       setRoles(rolesRes.data.roles || []);
+      setError('');
     } catch (err) {
       console.error('Failed to fetch welcome config', err);
+      setError(err.response?.data?.error || 'Failed to load welcome configuration');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [guildId]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  // Unsaved changes detection
+  const isDirty = useMemo(() => {
+    if (!savedConfig) return false;
+    return (
+      config.enabled !== savedConfig.enabled ||
+      config.channel_id !== savedConfig.channel_id ||
+      config.message !== savedConfig.message ||
+      config.card_style !== savedConfig.card_style ||
+      config.card_only !== savedConfig.card_only ||
+      Boolean(config.background_url) ||
+      config.clear_background ||
+      config.show_avatar !== savedConfig.show_avatar ||
+      config.show_guild_icon !== savedConfig.show_guild_icon ||
+      config.draw_avatar !== savedConfig.draw_avatar ||
+      config.draw_text !== savedConfig.draw_text ||
+      config.welcome_role_id !== savedConfig.welcome_role_id ||
+      config.bot_role_id !== savedConfig.bot_role_id ||
+      config.leave_enabled !== savedConfig.leave_enabled ||
+      config.leave_channel_id !== savedConfig.leave_channel_id ||
+      config.leave_message !== savedConfig.leave_message ||
+      config.leave_image_url !== savedConfig.leave_image_url
+    );
+  }, [config, savedConfig]);
+
+  const handleDiscard = () => {
+    if (savedConfig) {
+      setConfig({ ...savedConfig, background_url: '', clear_background: false });
+    }
+  };
+
   const handleSave = async (e) => {
     if (e) e.preventDefault();
     setError('');
     setSaving(true);
     try {
-      await api.post(`/guilds/${guildId}/welcome`, withSync(config));
+      const payload = { ...config };
+      if (!payload.background_url) {
+        delete payload.background_url;
+      }
+      await api.post(`/guilds/${guildId}/welcome`, withSync(payload));
       setSaved(true);
+      setSavedConfig({ ...config, background_url: '', clear_background: false });
       setTimeout(() => setSaved(false), 2500);
+      fetchData();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save welcome config');
+      setError(err.response?.data?.error || 'Failed to save welcome configuration');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   const handleTest = async (type) => {
@@ -152,7 +222,7 @@ function Welcome() {
 
     try {
       const res = await api.post(`/guilds/${guildId}/welcome/test`, { type });
-      setTestNotice({ type: 'success', message: res.data?.message || `Test ${type} message sent to Discord!` });
+      setTestNotice({ type: 'success', message: res.data?.message || `Test ${type} dispatched to Discord!` });
       setTimeout(() => setTestNotice(null), 5000);
     } catch (err) {
       setTestNotice({ type: 'error', message: err.response?.data?.error || `Failed to dispatch test ${type}` });
@@ -162,996 +232,747 @@ function Welcome() {
     }
   };
 
-  if (loading) {
+  const activeStyleMeta = CARD_STYLES.find(s => s.id === config.card_style) || CARD_STYLES[0];
+
+  if (loading && !savedConfig) {
     return (
-      <div className="animate-fade-in stagger">
-        <div className="skeleton" style={{ height: '80px', marginBottom: '24px' }}></div>
-        <div className="skeleton" style={{ height: '380px' }}></div>
+      <div className="flex flex-col gap-6 animate-fade-in">
+        <div className="card p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="w-48 h-6 bg-surface rounded animate-pulse mb-2" />
+              <div className="w-72 h-4 bg-surface rounded animate-pulse" />
+            </div>
+            <div className="w-12 h-6 bg-surface rounded-full animate-pulse" />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="card p-6 h-96" />
+          <div className="card p-6 h-96" />
+        </div>
       </div>
     );
   }
 
-  const activeStyleMeta = CARD_STYLES.find(s => s.id === config.card_style) || CARD_STYLES[0];
-
   return (
-    <div className="animate-fade-in">
-      {/* Top Header */}
-      <div className="page-header flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px', marginBottom: '20px' }}>
-        <div>
-          <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span>👋</span> Welcome & Leave Studio
-          </h1>
-          <p className="page-subtitle">
-            Create ultra-clean welcome cards, automatic member & bot roles, and departure announcements.
-          </p>
-        </div>
-        <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            onClick={() => handleTest('welcome')}
-            disabled={testingWelcome || !config.channel_id}
-            className="btn"
-            title={!config.channel_id ? 'Set a Welcome Channel first' : 'Send a simulated welcome card to Discord'}
-            style={{
-              background: 'rgba(99, 102, 241, 0.15)',
-              border: '1px solid #6366f1',
-              color: '#c7d2fe',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-            }}
-          >
-            <span>{testingWelcome ? '⏳' : '🧪'}</span>
-            {testingWelcome ? 'Dispatching...' : 'Test Welcome'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setSyncOpen(true)}
-            className="btn"
-            style={{
-              background: 'rgba(88, 101, 242, 0.15)',
-              border: '1px solid var(--primary)',
-              color: 'var(--text-main)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-            }}
-          >
-            <span>🔄</span> Sync Servers
-          </button>
-        </div>
-      </div>
+    <div className="flex flex-col gap-6 animate-fade-in">
+      {/* Page Header with Actions */}
+      <PageHeader
+        icon={UserPlus}
+        title="Welcome & Leave Studio"
+        subtitle="Configure greeting cards, arrival channels, role automation, and departure alerts."
+        actions={
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={Send}
+              loading={testingWelcome}
+              disabled={!config.channel_id}
+              onClick={() => handleTest('welcome')}
+              title={!config.channel_id ? 'Select a welcome channel first' : 'Send test card to Discord'}
+            >
+              Test Welcome
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={Sliders}
+              onClick={() => setSyncOpen(true)}
+            >
+              Sync Servers
+            </Button>
+          </div>
+        }
+      />
 
-      {error && <div className="alert alert-error" style={{ marginBottom: '16px' }}>{error}</div>}
-      {testNotice && (
-        <div
-          className={`alert ${testNotice.type === 'success' ? 'alert-success' : 'alert-error'}`}
-          style={{ marginBottom: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-        >
-          <span>{testNotice.message}</span>
-          <button type="button" onClick={() => setTestNotice(null)} style={{ background: 'transparent', border: 'none', color: 'inherit', cursor: 'pointer' }}>✖</button>
+      {/* Inline Feedback Alerts */}
+      {error && (
+        <div className="alert alert-error">
+          <AlertCircle size={18} className="shrink-0" />
+          <div className="flex-1">{error}</div>
         </div>
       )}
 
-      {/* Global Enable Toggle Banner */}
-      <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{
-            width: '44px',
-            height: '44px',
-            borderRadius: '12px',
-            background: config.enabled ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.12)',
-            border: `1px solid ${config.enabled ? 'rgba(34, 197, 94, 0.4)' : 'rgba(239, 68, 68, 0.3)'}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '22px',
-          }}>
-            {config.enabled ? '🟢' : '🔴'}
+      {testNotice && (
+        <div className={`alert ${testNotice.type === 'success' ? 'alert-success' : 'alert-error'}`}>
+          <div className="flex-1">{testNotice.message}</div>
+          <button
+            type="button"
+            onClick={() => setTestNotice(null)}
+            className="text-muted hover:text-main"
+            style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Global Enable / Disable Card */}
+      <div className="card p-5 flex items-center justify-between gap-4 border-border">
+        <div className="flex items-center gap-4">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${
+            config.enabled ? 'bg-success/15 text-success border border-success/30' : 'bg-surface text-muted border border-border'
+          }`}>
+            <Sparkles size={20} />
           </div>
           <div>
-            <div style={{ fontWeight: '600', fontSize: '16px', color: 'var(--text-main)' }}>
-              Welcome System is {config.enabled ? 'Enabled' : 'Disabled'}
+            <div className="text-sm font-semibold text-main">
+              Welcome Automation System is {config.enabled ? 'Enabled' : 'Disabled'}
             </div>
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+            <div className="text-xs text-muted">
               {config.enabled
                 ? 'Welcome cards and greetings will be delivered automatically whenever a member joins.'
                 : 'Turn this on to begin greeting incoming members.'}
             </div>
           </div>
         </div>
+
+        <Toggle
+          checked={config.enabled}
+          onChange={(v) => setConfig(c => ({ ...c, enabled: v }))}
+          size="md"
+        />
+      </div>
+
+      {/* Modern Workspace Navigation Tabs */}
+      <div className="nav-tabs">
         <button
           type="button"
-          className={`toggle ${config.enabled ? 'active' : ''}`}
-          onClick={() => setConfig(c => ({ ...c, enabled: !c.enabled }))}
-          aria-label="Toggle Welcome System"
-        ></button>
+          className={`nav-tab-item ${activeTab === 'card' ? 'active' : ''}`}
+          onClick={() => setActiveTab('card')}
+        >
+          <Palette size={16} />
+          <span>Card Design & Layout</span>
+        </button>
+
+        <button
+          type="button"
+          className={`nav-tab-item ${activeTab === 'message' ? 'active' : ''}`}
+          onClick={() => setActiveTab('message')}
+        >
+          <MessageSquare size={16} />
+          <span>Channel & Text</span>
+        </button>
+
+        <button
+          type="button"
+          className={`nav-tab-item ${activeTab === 'autorole' ? 'active' : ''}`}
+          onClick={() => setActiveTab('autorole')}
+        >
+          <Shield size={16} />
+          <span>Auto-Roles on Join</span>
+        </button>
+
+        <button
+          type="button"
+          className={`nav-tab-item ${activeTab === 'leave' ? 'active' : ''}`}
+          onClick={() => setActiveTab('leave')}
+        >
+          <LogOut size={16} />
+          <span>Leave Alerts</span>
+        </button>
       </div>
 
-      {/* Modern Navigation Tabs */}
-      <div style={{
-        display: 'flex',
-        gap: '8px',
-        borderBottom: '1px solid var(--border)',
-        marginBottom: '24px',
-        overflowX: 'auto',
-        paddingBottom: '4px'
-      }}>
-        {[
-          { id: 'card', label: '🎴 Card Design & Styles', desc: '4 Styles & Custom Background' },
-          { id: 'message', label: '💬 Welcome Channel & Text', desc: 'Channel & Variables' },
-          { id: 'autorole', label: '🤖 Auto-Roles on Join', desc: 'Human & Bot Roles' },
-          { id: 'leave', label: '🚪 Leave Announcements', desc: 'Departure Alerts' },
-        ].map(t => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setActiveTab(t.id)}
-            style={{
-              background: activeTab === t.id ? 'rgba(88, 101, 242, 0.18)' : 'transparent',
-              border: 'none',
-              borderBottom: activeTab === t.id ? '2px solid var(--primary)' : '2px solid transparent',
-              color: activeTab === t.id ? '#fff' : 'var(--text-muted)',
-              fontWeight: activeTab === t.id ? '600' : '500',
-              padding: '10px 16px',
-              borderRadius: '8px 8px 0 0',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              transition: 'all 0.2s',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            <span>{t.label}</span>
-          </button>
-        ))}
-      </div>
-
-      {/* TAB 1: CARD DESIGN & STYLES */}
+      {/* TAB 1: CARD DESIGN & LAYOUT */}
       {activeTab === 'card' && (
-        <div className="grid-2 stagger" style={{ gap: '24px' }}>
-          {/* Left Column: Style Picker & Options */}
-          <div className="flex flex-col gap-4">
-            <div className="glass-panel" style={{ padding: '24px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-                  🎨 Choose Card Style
-                </h3>
-                <span className="badge badge-primary">{activeStyleMeta.label} Active</span>
-              </div>
-
-              {/* 4 Card Style Tiles */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-                {CARD_STYLES.map(style => {
-                  const isSelected = config.card_style === style.id;
-                  return (
-                    <div
-                      key={style.id}
-                      onClick={() => setConfig({ ...config, card_style: style.id })}
-                      style={{
-                        background: isSelected ? 'rgba(88, 101, 242, 0.15)' : 'var(--bg-surface)',
-                        border: isSelected ? `2px solid ${style.accent}` : '1px solid var(--border)',
-                        borderRadius: '10px',
-                        padding: '14px',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s',
-                        boxShadow: isSelected ? `0 0 16px ${style.accent}33` : 'none',
-                        position: 'relative',
-                      }}
-                    >
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <span style={{ fontSize: '24px' }}>{style.emoji}</span>
-                        {isSelected && (
-                          <span style={{
-                            fontSize: '10px',
-                            background: style.accent,
-                            color: '#fff',
-                            fontWeight: 'bold',
-                            padding: '2px 6px',
-                            borderRadius: '4px'
-                          }}>SELECTED</span>
-                        )}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          {/* Left Column: Card Options */}
+          <div className="flex flex-col gap-5">
+            {/* Style Selector */}
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle icon={Palette}>Card Graphic Style</CardTitle>
+                  <CardDescription>Select the layout template for rendered welcome cards.</CardDescription>
+                </div>
+                <Badge variant="primary" size="sm">{activeStyleMeta.badge}</Badge>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {CARD_STYLES.map(style => {
+                    const isSelected = config.card_style === style.id;
+                    return (
+                      <div
+                        key={style.id}
+                        onClick={() => setConfig({ ...config, card_style: style.id })}
+                        className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                          isSelected
+                            ? 'bg-primary/10 border-primary shadow-sm ring-1 ring-primary/30'
+                            : 'bg-surface border-border hover:border-border-hover'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-sm font-semibold text-main">{style.label}</span>
+                          {isSelected && <Check size={14} className="text-primary" />}
+                        </div>
+                        <p className="text-xs text-muted line-clamp-2 leading-relaxed">
+                          {style.desc}
+                        </p>
                       </div>
-                      <div style={{ fontWeight: '600', fontSize: '14px', color: '#fff', marginBottom: '4px' }}>
-                        {style.label}
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.3' }}>
-                        {style.desc}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Card Element Toggles */}
-              <h4 style={{ fontSize: '14px', textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                Card Overlays & Elements
-              </h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: '8px' }}>
-                  <div>
-                    <div style={{ fontWeight: '500', fontSize: '14px' }}>👤 Draw Avatar Circle</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Renders the user profile photo on the generated image</div>
-                  </div>
-                  <button
-                    type="button"
-                    className={`toggle ${config.draw_avatar ? 'active' : ''}`}
-                    onClick={() => setConfig(c => ({ ...c, draw_avatar: !c.draw_avatar }))}
-                  ></button>
+                    );
+                  })}
                 </div>
+              </CardContent>
+            </Card>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: '8px' }}>
-                  <div>
-                    <div style={{ fontWeight: '500', fontSize: '14px' }}>🔠 Draw Text Overlays</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Renders username, welcome greeting & member count on card</div>
-                  </div>
-                  <button
-                    type="button"
-                    className={`toggle ${config.draw_text ? 'active' : ''}`}
-                    onClick={() => setConfig(c => ({ ...c, draw_text: !c.draw_text }))}
-                  ></button>
+            {/* Overlays & Elements */}
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle icon={Sliders}>Card Elements & Modes</CardTitle>
+                  <CardDescription>Toggle which details to render on the generated image.</CardDescription>
                 </div>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-col gap-3">
+                  <Toggle
+                    label="Draw Member Avatar"
+                    description="Renders the user profile photo on the card banner"
+                    checked={config.draw_avatar}
+                    onChange={v => setConfig(c => ({ ...c, draw_avatar: v }))}
+                  />
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: '8px' }}>
-                  <div>
-                    <div style={{ fontWeight: '500', fontSize: '14px' }}>🛡️ Show Server Icon</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Displays the server icon badge on supported card layouts</div>
-                  </div>
-                  <button
-                    type="button"
-                    className={`toggle ${config.show_guild_icon ? 'active' : ''}`}
-                    onClick={() => setConfig(c => ({ ...c, show_guild_icon: !c.show_guild_icon }))}
-                  ></button>
+                  <Toggle
+                    label="Draw Text Overlays"
+                    description="Renders username, welcome greeting & member count on the image"
+                    checked={config.draw_text}
+                    onChange={v => setConfig(c => ({ ...c, draw_text: v }))}
+                  />
+
+                  <Toggle
+                    label="Display Server Icon"
+                    description="Shows the server icon badge on supported card layouts"
+                    checked={config.show_guild_icon}
+                    onChange={v => setConfig(c => ({ ...c, show_guild_icon: v }))}
+                  />
+
+                  <Toggle
+                    label="Embed Thumbnail"
+                    description="Attaches user avatar as the Discord embed thumbnail"
+                    checked={config.show_avatar}
+                    onChange={v => setConfig(c => ({ ...c, show_avatar: v }))}
+                  />
+
+                  <Toggle
+                    label="Post Mode: Card Only"
+                    description="Posts solely the rendered banner image directly, omitting the text embed"
+                    checked={config.card_only}
+                    onChange={v => setConfig(c => ({ ...c, card_only: v }))}
+                  />
                 </div>
+              </CardContent>
+            </Card>
 
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: '8px' }}>
-                  <div>
-                    <div style={{ fontWeight: '500', fontSize: '14px' }}>🖼️ Show Embed Thumbnail</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Attach user avatar as the Discord message embed thumbnail</div>
-                  </div>
-                  <button
-                    type="button"
-                    className={`toggle ${config.show_avatar ? 'active' : ''}`}
-                    onClick={() => setConfig(c => ({ ...c, show_avatar: !c.show_avatar }))}
-                  ></button>
+            {/* Custom Background */}
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle icon={ImageIcon}>Custom Background</CardTitle>
+                  <CardDescription>Direct image or GIF URL (recommended: 1024×500).</CardDescription>
                 </div>
-              </div>
-            </div>
-
-            {/* Custom Background URL */}
-            <div className="glass-panel" style={{ padding: '24px' }}>
-              <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none', marginBottom: '12px' }}>
-                🖼️ Custom Background
-              </h3>
-              <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '14px' }}>
-                Provide a direct image or GIF URL (recommended size: <strong>1024x500</strong>) to replace the default dark canvas.
-              </p>
-              <div className="form-group" style={{ marginBottom: '12px' }}>
-                <input
-                  type="text"
-                  className="input-field"
-                  placeholder="https://example.com/custom-background.png or .gif"
-                  value={config.background_url}
-                  onChange={e => setConfig({ ...config, background_url: e.target.value })}
-                />
-              </div>
-
-              {/* Presets */}
-              <div style={{ marginBottom: '10px' }}>
-                <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>Or pick a curated wallpaper:</div>
-                <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
-                  {PRESET_BACKGROUNDS.map(p => (
-                    <button
-                      key={p.name}
-                      type="button"
-                      className="btn"
-                      style={{ fontSize: '12px', padding: '5px 10px', background: 'var(--bg-surface)', border: '1px solid var(--border)' }}
-                      onClick={() => setConfig({ ...config, background_url: p.url })}
+              </CardHeader>
+              <CardContent>
+                {config.has_background && (
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-success/10 border border-success/25 mb-4 text-xs">
+                    <span className="text-success font-medium flex items-center gap-1.5">
+                      <Check size={14} /> Custom server background active
+                    </span>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      onClick={() => setConfig(c => ({ ...c, background_url: 'none', clear_background: true, has_background: false }))}
                     >
-                      ✨ {p.name}
-                    </button>
-                  ))}
-                  {config.background_url && (
-                    <button
-                      type="button"
-                      className="btn btn-danger"
-                      style={{ fontSize: '12px', padding: '5px 10px' }}
-                      onClick={() => setConfig({ ...config, background_url: 'none' })}
-                    >
-                      ❌ Reset to Default
-                    </button>
-                  )}
+                      Remove
+                    </Button>
+                  </div>
+                )}
+
+                <div className="form-group mb-3">
+                  <input
+                    type="text"
+                    className="input-field"
+                    placeholder="https://example.com/custom-background.png or .gif"
+                    value={config.background_url}
+                    onChange={e => setConfig({ ...config, background_url: e.target.value })}
+                  />
                 </div>
-              </div>
-            </div>
+
+                <div>
+                  <span className="text-xs text-muted block mb-2">Or select a curated preset:</span>
+                  <div className="flex flex-wrap gap-2">
+                    {PRESET_BACKGROUNDS.map(p => (
+                      <button
+                        key={p.name}
+                        type="button"
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => setConfig({ ...config, background_url: p.url })}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                    {config.background_url && (
+                      <button
+                        type="button"
+                        className="btn btn-danger btn-sm"
+                        onClick={() => setConfig({ ...config, background_url: 'none' })}
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
-          {/* Right Column: Live Interactive Card Canvas Mockup */}
-          <div className="flex flex-col gap-4">
-            <div className="glass-panel flex flex-col" style={{ padding: '24px', background: 'var(--bg-surface)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-                  👁️ Real-Time Card Canvas
-                </h3>
-                <span className="badge" style={{ background: 'rgba(255,255,255,0.06)', color: '#fff' }}>
-                  1024 × 500 Aspect Ratio
-                </span>
-              </div>
+          {/* Right Column: Live Interactive Card Mockup */}
+          <div className="lg:sticky lg:top-24">
+            <Card>
+              <CardHeader>
+                <div>
+                  <CardTitle icon={Sparkles}>Live Graphic Preview</CardTitle>
+                  <CardDescription>Real-time simulation of the 1024×500 rendered card.</CardDescription>
+                </div>
+                <Badge variant="neutral" size="sm">1024 × 500</Badge>
+              </CardHeader>
+              <CardContent>
+                <div className="relative w-full aspect-[1024/500] rounded-xl overflow-hidden bg-[#11141c] border border-white/10 shadow-lg flex items-center justify-center">
+                  {/* Background Layer */}
+                  {config.background_url && config.background_url !== 'none' && (
+                    <div
+                      className="absolute inset-0 bg-cover bg-center opacity-85"
+                      style={{
+                        backgroundImage: `url(${config.background_url})`,
+                        filter: config.card_style === 'glass' ? 'blur(3px)' : 'none',
+                      }}
+                    />
+                  )}
 
-              {/* CARD MOCKUP VIEWPORT */}
-              <div style={{
-                position: 'relative',
-                width: '100%',
-                aspectRatio: '1024 / 500',
-                borderRadius: '14px',
-                overflow: 'hidden',
-                background: '#12131a',
-                border: '1px solid rgba(255,255,255,0.1)',
-                boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}>
-                {/* Optional Background Image */}
-                {config.background_url && config.background_url !== 'none' && (
-                  <div style={{
-                    position: 'absolute',
-                    inset: 0,
-                    backgroundImage: `url(${config.background_url})`,
-                    backgroundSize: 'cover',
-                    backgroundPosition: 'center',
-                    opacity: 0.85,
-                    filter: config.card_style === 'glass' ? 'blur(3px)' : 'none',
-                  }} />
-                )}
+                  {/* 1. Legacy Neon Mockup */}
+                  {config.card_style === 'legacy' && (
+                    <div
+                      className="relative w-full h-full flex items-center px-8 sm:px-12 gap-6 sm:gap-8"
+                      style={{
+                        background: config.background_url && config.background_url !== 'none'
+                          ? 'rgba(10, 12, 18, 0.78)'
+                          : 'linear-gradient(135deg, #0d0f1a 0%, #15102a 60%, #0a1128 100%)',
+                      }}
+                    >
+                      <div className="absolute top-[-10%] left-[15%] w-48 h-48 bg-purple-500/30 blur-3xl rounded-full" />
+                      <div className="absolute bottom-[-10%] right-[10%] w-56 h-56 bg-cyan-500/25 blur-3xl rounded-full" />
 
-                {/* 1. LEGACY NEON MOCKUP */}
-                {config.card_style === 'legacy' && (
-                  <div style={{
-                    position: 'relative',
-                    width: '100%',
-                    height: '100%',
-                    background: config.background_url && config.background_url !== 'none'
-                      ? 'rgba(12, 13, 20, 0.75)'
-                      : 'linear-gradient(135deg, #0d0f1a 0%, #15102a 60%, #0a1128 100%)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    padding: '0 40px',
-                    gap: '36px',
-                  }}>
-                    {/* Glowing orbs */}
-                    <div style={{ position: 'absolute', top: '-10%', left: '15%', width: '220px', height: '220px', background: '#8b5cf6', filter: 'blur(80px)', opacity: 0.35, borderRadius: '50%' }}></div>
-                    <div style={{ position: 'absolute', bottom: '-10%', right: '10%', width: '240px', height: '240px', background: '#06b6d4', filter: 'blur(90px)', opacity: 0.35, borderRadius: '50%' }}></div>
-
-                    {/* Avatar Circle */}
-                    {config.draw_avatar && (
-                      <div style={{
-                        position: 'relative',
-                        width: '120px',
-                        height: '120px',
-                        borderRadius: '50%',
-                        background: 'linear-gradient(135deg, #a855f7, #3b82f6)',
-                        padding: '4px',
-                        boxShadow: '0 0 25px rgba(168, 85, 247, 0.6)',
-                        flexShrink: 0,
-                      }}>
-                        <div style={{
-                          width: '100%',
-                          height: '100%',
-                          borderRadius: '50%',
-                          background: '#1f2937',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          fontSize: '44px',
-                          color: '#fff',
-                        }}>
-                          👤
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Text block */}
-                    {config.draw_text && (
-                      <div style={{ position: 'relative', zIndex: 2 }}>
-                        <div style={{ fontSize: '13px', fontWeight: 'bold', letterSpacing: '2px', color: '#38bdf8', textTransform: 'uppercase', marginBottom: '4px' }}>
-                          WELCOME TO THE SERVER
-                        </div>
-                        <div style={{ fontSize: '28px', fontWeight: '900', color: '#fff', textShadow: '0 2px 10px rgba(0,0,0,0.5)', lineHeight: 1.1, marginBottom: '8px' }}>
-                          NewUser#0001
-                        </div>
-                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(8px)', padding: '4px 12px', borderRadius: '20px', fontSize: '12px', color: '#e2e8f0' }}>
-                          <span>🎉 Member #1,234</span>
-                          {config.show_guild_icon && <span>• 🛡️ Server</span>}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* 2. MINIMALIST GLASS MOCKUP */}
-                {config.card_style === 'glass' && (
-                  <div style={{
-                    position: 'relative',
-                    width: '100%',
-                    height: '100%',
-                    background: config.background_url && config.background_url !== 'none'
-                      ? 'rgba(10, 10, 14, 0.72)'
-                      : 'linear-gradient(180deg, #16171c 0%, #1a1b24 100%)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}>
-                    {/* Soft Center Halo */}
-                    <div style={{ position: 'absolute', top: '15%', width: '260px', height: '140px', background: '#826eff', filter: 'blur(50px)', opacity: 0.45, borderRadius: '50%' }}></div>
-
-                    {config.draw_avatar && (
-                      <div style={{
-                        position: 'relative',
-                        width: '100px',
-                        height: '100px',
-                        borderRadius: '50%',
-                        border: '2px solid rgba(255, 255, 255, 0.4)',
-                        boxShadow: '0 12px 24px rgba(0,0,0,0.6)',
-                        background: '#1f2430',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '40px',
-                        marginBottom: '14px',
-                        zIndex: 2,
-                      }}>
-                        👤
-                      </div>
-                    )}
-
-                    {config.draw_text && (
-                      <div style={{ textAlign: 'center', zIndex: 2 }}>
-                        <div style={{ fontSize: '24px', fontWeight: '800', color: '#ffffff', letterSpacing: '0.5px', marginBottom: '4px' }}>
-                          NewUser
-                        </div>
-                        <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.7)', fontWeight: '500' }}>
-                          Welcome to the server • Member #1,234
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* 3. TICKET PASS MOCKUP */}
-                {config.card_style === 'ticket' && (
-                  <div style={{
-                    position: 'relative',
-                    width: '90%',
-                    height: '80%',
-                    background: '#181a20',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(255, 255, 255, 0.15)',
-                    display: 'flex',
-                    boxShadow: '0 10px 30px rgba(0,0,0,0.6)',
-                    overflow: 'hidden',
-                  }}>
-                    {/* Main Ticket Section */}
-                    <div style={{ flex: 3, padding: '20px 24px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div style={{ fontSize: '10px', letterSpacing: '2px', fontWeight: 'bold', color: '#ec4899', textTransform: 'uppercase' }}>
-                          VIP SERVER PASS • OFFICIAL ENTRY
-                        </div>
-                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>
-                          #001234
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', margin: '8px 0' }}>
-                        {config.draw_avatar && (
-                          <div style={{ width: '64px', height: '64px', borderRadius: '10px', background: '#262934', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '28px', border: '1px solid #ec4899' }}>
-                            👤
+                      {config.draw_avatar && (
+                        <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-purple-500 to-blue-500 p-1 shadow-lg shrink-0 z-10">
+                          <div className="w-full h-full rounded-full bg-gray-900 flex items-center justify-center text-white text-2xl">
+                            <User size={36} />
                           </div>
-                        )}
-                        {config.draw_text && (
-                          <div>
-                            <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#fff' }}>NewUser</div>
-                            <div style={{ fontSize: '12px', color: '#9ca3af' }}>Granted Member Access</div>
+                        </div>
+                      )}
+
+                      {config.draw_text && (
+                        <div className="relative z-10">
+                          <div className="text-[11px] sm:text-xs font-bold tracking-widest text-cyan-400 uppercase mb-1">
+                            Welcome to the Server
                           </div>
-                        )}
+                          <div className="text-xl sm:text-2xl font-extrabold text-white leading-tight mb-2">
+                            NewUser#0001
+                          </div>
+                          <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-sm px-2.5 py-1 rounded-full text-xs text-gray-200">
+                            <span>Member #1,234</span>
+                            {config.show_guild_icon && <span>• Server</span>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 2. Minimalist Glass Mockup */}
+                  {config.card_style === 'glass' && (
+                    <div
+                      className="relative w-full h-full flex flex-col items-center justify-center"
+                      style={{
+                        background: config.background_url && config.background_url !== 'none'
+                          ? 'rgba(10, 12, 18, 0.75)'
+                          : 'linear-gradient(180deg, #13151f 0%, #171926 100%)',
+                      }}
+                    >
+                      <div className="absolute top-[20%] w-56 h-32 bg-indigo-500/35 blur-3xl rounded-full" />
+
+                      {config.draw_avatar && (
+                        <div className="relative w-20 h-20 sm:w-22 sm:h-22 rounded-full border-2 border-white/40 shadow-xl bg-gray-800 flex items-center justify-center text-white text-2xl mb-3 z-10">
+                          <User size={32} />
+                        </div>
+                      )}
+
+                      {config.draw_text && (
+                        <div className="text-center z-10">
+                          <div className="text-lg sm:text-xl font-bold text-white mb-1">
+                            NewUser
+                          </div>
+                          <div className="text-xs text-white/70">
+                            Welcome to the server • Member #1,234
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 3. Ticket Pass Mockup */}
+                  {config.card_style === 'ticket' && (
+                    <div className="relative w-[92%] h-[82%] bg-[#171922] rounded-xl border border-white/15 flex shadow-2xl overflow-hidden">
+                      <div className="flex-[3] p-4 sm:p-5 flex flex-col justify-between">
+                        <div className="flex justify-between items-center text-[10px]">
+                          <span className="font-bold text-pink-400 tracking-wider">VIP PASS • ENTRY</span>
+                          <span className="text-white/40 font-mono">#001234</span>
+                        </div>
+
+                        <div className="flex items-center gap-3 my-2">
+                          {config.draw_avatar && (
+                            <div className="w-12 h-12 rounded-lg bg-gray-800 border border-pink-500/50 flex items-center justify-center text-white shrink-0">
+                              <User size={22} />
+                            </div>
+                          )}
+                          {config.draw_text && (
+                            <div>
+                              <div className="text-base font-bold text-white leading-tight">NewUser</div>
+                              <div className="text-[11px] text-gray-400">Granted Member Access</div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex justify-between border-t border-white/10 pt-2 text-[10px] text-gray-400">
+                          <span>GATE: 01</span>
+                          <span>DATE: TODAY</span>
+                        </div>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: '8px', fontSize: '11px', color: '#6b7280' }}>
-                        <span>GATE: 01</span>
-                        <span>SERVER: FAMILY</span>
-                        <span>DATE: TODAY</span>
+                      <div className="w-0 border-l border-dashed border-white/20 relative" />
+
+                      <div className="flex-1 bg-pink-500/10 p-3 flex flex-col items-center justify-between">
+                        <span className="text-[9px] font-bold text-pink-400 uppercase">ADMIT</span>
+                        <div className="flex gap-0.5 h-7 items-center">
+                          {[3, 2, 4, 1, 3, 2, 4, 2].map((w, idx) => (
+                            <div key={idx} className="bg-white/50" style={{ width: `${w}px`, height: '100%' }} />
+                          ))}
+                        </div>
+                        <span className="text-[8px] text-gray-400 font-mono">VALID</span>
                       </div>
                     </div>
+                  )}
 
-                    {/* Perforated Divider */}
-                    <div style={{
-                      width: '0px',
-                      borderLeft: '2px dashed rgba(255,255,255,0.2)',
-                      position: 'relative',
-                    }}>
-                      <div style={{ position: 'absolute', top: '-10px', left: '-10px', width: '20px', height: '20px', background: '#12131a', borderRadius: '50%' }}></div>
-                      <div style={{ position: 'absolute', bottom: '-10px', left: '-10px', width: '20px', height: '20px', background: '#12131a', borderRadius: '50%' }}></div>
-                    </div>
-
-                    {/* Tear-Off Stub */}
-                    <div style={{ flex: 1, background: 'rgba(236, 72, 153, 0.08)', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#ec4899', textAlign: 'center' }}>ADMIT ONE</div>
-                      <div style={{
-                        display: 'flex',
-                        gap: '2px',
-                        height: '32px',
-                        alignItems: 'center',
-                      }}>
-                        {[6, 3, 8, 4, 12, 2, 7, 5, 10, 4, 8, 3, 9, 2].map((w, idx) => (
-                          <div key={idx} style={{ width: `${w > 6 ? 3 : 2}px`, height: '100%', background: 'rgba(255,255,255,0.5)' }}></div>
-                        ))}
+                  {/* 4. Cinematic Poster Mockup */}
+                  {config.card_style === 'cinematic' && (
+                    <div
+                      className="relative w-full h-full flex flex-col justify-between p-6 sm:p-8"
+                      style={{
+                        background: config.background_url && config.background_url !== 'none'
+                          ? 'none'
+                          : 'linear-gradient(135deg, #0a0d16 0%, #040710 100%)',
+                      }}
+                    >
+                      <div className="flex justify-between items-center z-10 text-[10px]">
+                        <span className="font-bold text-teal-400 tracking-wider border-b border-teal-400 pb-0.5">
+                          MEMBER No. 1,234
+                        </span>
+                        <span className="text-white/60 font-semibold tracking-wider">
+                          ARRIVAL RECEPTION
+                        </span>
                       </div>
-                      <div style={{ fontSize: '9px', color: '#6b7280', fontFamily: 'monospace' }}>PASS VALID</div>
-                    </div>
-                  </div>
-                )}
 
-                {/* 4. CINEMATIC POSTER MOCKUP */}
-                {config.card_style === 'cinematic' && (
-                  <div style={{
-                    position: 'relative',
-                    width: '100%',
-                    height: '100%',
-                    background: config.background_url && config.background_url !== 'none'
-                      ? 'none'
-                      : 'linear-gradient(135deg, #090d16 0%, #030712 100%)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    padding: '24px 32px',
-                  }}>
-                    {/* Big blurred avatar in background top right */}
-                    <div style={{
-                      position: 'absolute',
-                      right: '-30px',
-                      top: '-30px',
-                      width: '240px',
-                      height: '240px',
-                      borderRadius: '50%',
-                      background: 'linear-gradient(135deg, #14b8a6, #06b6d4)',
-                      opacity: 0.25,
-                      filter: 'blur(30px)',
-                    }}></div>
-
-                    {/* Top line */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 2 }}>
-                      <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#2dd4bf', letterSpacing: '2px', borderBottom: '2px solid #2dd4bf', paddingBottom: '2px' }}>
-                        MEMBER No. 1,234
-                      </div>
-                      <div style={{ fontSize: '12px', fontWeight: 'bold', color: 'rgba(255,255,255,0.6)', letterSpacing: '1px' }}>
-                        SERVER RECEPTION
+                      <div className="z-10">
+                        <div className="text-2xl sm:text-3xl font-black text-white uppercase tracking-tight">
+                          NEWUSER
+                        </div>
+                        <div className="text-xs text-teal-300 mt-1">
+                          has joined the community
+                        </div>
                       </div>
                     </div>
-
-                    {/* Big title */}
-                    <div style={{ zIndex: 2, marginBottom: '6px' }}>
-                      <div style={{ fontSize: '38px', fontWeight: '900', color: '#fff', letterSpacing: '-0.5px', textTransform: 'uppercase', lineHeight: 1 }}>
-                        NEWUSER
-                      </div>
-                      <div style={{ fontSize: '13px', color: '#99f6e4', marginTop: '4px', fontWeight: '500' }}>
-                        has entered the server
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Save changes footer */}
-              <div className="flex justify-end mt-4 pt-4" style={{ borderTop: '1px solid var(--border)', gap: '10px' }}>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  className={`btn ${saved ? 'btn-success' : 'btn-primary'}`}
-                  disabled={saving}
-                >
-                  {saving ? 'Saving...' : saved ? '✅ Saved!' : 'Save Changes'}
-                </button>
-              </div>
-            </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </div>
         </div>
       )}
 
-      {/* TAB 2: WELCOME MESSAGE & CHANNEL */}
+      {/* TAB 2: CHANNEL & MESSAGE TEXT */}
       {activeTab === 'message' && (
-        <div className="grid-2 stagger" style={{ gap: '24px' }}>
-          {/* Form Settings */}
-          <div className="glass-panel" style={{ padding: '24px' }}>
-            <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none', marginBottom: '16px' }}>
-              💬 Delivery Channel & Text
-            </h3>
-
-            <div className="form-group">
-              <label className="form-label">Welcome Channel</label>
-              <Select
-                value={config.channel_id}
-                onChange={v => setConfig({ ...config, channel_id: v })}
-                options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
-                placeholder="Select a welcome channel..."
-                searchable
-              />
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                The channel where greetings and welcome cards will be sent.
-              </span>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Custom Message Content</label>
-              <textarea
-                className="input-field"
-                rows={5}
-                value={config.message}
-                onChange={e => setConfig({ ...config, message: e.target.value })}
-                placeholder="Welcome to {server}, {user}! 🎉"
-                style={{ fontFamily: 'monospace' }}
-              />
-            </div>
-
-            <div>
-              <label className="form-label">Dynamic Variables</label>
-              <div className="flex gap-2" style={{ flexWrap: 'wrap' }}>
-                {PLACEHOLDERS.map(p => (
-                  <button
-                    key={p.label}
-                    type="button"
-                    className="badge badge-primary"
-                    title={p.desc}
-                    style={{ cursor: 'pointer', border: 'none' }}
-                    onClick={() => setConfig(c => ({ ...c, message: c.message + ' ' + p.label }))}
-                  >
-                    + {p.label}
-                  </button>
-                ))}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          {/* Form */}
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle icon={MessageSquare}>Delivery Channel & Content</CardTitle>
+                <CardDescription>Specify where the greeting posts and customize text variables.</CardDescription>
               </div>
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px', display: 'block' }}>
-                Click any tag above to insert it at the end of your message.
-              </span>
-            </div>
-
-            <div className="flex justify-end mt-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-              <button
-                type="button"
-                onClick={handleSave}
-                className={`btn ${saved ? 'btn-success' : 'btn-primary'}`}
-                disabled={saving}
-              >
-                {saving ? 'Saving...' : saved ? '✅ Saved!' : 'Save Changes'}
-              </button>
-            </div>
-          </div>
-
-          {/* Discord Message Preview */}
-          <div className="glass-panel flex flex-col" style={{ padding: '24px', background: 'var(--bg-surface)' }}>
-            <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none', marginBottom: '16px' }}>
-              👁️ Discord Message Mockup
-            </h3>
-
-            <div style={{
-              background: '#313338',
-              borderRadius: '8px',
-              padding: '16px',
-              display: 'flex',
-              gap: '14px',
-              border: '1px solid rgba(255,255,255,0.05)',
-            }}>
-              <div style={{
-                width: '40px',
-                height: '40px',
-                borderRadius: '50%',
-                background: 'linear-gradient(135deg, var(--primary), var(--accent))',
-                flexShrink: 0,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: '#fff',
-                fontWeight: 'bold',
-              }}>
-                🤖
+            </CardHeader>
+            <CardContent>
+              <div className="form-group mb-5">
+                <label className="form-label">Welcome Text Channel</label>
+                <Select
+                  value={config.channel_id}
+                  onChange={v => setConfig({ ...config, channel_id: v })}
+                  options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
+                  placeholder="Select a channel..."
+                  searchable
+                />
+                <span className="form-hint">
+                  The target Discord text channel where the welcome message will dispatch.
+                </span>
               </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '4px' }}>
-                  <span style={{ fontWeight: '600', color: 'white', fontSize: '15px' }}>{botName} Bot</span>
-                  <span style={{ fontSize: '10px', background: '#5865F2', padding: '1px 5px', borderRadius: '3px', textTransform: 'uppercase', color: '#fff', fontWeight: 'bold' }}>APP</span>
-                  <span style={{ fontSize: '12px', color: '#949ba4' }}>Today at 12:00 PM</span>
-                </div>
 
-                <div style={{ color: '#dbdee1', fontSize: '14px', lineHeight: '1.5', whiteSpace: 'pre-wrap', marginBottom: '12px' }}>
-                  {config.message
-                    .replace(/{user}/g, '@NewMember')
-                    .replace(/{username}/g, 'NewMember')
-                    .replace(/{server}/g, 'Family Server')
-                    .replace(/{count}/g, '1,234') || 'Start typing a message to preview...'}
-                </div>
+              <div className="form-group mb-4">
+                <label className="form-label">Welcome Message Text</label>
+                <textarea
+                  className="input-field font-mono text-sm"
+                  rows={5}
+                  value={config.message}
+                  onChange={e => setConfig({ ...config, message: e.target.value })}
+                  placeholder="Welcome to {server}, {user}! 🎉"
+                />
+              </div>
 
-                {/* Simulated Welcome Card Attachment */}
-                <div style={{
-                  maxWidth: '380px',
-                  borderRadius: '8px',
-                  overflow: 'hidden',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  background: '#1e1f22',
-                  padding: '12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px',
-                }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: '#5865F2', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>
-                    {activeStyleMeta.emoji}
+              <div>
+                <label className="form-label mb-2 block">Dynamic Placeholders</label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {PLACEHOLDERS.map(p => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      className="badge badge-primary cursor-pointer hover:bg-primary/20"
+                      title={p.desc}
+                      onClick={() => setConfig(c => ({ ...c, message: (c.message + ' ' + p.label).trim() }))}
+                    >
+                      + {p.label}
+                    </button>
+                  ))}
+                </div>
+                <span className="form-hint">
+                  Click any variable to append it to your message.
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Discord Chat Mockup Preview */}
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle icon={Bot}>Discord Message Preview</CardTitle>
+                <CardDescription>Accurate preview of the Discord embed presentation.</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="bg-[#313338] rounded-lg p-4 border border-white/5 flex gap-3.5">
+                <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white shrink-0">
+                  <Bot size={20} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-baseline gap-2 mb-1">
+                    <span className="text-sm font-semibold text-white">{botName || 'GKR'} Bot</span>
+                    <span className="text-[10px] bg-[#5865F2] text-white px-1.5 py-0.5 rounded font-bold uppercase">APP</span>
+                    <span className="text-xs text-[#949ba4]">Today at 12:00 PM</span>
                   </div>
-                  <div>
-                    <div style={{ fontWeight: 'bold', color: '#fff', fontSize: '13px' }}>
-                      welcome_{config.card_style}.png
+
+                  <div className="text-sm text-[#dbdee1] leading-relaxed whitespace-pre-wrap mb-3">
+                    {config.message
+                      .replace(/{user}/g, '@NewMember')
+                      .replace(/{username}/g, 'NewMember')
+                      .replace(/{server}/g, 'Family Server')
+                      .replace(/{count}/g, '1,234') || 'Type a message on the left to preview...'}
+                  </div>
+
+                  {/* Attachment card representation */}
+                  <div className="max-w-xs rounded-lg bg-[#1e1f22] p-3 border border-white/10 flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-lg bg-primary/20 flex items-center justify-center text-primary">
+                      <ImageIcon size={18} />
                     </div>
-                    <div style={{ fontSize: '11px', color: '#949ba4' }}>
-                      {activeStyleMeta.label} Card Attached
+                    <div>
+                      <div className="text-xs font-semibold text-white">welcome_card.png</div>
+                      <div className="text-[11px] text-[#949ba4]">{activeStyleMeta.label} Layout</div>
                     </div>
                   </div>
                 </div>
               </div>
-            </div>
-
-            <div className="flex justify-end mt-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-              <button
-                type="button"
-                onClick={() => handleTest('welcome')}
-                disabled={testingWelcome || !config.channel_id}
-                className="btn btn-secondary"
-              >
-                {testingWelcome ? 'Dispatching...' : '🧪 Send Test to Channel'}
-              </button>
-            </div>
-          </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 
       {/* TAB 3: AUTO-ROLES ON JOIN */}
       {activeTab === 'autorole' && (
-        <div className="glass-panel stagger" style={{ padding: '24px', maxWidth: '800px' }}>
-          <div style={{ marginBottom: '20px' }}>
-            <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none', marginBottom: '6px' }}>
-              🤖 Automatic Role Assignment
-            </h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', margin: 0 }}>
-              Roles specified here will be granted automatically to newly joining members without needing manual staff intervention.
-            </p>
-          </div>
-
-          <div className="grid-2" style={{ gap: '20px', marginBottom: '24px' }}>
-            {/* Member Auto-Role */}
-            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)', borderRadius: '10px', padding: '18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                <span style={{ fontSize: '24px' }}>👤</span>
-                <div>
-                  <div style={{ fontWeight: '600', color: '#fff', fontSize: '15px' }}>Member Auto-Role</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Assigned to human members upon join</div>
-                </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+          {/* Member Auto-Role */}
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle icon={User}>Human Member Auto-Role</CardTitle>
+                <CardDescription>Assigned automatically to standard human users upon joining.</CardDescription>
               </div>
-
-              <div className="form-group" style={{ marginBottom: '8px' }}>
+            </CardHeader>
+            <CardContent>
+              <div className="form-group mb-0">
                 <Select
                   value={config.welcome_role_id}
                   onChange={v => setConfig({ ...config, welcome_role_id: v })}
                   options={[
                     { value: '', label: 'None (Disabled)' },
-                    ...roles.map(r => ({ value: r.id, label: r.name })),
+                    ...roles.map(r => ({ value: r.id, label: '@ ' + r.name }))
                   ]}
-                  placeholder="Select a role..."
+                  placeholder="Select a member role..."
                   searchable
                 />
+                <span className="form-hint">
+                  Ensure the bot's highest role is positioned above this role in Server Settings &gt; Roles.
+                </span>
               </div>
+            </CardContent>
+          </Card>
 
-              {config.welcome_role_id && (
-                <button
-                  type="button"
-                  onClick={() => setConfig({ ...config, welcome_role_id: '' })}
-                  style={{ background: 'transparent', border: 'none', color: 'var(--danger)', fontSize: '12px', cursor: 'pointer', padding: 0 }}
-                >
-                  Clear Member Role
-                </button>
-              )}
-            </div>
-
-            {/* Bot Auto-Role */}
-            <div style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)', borderRadius: '10px', padding: '18px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                <span style={{ fontSize: '24px' }}>🤖</span>
-                <div>
-                  <div style={{ fontWeight: '600', color: '#fff', fontSize: '15px' }}>Bot Auto-Role</div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Assigned specifically to added bots</div>
-                </div>
+          {/* Bot Auto-Role */}
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle icon={Bot}>Bot Integration Auto-Role</CardTitle>
+                <CardDescription>Assigned automatically to newly authorized bot integrations.</CardDescription>
               </div>
-
-              <div className="form-group" style={{ marginBottom: '8px' }}>
+            </CardHeader>
+            <CardContent>
+              <div className="form-group mb-0">
                 <Select
                   value={config.bot_role_id}
                   onChange={v => setConfig({ ...config, bot_role_id: v })}
                   options={[
                     { value: '', label: 'None (Disabled)' },
-                    ...roles.map(r => ({ value: r.id, label: r.name })),
+                    ...roles.map(r => ({ value: r.id, label: '@ ' + r.name }))
                   ]}
                   placeholder="Select a bot role..."
                   searchable
                 />
+                <span className="form-hint">
+                  Useful for segregating bot accounts under an exclusive "Bots" role.
+                </span>
               </div>
-
-              {config.bot_role_id && (
-                <button
-                  type="button"
-                  onClick={() => setConfig({ ...config, bot_role_id: '' })}
-                  style={{ background: 'transparent', border: 'none', color: 'var(--danger)', fontSize: '12px', cursor: 'pointer', padding: 0 }}
-                >
-                  Clear Bot Role
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="flex justify-end" style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-            <button
-              type="button"
-              onClick={handleSave}
-              className={`btn ${saved ? 'btn-success' : 'btn-primary'}`}
-              disabled={saving}
-            >
-              {saving ? 'Saving...' : saved ? '✅ Saved!' : 'Save Auto-Roles'}
-            </button>
-          </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 
-      {/* TAB 4: LEAVE ANNOUNCEMENTS */}
+      {/* TAB 4: LEAVE ALERTS */}
       {activeTab === 'leave' && (
-        <div className="stagger">
-          <div className="toggle-wrapper" style={{ marginBottom: '24px' }}>
-            <div>
-              <div style={{ fontWeight: '600', marginBottom: '4px', fontSize: '15px' }}>Enable Leave Messages</div>
-              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Send an announcement when a member departs from the server.</div>
-            </div>
-            <button
-              type="button"
-              className={`toggle ${config.leave_enabled ? 'active' : ''}`}
-              onClick={() => setConfig(c => ({ ...c, leave_enabled: !c.leave_enabled }))}
-              aria-label="Toggle Leave Messages"
-            ></button>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle icon={LogOut}>Departure Announcements</CardTitle>
+                <CardDescription>Broadcast an alert whenever a member leaves or gets kicked.</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="mb-5">
+                <Toggle
+                  label="Enable Leave Announcements"
+                  description="Send departure notices to a dedicated channel"
+                  checked={config.leave_enabled}
+                  onChange={v => setConfig(c => ({ ...c, leave_enabled: v }))}
+                />
+              </div>
+
+              {config.leave_enabled && (
+                <div className="flex flex-col gap-4">
+                  <div className="form-group">
+                    <label className="form-label">Leave Announcement Channel</label>
+                    <Select
+                      value={config.leave_channel_id}
+                      onChange={v => setConfig({ ...config, leave_channel_id: v })}
+                      options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
+                      placeholder="Select a leave channel..."
+                      searchable
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Departure Message</label>
+                    <textarea
+                      className="input-field font-mono text-sm"
+                      rows={3}
+                      value={config.leave_message}
+                      onChange={e => setConfig({ ...config, leave_message: e.target.value })}
+                      placeholder="**{user}** left the server."
+                    />
+                  </div>
+
+                  <div className="form-group mb-0">
+                    <label className="form-label">Optional Image / Banner URL</label>
+                    <input
+                      type="text"
+                      className="input-field"
+                      value={config.leave_image_url}
+                      onChange={e => setConfig({ ...config, leave_image_url: e.target.value })}
+                      placeholder="https://example.com/goodbye.gif"
+                    />
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Test Leave Card */}
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle icon={Send}>Test Departure Alert</CardTitle>
+                <CardDescription>Dispatch a simulated leave message to the configured channel.</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted mb-4">
+                Sends a test leave alert containing your configured message and optional banner image directly to Discord.
+              </p>
+              <Button
+                variant="secondary"
+                icon={Send}
+                loading={testingLeave}
+                disabled={!config.leave_enabled || !config.leave_channel_id}
+                onClick={() => handleTest('leave')}
+              >
+                Send Test Leave Notice
+              </Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Sticky Bottom Action Bar (Unsaved Changes) */}
+      {isDirty && (
+        <div className="unsaved-changes-banner animate-fade-in">
+          <div className="flex items-center gap-2.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-warning animate-pulse" />
+            <span className="text-sm font-medium text-main">
+              You have unsaved changes in Welcome & Leave settings.
+            </span>
           </div>
-
-          <div className="grid-2" style={{ gap: '24px' }}>
-            {/* Leave Editor Panel */}
-            <div className="glass-panel" style={{ padding: '24px', opacity: config.leave_enabled ? 1 : 0.5, pointerEvents: config.leave_enabled ? 'auto' : 'none', transition: 'all 0.3s' }}>
-              <div className="form-group">
-                <label className="form-label">Leave Channel</label>
-                <Select
-                  value={config.leave_channel_id}
-                  onChange={v => setConfig({ ...config, leave_channel_id: v })}
-                  options={[{ value: '', label: 'None (Disabled)' }, ...channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))]}
-                  placeholder="Select a channel..."
-                  searchable
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Leave Message Content</label>
-                <textarea
-                  className="input-field"
-                  rows={3}
-                  value={config.leave_message}
-                  onChange={e => setConfig({ ...config, leave_message: e.target.value })}
-                  placeholder="**{user}** left the server."
-                  required={config.leave_enabled}
-                  style={{ fontFamily: 'monospace' }}
-                />
-              </div>
-
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Custom Image or GIF URL (Optional)</label>
-                <input
-                  type="text"
-                  className="input-field"
-                  value={config.leave_image_url}
-                  onChange={e => setConfig({ ...config, leave_image_url: e.target.value })}
-                  placeholder="https://example.com/farewell.gif"
-                />
-              </div>
-
-              <div className="flex justify-end mt-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  className={`btn ${saved ? 'btn-success' : 'btn-primary'}`}
-                  disabled={saving}
-                >
-                  {saving ? 'Saving...' : saved ? '✅ Saved!' : 'Save Leave Settings'}
-                </button>
-              </div>
-            </div>
-
-            {/* Leave Preview Panel */}
-            <div className="glass-panel flex flex-col" style={{ padding: '24px', background: 'var(--bg-surface)' }}>
-              <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none', marginBottom: '16px' }}>
-                👁️ Leave Message Preview
-              </h3>
-
-              <div style={{
-                background: '#313338',
-                borderRadius: '8px',
-                padding: '16px',
-                display: 'flex',
-                gap: '14px',
-              }}>
-                <div style={{
-                  width: '40px',
-                  height: '40px',
-                  borderRadius: '50%',
-                  background: 'linear-gradient(135deg, #ef4444, #f97316)',
-                  flexShrink: 0,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#fff',
-                }}>
-                  👋
-                </div>
-                <div style={{ width: '100%' }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '6px' }}>
-                    <span style={{ fontWeight: '600', color: 'white', fontSize: '15px' }}>{botName} Bot</span>
-                    <span style={{ fontSize: '10px', background: '#5865F2', padding: '1px 5px', borderRadius: '3px', textTransform: 'uppercase', color: '#fff' }}>APP</span>
-                  </div>
-
-                  <div style={{ background: '#2b2d31', borderRadius: '6px', borderLeft: '4px solid #ef4444', padding: '12px' }}>
-                    <div style={{ fontWeight: 'bold', color: '#f87171', marginBottom: '6px', fontSize: '13px' }}>
-                      MEMBER DEPARTURE
-                    </div>
-                    <div style={{ color: '#dbdee1', fontSize: '14px', lineHeight: '1.4', whiteSpace: 'pre-wrap' }}>
-                      {config.leave_message
-                        .replace(/{user}/g, 'LeavingUser')
-                        .replace(/{username}/g, 'LeavingUser')
-                        .replace(/{server}/g, 'Family Server')
-                        .replace(/{count}/g, '1,233') || 'Start typing to preview...'}
-                    </div>
-                    {config.leave_image_url && (
-                      <div style={{ marginTop: '12px' }}>
-                        <img
-                          src={config.leave_image_url}
-                          alt="Leave visual"
-                          style={{ maxWidth: '100%', maxHeight: '180px', borderRadius: '4px' }}
-                          onError={e => (e.target.style.display = 'none')}
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex justify-end mt-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-                <button
-                  type="button"
-                  onClick={() => handleTest('leave')}
-                  disabled={testingLeave || !config.leave_channel_id}
-                  className="btn btn-secondary"
-                >
-                  {testingLeave ? 'Dispatching...' : '🧪 Send Test Leave'}
-                </button>
-              </div>
-            </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={handleDiscard}>
+              Discard
+            </Button>
+            <Button variant="primary" size="sm" icon={Save} loading={saving} onClick={handleSave}>
+              Save Changes
+            </Button>
           </div>
         </div>
       )}
 
-      {/* Multi-Server Sync Modal */}
-      <SyncModal
-        isOpen={syncOpen}
-        onClose={() => setSyncOpen(false)}
-        currentGuildId={guildId}
-        moduleName="welcome"
-        moduleLabel="Welcome & Leave Studio"
-      />
+      {/* Sync Servers Modal */}
+      {syncOpen && (
+        <SyncModal
+          featureName="Welcome"
+          config={config}
+          onClose={() => setSyncOpen(false)}
+        />
+      )}
     </div>
   );
 }

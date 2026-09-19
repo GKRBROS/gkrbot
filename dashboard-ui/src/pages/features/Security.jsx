@@ -1,9 +1,27 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  ShieldCheck,
+  Zap,
+  Scan,
+  Share2,
+  CheckCircle2,
+  AlertCircle,
+  Hash,
+  Users,
+  Clock,
+  MessageSquare
+} from 'lucide-react';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync } from '../../sync';
 import { Select } from '../../components/Select';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Toggle from '../../components/Toggle';
+import Badge from '../../components/Badge';
+import Skeleton from '../../components/Skeleton';
 
 function Security() {
   const { guildId } = useParams();
@@ -35,8 +53,10 @@ function Security() {
       setChannels(chanRes.data.channels || []);
     } catch (err) {
       console.error('Failed to load security config', err);
+      setError(err.response?.data?.error || 'Failed to load security config');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [guildId]);
 
   useEffect(() => {
@@ -44,7 +64,7 @@ function Security() {
   }, [fetchData]);
 
   const handleSave = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     setError('');
     setSaving(true);
     try {
@@ -53,189 +73,212 @@ function Security() {
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save security configuration');
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   };
 
   if (loading) {
     return (
-      <div className="animate-fade-in stagger">
-        <div className="skeleton" style={{ height: '80px', marginBottom: '24px' }}></div>
-        <div className="skeleton" style={{ height: '320px' }}></div>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <Skeleton height="70px" />
+        <Skeleton height="200px" />
+        <Skeleton height="200px" />
       </div>
     );
   }
 
+  const channelOptions = [
+    { value: '', label: 'Disabled (No Security Channel)' },
+    ...channels.map(ch => ({ value: ch.id, label: `#${ch.name}` }))
+  ];
+
   return (
-    <div className="animate-fade-in">
-      {/* Header */}
-      <div className="page-header flex justify-between items-center" style={{ flexWrap: 'wrap', gap: '16px' }}>
-        <div>
-          <h2 className="page-title">
-            <span>🛡️</span> Security & Anti-Spam
-          </h2>
-          <p className="page-subtitle">
-            Configure automated anti-spam protection, mass-mention safeguards, and image scanning.
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          <button
-            type="button"
-            onClick={() => setSyncOpen(true)}
-            className="btn"
-            style={{
-              background: 'rgba(88,101,242,0.15)',
-              border: '1px solid var(--primary)',
-              color: 'var(--text-main)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}
-          >
-            <span>🔄</span> Sync to Other Servers
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="btn btn-primary"
-            style={{ minWidth: '130px' }}
-          >
-            {saving ? 'Saving...' : saved ? '✓ Saved!' : 'Save Changes'}
-          </button>
-        </div>
-      </div>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <PageHeader
+        icon={ShieldCheck}
+        title="Security & Anti-Spam"
+        subtitle="Automated rate limiting protection, mass-mention safeguards, and heuristic content filtering."
+        actions={
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={Share2}
+              onClick={() => setSyncOpen(true)}
+            >
+              Sync to Servers
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={CheckCircle2}
+              loading={saving}
+              onClick={handleSave}
+            >
+              {saved ? 'Saved!' : 'Save Security Rules'}
+            </Button>
+          </div>
+        }
+      />
 
       {error && (
         <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
           padding: '12px 16px',
-          borderRadius: '8px',
-          marginBottom: '20px',
-          background: 'rgba(239, 68, 68, 0.15)',
-          border: '1px solid var(--danger)',
-          color: 'var(--danger)',
-          fontSize: '14px'
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          color: '#f87171',
+          fontSize: '13.5px'
         }}>
-          {error}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <AlertCircle size={17} />
+            <span>{error}</span>
+          </div>
+          <button
+            onClick={() => setError('')}
+            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
         </div>
       )}
 
-      {/* Main Settings Form */}
-      <form onSubmit={handleSave}>
-        <div className="card glass-panel" style={{ marginBottom: '24px' }}>
-          <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px', color: 'var(--text-main)' }}>
-            ⚡ Anti-Spam & Rate Limiting
-          </h3>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Anti Spam Toggle */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>Enable Anti-Spam Shield</div>
-                <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                  Automatically detects rapid message flooding and triggers warnings/mutes.
-                </div>
-              </div>
-              <input
-                type="checkbox"
-                checked={config.anti_spam_enabled}
-                onChange={e => setConfig({ ...config, anti_spam_enabled: e.target.checked })}
-                style={{ width: '20px', height: '20px', accentColor: 'var(--primary)', cursor: 'pointer' }}
-              />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px' }}>
-              <div className="form-group">
-                <label className="form-label">Message Limit</label>
-                <input
-                  type="number"
-                  min="2"
-                  max="50"
-                  className="form-control"
-                  value={config.spam_msg_limit}
-                  onChange={e => setConfig({ ...config, spam_msg_limit: parseInt(e.target.value) || 5 })}
-                />
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                  Max messages allowed within the time window.
-                </span>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Time Window (Seconds)</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="60"
-                  className="form-control"
-                  value={config.spam_time_sec}
-                  onChange={e => setConfig({ ...config, spam_time_sec: parseInt(e.target.value) || 5 })}
-                />
-                <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                  Interval used to count incoming messages.
-                </span>
-              </div>
+      {/* Anti-Spam Card */}
+      <Card>
+        <CardHeader>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Zap size={20} color="var(--primary)" />
+            <div>
+              <CardTitle>Anti-Spam & Rate Limiter</CardTitle>
+              <CardDescription>
+                Detect and suppress rapid message flooding, duplicate copypastas, and raid spam in real-time.
+              </CardDescription>
             </div>
           </div>
-        </div>
+        </CardHeader>
+        <CardContent style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div style={{
+            padding: '16px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border)'
+          }}>
+            <Toggle
+              checked={config.anti_spam_enabled}
+              onChange={val => setConfig({ ...config, anti_spam_enabled: val })}
+              label="Enable Anti-Spam Shield"
+              description="Automatically throttles members sending messages faster than humanly possible."
+            />
+          </div>
 
-        {/* Safeguards & Scanning */}
-        <div className="card glass-panel" style={{ marginBottom: '24px' }}>
-          <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '16px', color: 'var(--text-main)' }}>
-            🛡️ Content Protection & Image Scanning
-          </h3>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Image Scan Toggle */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontWeight: 600, color: 'var(--text-main)' }}>AI / Heuristic Image Scanner</div>
-                <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-                  Scans image attachments for NSFW, gore, and crypto scam overlays, auto-deleting infractions.
-                </div>
-              </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Message Limit
+              </label>
               <input
-                type="checkbox"
-                checked={config.image_scan_enabled}
-                onChange={e => setConfig({ ...config, image_scan_enabled: e.target.checked })}
-                style={{ width: '20px', height: '20px', accentColor: 'var(--primary)', cursor: 'pointer' }}
+                type="number"
+                min="2"
+                max="50"
+                className="form-input"
+                value={config.spam_msg_limit}
+                onChange={e => setConfig({ ...config, spam_msg_limit: parseInt(e.target.value, 10) || 5 })}
               />
+              <p style={{ margin: '5px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                Maximum number of messages allowed inside the time window.
+              </p>
             </div>
 
-            {/* Mass Mention Limit */}
-            <div className="form-group" style={{ maxWidth: '320px' }}>
-              <label className="form-label">Mass Mention Threshold</label>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Time Window (Seconds)
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="60"
+                className="form-input"
+                value={config.spam_time_sec}
+                onChange={e => setConfig({ ...config, spam_time_sec: parseInt(e.target.value, 10) || 5 })}
+              />
+              <p style={{ margin: '5px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                Evaluation interval used to monitor member message frequency.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Safeguards & Content Scanning Card */}
+      <Card>
+        <CardHeader>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Scan size={20} color="#10b981" />
+            <div>
+              <CardTitle>Content Safeguards & Image Filtering</CardTitle>
+              <CardDescription>
+                Heuristic image scanning, phishing detection, and mass user or role ping shields.
+              </CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div style={{
+            padding: '16px',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-surface)',
+            border: '1px solid var(--border)'
+          }}>
+            <Toggle
+              checked={config.image_scan_enabled}
+              onChange={val => setConfig({ ...config, image_scan_enabled: val })}
+              label="Automated Image & Attachment Scanner"
+              description="Scans incoming image uploads for explicit content, scam QR overlays, and graphic material."
+            />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Mass Mention Threshold
+              </label>
               <input
                 type="number"
                 min="3"
                 max="50"
-                className="form-control"
+                className="form-input"
                 value={config.mass_mention_limit}
-                onChange={e => setConfig({ ...config, mass_mention_limit: parseInt(e.target.value) || 5 })}
+                onChange={e => setConfig({ ...config, mass_mention_limit: parseInt(e.target.value, 10) || 5 })}
               />
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                Flags messages mentioning more than this many users or roles.
-              </span>
+              <p style={{ margin: '5px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                Blocks and deletes messages pinging more than this number of members or roles.
+              </p>
             </div>
 
-            {/* Log Channel */}
-            <div className="form-group" style={{ maxWidth: '420px' }}>
-              <label className="form-label">Security Incident Log Channel</label>
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Incident Audit Log Channel
+              </label>
               <Select
                 value={config.log_channel_id || ''}
                 onChange={v => setConfig({ ...config, log_channel_id: v })}
-                options={[{ value: '', label: '🚫 Disabled (No Logging)' }, ...channels.map(ch => ({ value: ch.id, label: '# ' + ch.name })) ]}
-                placeholder="Select a log channel..."
+                options={channelOptions}
+                placeholder="Select an incident log channel..."
                 searchable
               />
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                Where warnings, deleted spam, and scan triggers will be logged.
-              </span>
+              <p style={{ margin: '5px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                Target channel where auto-deleted violations and rate warnings will be logged.
+              </p>
             </div>
           </div>
-        </div>
-      </form>
+        </CardContent>
+      </Card>
 
-      {/* Sync Modal */}
+      {/* Cross-Server Sync Modal */}
       <SyncModal
         isOpen={syncOpen}
         onClose={() => setSyncOpen(false)}

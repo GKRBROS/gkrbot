@@ -1,15 +1,39 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
+import {
+  Bot,
+  Sparkles,
+  Brain,
+  MessageSquare,
+  Globe,
+  Palette,
+  Smile,
+  Volume2,
+  GitFork,
+  Plus,
+  Trash2,
+  CheckCircle2,
+  AlertCircle,
+  Save,
+  BookOpen,
+  Send
+} from 'lucide-react';
 import api from '../../api';
 import { Select } from '../../components/Select';
+import PageHeader from '../../components/PageHeader';
+import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
+import Button from '../../components/Button';
+import Toggle from '../../components/Toggle';
+import Badge from '../../components/Badge';
+import Skeleton from '../../components/Skeleton';
 
 const PERSONAS = [
-  { id: 'friendly', name: 'Friendly', emoji: '☀️', color: '#f59e0b', desc: 'Warm, helpful, and natural conversation.' },
-  { id: 'gamer', name: 'Gamer', emoji: '🎮', color: '#8b5cf6', desc: 'Clutch gaming teammate with hype & banter.' },
-  { id: 'sarcastic', name: 'Sarcastic', emoji: '😼', color: '#ef4444', desc: 'Sharp wit, playful sass, and clever humor.' },
-  { id: 'expert', name: 'Expert', emoji: '🔬', color: '#06b6d4', desc: 'Senior engineer clarity with zero fluff.' },
-  { id: 'cyberpunk', name: 'Cyberpunk', emoji: '🌃', color: '#ec4899', desc: 'Futuristic AI construct from neon metropolis.' },
-  { id: 'anime', name: 'Anime', emoji: '✨', color: '#10b981', desc: 'Kawaii, enthusiastic, and expressive companion.' },
+  { id: 'friendly', name: 'Friendly Companion', emoji: '☀️', color: '#f59e0b', desc: 'Warm, helpful, encouraging, and natural conversation.' },
+  { id: 'gamer', name: 'Gaming Teammate', emoji: '🎮', color: '#8b5cf6', desc: 'Clutch gaming ally loaded with gaming slang and friendly banter.' },
+  { id: 'sarcastic', name: 'Sarcastic & Witty', emoji: '😼', color: '#ef4444', desc: 'Sharp wit, playful snark, dry roasts, and clever humor.' },
+  { id: 'expert', name: 'Engineering Expert', emoji: '🔬', color: '#06b6d4', desc: 'Precise technical explanations with zero filler or fluff.' },
+  { id: 'cyberpunk', name: 'Cyberpunk AI', emoji: '🌃', color: '#ec4899', desc: 'Sentient neural construct from a neon dystopian metropolis.' },
+  { id: 'anime', name: 'Enthusiastic Anime', emoji: '✨', color: '#10b981', desc: 'Expressive, joyful, supportive, and energetic companion.' },
 ];
 
 export default function AISystem() {
@@ -24,7 +48,7 @@ export default function AISystem() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Memory creation modal state
+  // Memory creation state
   const [newTopic, setNewTopic] = useState('');
   const [newFact, setNewFact] = useState('');
   const [addingMemory, setAddingMemory] = useState(false);
@@ -59,7 +83,7 @@ export default function AISystem() {
     try {
       await api.post(`/guilds/${guildId}/ai`, config);
       setSaved(true);
-      setSuccess('AI configuration saved successfully!');
+      setSuccess('AI configuration and personality directives saved successfully!');
       setTimeout(() => {
         setSaved(false);
         setSuccess('');
@@ -77,12 +101,12 @@ export default function AISystem() {
 
     setAddingMemory(true);
     try {
-      await api.post(`/guilds/${guildId}/ai/memories`, { topic: newTopic, fact: newFact });
+      await api.post(`/guilds/${guildId}/ai/memories`, { topic: newTopic.trim(), fact: newFact.trim() });
       setNewTopic('');
       setNewFact('');
       fetchAI();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to add memory');
+      setError(err.response?.data?.error || 'Failed to record memory');
     } finally {
       setAddingMemory(false);
     }
@@ -99,280 +123,336 @@ export default function AISystem() {
 
   if (loading || !config) {
     return (
-      <div className="animate-fade-in stagger">
-        <div className="skeleton" style={{ height: '80px', marginBottom: '24px' }}></div>
-        <div className="skeleton" style={{ height: '350px' }}></div>
+      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <Skeleton height="70px" />
+        <Skeleton height="100px" />
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '20px' }}>
+          <Skeleton height="360px" />
+          <Skeleton height="360px" />
+        </div>
       </div>
     );
   }
 
+  const channelSelectOptions = [
+    { value: '', label: 'None (Only reply to direct @mentions)' },
+    ...channels.map(ch => ({ value: ch.id, label: `#${ch.name}` }))
+  ];
+
+  const autonomousModules = [
+    { key: 'mention_enabled', label: 'Reply to Direct @Mentions', desc: 'Responds whenever a member tags the bot in any conversation.' },
+    { key: 'self_learning', label: 'Self-Learning Lore Retention', desc: 'Passively learns community facts and member nicknames from chat.' },
+    { key: 'research_enabled', label: 'Live Web & Fact Research', desc: 'Performs online synthesis to give accurate real-world answers.' },
+    { key: 'image_enabled', label: 'FLUX Image Generation', desc: 'Synthesizes images and artwork directly inside Discord chat.' },
+    { key: 'comedy_enabled', label: 'Banter & Humorous Roasts', desc: 'Engages in witty retorts and funny banter with familiar members.' },
+    { key: 'tts_enabled', label: 'Neural Audio Voice Narration', desc: 'Speaks responses via voice notes when requested by members.' },
+    { key: 'thread_mode', label: 'Automated Discussion Threads', desc: 'Spins off detailed questions into dedicated Discord threads.' },
+  ];
+
   return (
-    <div className="animate-fade-in">
-      {/* Page Header */}
-      <div className="page-header" style={{ marginBottom: '20px' }}>
-        <h1 className="page-title" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span>🤖</span> AI Companion & Lore Studio
-        </h1>
-        <p className="page-subtitle">
-          Configure personality personas, self-learning knowledge retention, multi-lingual responses (including Manglish & regional dialects), and autonomous features.
-        </p>
-      </div>
+    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+      <PageHeader
+        icon={Bot}
+        title="AI Companion & Studio"
+        subtitle="Configure conversational personas, self-learning knowledge retention, regional accents, and autonomous modules."
+        actions={
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Save}
+            loading={saving}
+            onClick={handleSave}
+          >
+            {saved ? 'Saved!' : 'Save Directives'}
+          </Button>
+        }
+      />
 
-      {error && <div className="alert alert-error" style={{ marginBottom: '16px' }}>{error}</div>}
-      {success && <div className="alert alert-success" style={{ marginBottom: '16px' }}>{success}</div>}
-
-      {/* Global AI Master Toggle */}
-      <div className="glass-panel" style={{ padding: '16px 20px', marginBottom: '24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{
-            width: '44px',
-            height: '44px',
-            borderRadius: '12px',
-            background: config.enabled ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.12)',
-            border: `1px solid ${config.enabled ? 'rgba(34, 197, 94, 0.4)' : 'rgba(239, 68, 68, 0.3)'}`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '22px',
-          }}>
-            {config.enabled ? '🧠' : '💤'}
+      {error && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(239, 68, 68, 0.25)',
+          color: '#f87171',
+          fontSize: '13.5px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <AlertCircle size={17} />
+            <span>{error}</span>
           </div>
-          <div>
-            <div style={{ fontWeight: '600', fontSize: '16px', color: 'var(--text-main)' }}>
-              AI Companion is {config.enabled ? 'Active & Listening' : 'Sleeping (Disabled)'}
-            </div>
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-              {config.enabled
-                ? 'The AI is responsive to mentions, messages in dedicated channels, and self-learning.'
-                : 'Turn this on to enable intelligent conversation throughout the server.'}
-            </div>
-          </div>
+          <button
+            onClick={() => setError('')}
+            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
         </div>
-        <button
-          type="button"
-          className={`toggle ${config.enabled ? 'active' : ''}`}
-          onClick={() => setConfig(c => ({ ...c, enabled: c.enabled ? 0 : 1 }))}
-          aria-label="Toggle AI Active State"
-        ></button>
-      </div>
+      )}
 
-      <div className="grid-2 stagger" style={{ gap: '24px', alignItems: 'start' }}>
-        {/* Left Column: Personality & Prompts */}
-        <div className="flex flex-col gap-4">
-          {/* Persona Picker */}
-          <div className="glass-panel" style={{ padding: '24px' }}>
-            <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none', marginBottom: '8px' }}>
-              🎭 Personality Persona
-            </h3>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              Select the conversational style and tone the AI adapts when interacting with members.
-            </p>
+      {success && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(16, 185, 129, 0.1)',
+          border: '1px solid rgba(16, 185, 129, 0.25)',
+          color: '#34d399',
+          fontSize: '13.5px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <CheckCircle2 size={17} />
+            <span>{success}</span>
+          </div>
+          <button
+            onClick={() => setSuccess('')}
+            style={{ background: 'transparent', border: 'none', color: '#34d399', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '10px', marginBottom: '20px' }}>
-              {PERSONAS.map(p => {
-                const isSelected = config.persona === p.id;
-                return (
+      {/* Master Toggle Banner */}
+      <Card>
+        <CardContent style={{ padding: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{
+              width: '46px',
+              height: '46px',
+              borderRadius: '12px',
+              background: config.enabled ? 'rgba(16, 185, 129, 0.12)' : 'rgba(239, 68, 68, 0.1)',
+              border: `1px solid ${config.enabled ? 'rgba(16, 185, 129, 0.3)' : 'rgba(239, 68, 68, 0.2)'}`,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: config.enabled ? '#10b981' : '#f87171'
+            }}>
+              <Brain size={24} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: '15.5px', color: 'var(--text-main)' }}>
+                AI Companion Status: {config.enabled ? 'Active & Responding' : 'Dormant (Disabled)'}
+              </div>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                {config.enabled
+                  ? 'The bot will actively reply to mentions and messages in designated AI channels.'
+                  : 'Toggle on to activate neural conversational capabilities across your server.'}
+              </div>
+            </div>
+          </div>
+
+          <Toggle
+            checked={Boolean(config.enabled)}
+            onChange={val => setConfig(c => ({ ...c, enabled: val ? 1 : 0 }))}
+          />
+        </CardContent>
+      </Card>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 1.2fr) minmax(320px, 0.8fr)', gap: '24px' }}>
+        {/* Left Column: Personality, Channel & Directives */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          {/* Persona Picker Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Conversational Personality</CardTitle>
+              <CardDescription>
+                Choose the behavioral style and tone the AI embodies when talking to server members.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                {PERSONAS.map(p => {
+                  const isSelected = config.persona === p.id;
+                  return (
+                    <div
+                      key={p.id}
+                      onClick={() => setConfig({ ...config, persona: p.id })}
+                      style={{
+                        background: isSelected ? 'rgba(88, 101, 242, 0.1)' : 'var(--bg-surface)',
+                        border: isSelected ? `2px solid ${p.color}` : '1px solid var(--border)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: '14px 12px',
+                        cursor: 'pointer',
+                        transition: 'all 150ms ease'
+                      }}
+                    >
+                      <div style={{ fontSize: '22px', marginBottom: '6px' }}>{p.emoji}</div>
+                      <div style={{ fontWeight: 600, fontSize: '13.5px', color: 'var(--text-main)' }}>{p.name}</div>
+                      <div style={{ fontSize: '11.5px', color: 'var(--text-muted)', marginTop: '4px', lineHeight: 1.3 }}>{p.desc}</div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                    Dedicated AI Discussion Channel
+                  </label>
+                  <Select
+                    value={config.ai_channel_id || ''}
+                    onChange={v => setConfig({ ...config, ai_channel_id: v })}
+                    options={channelSelectOptions}
+                    placeholder="Select AI channel..."
+                    searchable
+                  />
+                  <p style={{ margin: '5px 0 0', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    In this channel, every message automatically triggers an AI reply without needing an @mention.
+                  </p>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                    Custom Server Directives (System Prompt)
+                  </label>
+                  <textarea
+                    className="form-input"
+                    rows={4}
+                    value={config.system_prompt || ''}
+                    onChange={e => setConfig({ ...config, system_prompt: e.target.value })}
+                    placeholder="Give your AI specific server rules, secret lore, inside jokes, or behavior boundaries..."
+                    style={{ fontFamily: 'monospace', fontSize: '12.5px' }}
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Autonomous Feature Modules */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Autonomous Feature Modules</CardTitle>
+              <CardDescription>Toggle specific neural capabilities and sub-systems on or off.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {autonomousModules.map(feat => (
                   <div
-                    key={p.id}
-                    onClick={() => setConfig({ ...config, persona: p.id })}
+                    key={feat.key}
                     style={{
-                      background: isSelected ? 'rgba(88, 101, 242, 0.15)' : 'var(--bg-surface)',
-                      border: isSelected ? `2px solid ${p.color}` : '1px solid var(--border)',
-                      borderRadius: '10px',
-                      padding: '12px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s',
-                      boxShadow: isSelected ? `0 0 16px ${p.color}33` : 'none',
+                      padding: '14px 16px',
+                      borderRadius: 'var(--radius-md)',
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border)'
                     }}
                   >
-                    <div style={{ fontSize: '24px', marginBottom: '4px' }}>{p.emoji}</div>
-                    <div style={{ fontWeight: '600', fontSize: '14px', color: '#fff' }}>{p.name}</div>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', lineHeight: '1.2' }}>{p.desc}</div>
+                    <Toggle
+                      checked={Boolean(config[feat.key])}
+                      onChange={val => setConfig(c => ({ ...c, [feat.key]: val ? 1 : 0 }))}
+                      label={feat.label}
+                      description={feat.desc}
+                    />
                   </div>
-                );
-              })}
-            </div>
-
-            {/* Dedicated Channel */}
-            <div className="form-group">
-              <label className="form-label">Dedicated AI Chat Channel</label>
-              <Select
-                value={config.ai_channel_id}
-                onChange={v => setConfig({ ...config, ai_channel_id: v })}
-                options={[
-                  { value: '', label: 'None (Only reply to direct @mentions)' },
-                  ...channels.map(ch => ({ value: ch.id, label: '# ' + ch.name })),
-                ]}
-                placeholder="Select an AI channel..."
-                searchable
-              />
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
-                Messages in this channel will trigger AI replies without needing an explicit @mention.
-              </span>
-            </div>
-
-            {/* Custom System Prompt */}
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label className="form-label">Custom Directive / System Prompt (Optional)</label>
-              <textarea
-                className="input-field"
-                rows={3}
-                value={config.system_prompt}
-                onChange={e => setConfig({ ...config, system_prompt: e.target.value })}
-                placeholder="Give your AI specific server rules, inside jokes, or behavior boundaries..."
-                style={{ fontFamily: 'monospace' }}
-              />
-            </div>
-          </div>
-
-          {/* Autonomous Features Switches */}
-          <div className="glass-panel" style={{ padding: '24px' }}>
-            <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none', marginBottom: '14px' }}>
-              ⚡ Autonomous Feature Modules
-            </h3>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {[
-                { key: 'mention_enabled', label: '💬 Reply to @Mentions', desc: 'Responds when tagged in any server channel' },
-                { key: 'self_learning', label: '🧠 Self-Learning Retention', desc: 'Passively learns facts, lore, and member preferences from conversation' },
-                { key: 'research_enabled', label: '🌐 Web & Encyclopedia Research', desc: 'Performs live multi-paragraph synthesis for queries and concepts' },
-                { key: 'image_enabled', label: '🎨 FLUX Image Generation', desc: 'Generates banners and artwork on demand' },
-                { key: 'comedy_enabled', label: '🎭 Banter & Comedy Mode', desc: 'Cracks jokes and engages in humorous member banter' },
-                { key: 'tts_enabled', label: '🗣️ Voice TTS Narration', desc: 'Generates neural audio clips when requested' },
-                { key: 'thread_mode', label: '🧵 Auto-Thread Replies', desc: 'Creates organized conversation threads for long questions' },
-              ].map(feat => (
-                <div
-                  key={feat.key}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    background: 'rgba(255,255,255,0.02)',
-                    padding: '10px 14px',
-                    borderRadius: '8px',
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: '500', fontSize: '14px' }}>{feat.label}</div>
-                    <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{feat.desc}</div>
-                  </div>
-                  <button
-                    type="button"
-                    className={`toggle ${config[feat.key] ? 'active' : ''}`}
-                    onClick={() => setConfig(c => ({ ...c, [feat.key]: c[feat.key] ? 0 : 1 }))}
-                  ></button>
-                </div>
-              ))}
-            </div>
-
-            <div className="flex justify-end mt-4 pt-4" style={{ borderTop: '1px solid var(--border)' }}>
-              <button
-                type="button"
-                onClick={handleSave}
-                className={`btn ${saved ? 'btn-success' : 'btn-primary'}`}
-                disabled={saving}
-              >
-                {saving ? 'Saving...' : saved ? '✅ Saved!' : 'Save AI Settings'}
-              </button>
-            </div>
-          </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
-        {/* Right Column: Learned Knowledge & Memories */}
-        <div className="flex flex-col gap-4">
-          <div className="glass-panel" style={{ padding: '24px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 className="section-title" style={{ margin: 0, padding: 0, border: 'none' }}>
-                🧠 Learned Lore & Knowledge Base ({memories.length})
-              </h3>
-            </div>
-            <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '16px' }}>
-              Facts the AI has passively remembered from chat or that staff have explicitly taught it.
-            </p>
-
-            {/* Add Memory Form */}
-            <form onSubmit={handleAddMemory} style={{ background: 'var(--bg-surface)', padding: '14px', borderRadius: '10px', border: '1px solid var(--border)', marginBottom: '20px' }}>
-              <div style={{ fontWeight: '600', fontSize: '13px', color: '#fff', marginBottom: '8px' }}>
-                ➕ Teach New Server Lore / Fact
+        {/* Right Column: Lore & Knowledge Retention */}
+        <div>
+          <Card>
+            <CardHeader>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <CardTitle>Lore & Memory Retention</CardTitle>
+                  <CardDescription>Persistent knowledge the AI references in server conversations.</CardDescription>
+                </div>
+                <Badge variant="primary" size="sm">{memories.length} Facts</Badge>
               </div>
-              <div className="form-group" style={{ marginBottom: '8px' }}>
+            </CardHeader>
+            <CardContent style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              {/* Add Fact Form */}
+              <form onSubmit={handleAddMemory} style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '12px',
+                padding: '14px',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--bg-surface)',
+                border: '1px solid var(--border)'
+              }}>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                  Teach AI New Fact
+                </span>
                 <input
                   type="text"
-                  className="input-field"
-                  placeholder="Topic / Keyword (e.g., server_founder, favorite_game)"
+                  className="form-input"
+                  placeholder="Topic (e.g. Server Founder, Minecraft IP)"
                   value={newTopic}
                   onChange={e => setNewTopic(e.target.value)}
                   required
                 />
-              </div>
-              <div className="form-group" style={{ marginBottom: '10px' }}>
                 <textarea
-                  className="input-field"
+                  className="form-input"
                   rows={2}
-                  placeholder="Fact / Lore detail (e.g., The server was founded in July 2024 by John)"
+                  placeholder="Fact or Lore (e.g. Server was founded in 2021 by Sarah)"
                   value={newFact}
                   onChange={e => setNewFact(e.target.value)}
                   required
                 />
-              </div>
-              <button
-                type="submit"
-                disabled={addingMemory || !newTopic.trim() || !newFact.trim()}
-                className="btn btn-secondary"
-                style={{ fontSize: '12px', width: '100%' }}
-              >
-                {addingMemory ? 'Memorizing...' : '💡 Teach AI Fact'}
-              </button>
-            </form>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <Button type="submit" variant="primary" size="sm" icon={Plus} loading={addingMemory}>
+                    Teach Fact
+                  </Button>
+                </div>
+              </form>
 
-            {/* Memories List */}
-            {memories.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: '32px 16px', color: 'var(--text-muted)' }}>
-                No learned memories yet. The AI will build this automatically through conversation, or you can add custom lore above!
-              </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '480px', overflowY: 'auto' }}>
-                {memories.map(m => (
-                  <div
-                    key={m.id}
-                    style={{
-                      background: 'var(--bg-surface)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '8px',
-                      padding: '12px 14px',
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'start',
-                      gap: '10px',
-                    }}
-                  >
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                        <span className="badge badge-primary" style={{ fontSize: '11px' }}>
-                          #{m.topic}
-                        </span>
-                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                          via {m.learned_from || 'chat'}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '13px', color: '#e2e8f0', lineHeight: '1.4' }}>
-                        {m.fact}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteMemory(m.id)}
-                      className="btn"
-                      style={{ padding: '4px 8px', fontSize: '11px', background: 'transparent', color: 'var(--danger)', border: 'none' }}
-                      title="Forget this memory"
-                    >
-                      ❌
-                    </button>
+              {/* Memory Cards */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {memories.length === 0 ? (
+                  <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                    No custom facts registered yet. Teach your bot facts above or let it learn passively.
                   </div>
-                ))}
+                ) : (
+                  memories.map(m => (
+                    <div
+                      key={m.id}
+                      style={{
+                        padding: '12px 14px',
+                        borderRadius: 'var(--radius-md)',
+                        background: 'var(--bg-surface)',
+                        border: '1px solid var(--border)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'flex-start',
+                        gap: '12px'
+                      }}
+                    >
+                      <div>
+                        <Badge variant="primary" size="sm" style={{ marginBottom: '6px' }}>
+                          {m.topic}
+                        </Badge>
+                        <div style={{ fontSize: '13px', color: 'var(--text-main)', lineHeight: 1.4 }}>
+                          {m.fact}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMemory(m.id)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#f87171',
+                          cursor: 'pointer',
+                          padding: '4px'
+                        }}
+                        title="Forget memory"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                  ))
+                )}
               </div>
-            )}
-          </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </div>
