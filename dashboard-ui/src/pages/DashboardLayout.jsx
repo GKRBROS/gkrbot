@@ -190,7 +190,9 @@ export function DashboardLayout({ user }) {
               <Bot size={18} />
             </div>
             {!collapsed && (
-              <span className="sidebar-brand-name">{botName || 'GKR'} Bot</span>
+              <span className="sidebar-brand-name">
+                {botName ? (botName.toLowerCase().endsWith('bot') ? botName : `${botName} Bot`) : 'GKR Bot'}
+              </span>
             )}
           </Link>
 

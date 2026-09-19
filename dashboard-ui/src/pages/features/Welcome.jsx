@@ -26,37 +26,49 @@ import {
   Bot,
   User,
   AlertCircle,
-  HelpCircle
+  HelpCircle,
+  Ticket,
+  Film,
+  Layers,
+  Flame,
+  CheckCircle2,
+  RefreshCw,
+  QrCode,
+  Globe
 } from 'lucide-react';
 
 const CARD_STYLES = [
   {
     id: 'legacy',
     label: 'Legacy Neon',
-    desc: 'Dual-tone glow with avatar ring and cyber accents',
-    badge: 'Classic',
+    badge: 'Cyber Glow',
+    desc: 'Dual-tone vibrant glow with avatar ring and cyber accents.',
     accent: '#8b5cf6',
+    icon: Flame,
   },
   {
     id: 'glass',
     label: 'Minimalist Glass',
-    desc: 'Centered avatar with frosted blur and halo glow',
-    badge: 'Modern',
+    badge: 'Frosted Modern',
+    desc: 'Translucent frosted glass card with atmospheric twilight blur.',
     accent: '#6366f1',
+    icon: Layers,
   },
   {
     id: 'ticket',
     label: 'Ticket Pass',
-    desc: 'VIP boarding pass with tear-off stub and barcode',
-    badge: 'VIP Pass',
+    badge: 'VIP Boarding',
+    desc: 'Event boarding pass featuring barcode stub and perforation line.',
     accent: '#ec4899',
+    icon: Ticket,
   },
   {
     id: 'cinematic',
     label: 'Cinematic Poster',
-    desc: 'Bold editorial typography with wide letterbox layout',
-    badge: 'Impact',
+    badge: 'Wide Letterbox',
+    desc: 'Dramatic wide letterbox format with bold editorial typography.',
     accent: '#14b8a6',
+    icon: Film,
   },
 ];
 
@@ -149,12 +161,13 @@ export function Welcome() {
         setConfig(normalized);
         setSavedConfig(normalized);
       }
+
       setChannels(channelsRes.data.channels || []);
       setRoles(rolesRes.data.roles || []);
       setError('');
     } catch (err) {
-      console.error('Failed to fetch welcome config', err);
-      setError(err.response?.data?.error || 'Failed to load welcome configuration');
+      console.error('Failed to load welcome configuration', err);
+      setError('Failed to load configuration. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -164,7 +177,7 @@ export function Welcome() {
     fetchData();
   }, [fetchData]);
 
-  // Unsaved changes detection
+  // Check if form has unsaved modifications
   const isDirty = useMemo(() => {
     if (!savedConfig) return false;
     return (
@@ -173,8 +186,7 @@ export function Welcome() {
       config.message !== savedConfig.message ||
       config.card_style !== savedConfig.card_style ||
       config.card_only !== savedConfig.card_only ||
-      Boolean(config.background_url) ||
-      config.clear_background ||
+      config.background_url !== '' ||
       config.show_avatar !== savedConfig.show_avatar ||
       config.show_guild_icon !== savedConfig.show_guild_icon ||
       config.draw_avatar !== savedConfig.draw_avatar ||
@@ -188,79 +200,95 @@ export function Welcome() {
     );
   }, [config, savedConfig]);
 
-  const handleDiscard = () => {
-    if (savedConfig) {
-      setConfig({ ...savedConfig, background_url: '', clear_background: false });
-    }
-  };
-
-  const handleSave = async (e) => {
-    if (e) e.preventDefault();
-    setError('');
-    setSaving(true);
+  const handleSave = async () => {
     try {
-      const payload = { ...config };
-      if (!payload.background_url) {
-        delete payload.background_url;
+      setSaving(true);
+      setError('');
+
+      const payload = {
+        enabled: config.enabled,
+        channel_id: config.channel_id,
+        message: config.message,
+        card_style: config.card_style,
+        card_only: config.card_only,
+        show_avatar: config.show_avatar,
+        show_guild_icon: config.show_guild_icon,
+        draw_avatar: config.draw_avatar,
+        draw_text: config.draw_text,
+        welcome_role_id: config.welcome_role_id,
+        bot_role_id: config.bot_role_id,
+        leave_enabled: config.leave_enabled,
+        leave_channel_id: config.leave_channel_id,
+        leave_message: config.leave_message,
+        leave_image_url: config.leave_image_url,
+      };
+
+      if (config.background_url) {
+        payload.background_url = config.background_url;
       }
-      await api.post(`/guilds/${guildId}/welcome`, withSync(payload));
+      if (config.clear_background) {
+        payload.clear_background = true;
+      }
+
+      await withSync(guildId, 'welcome', payload, () =>
+        api.post(`/guilds/${guildId}/welcome`, payload)
+      );
+
       setSaved(true);
-      setSavedConfig({ ...config, background_url: '', clear_background: false });
-      setTimeout(() => setSaved(false), 2500);
-      fetchData();
+      setTimeout(() => setSaved(false), 3000);
+      await fetchData();
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save welcome configuration');
+      console.error('Failed to save welcome configuration', err);
+      setError(err.response?.data?.error || 'Failed to save configuration.');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleTest = async (type) => {
-    if (type === 'welcome') setTestingWelcome(true);
-    else setTestingLeave(true);
-    setTestNotice(null);
-
-    try {
-      const res = await api.post(`/guilds/${guildId}/welcome/test`, { type });
-      setTestNotice({ type: 'success', message: res.data?.message || `Test ${type} dispatched to Discord!` });
-      setTimeout(() => setTestNotice(null), 5000);
-    } catch (err) {
-      setTestNotice({ type: 'error', message: err.response?.data?.error || `Failed to dispatch test ${type}` });
-    } finally {
-      if (type === 'welcome') setTestingWelcome(false);
-      else setTestingLeave(false);
+  const handleReset = () => {
+    if (savedConfig) {
+      setConfig({ ...savedConfig });
+      setError('');
     }
   };
 
+  const handleTestWelcome = async () => {
+    try {
+      setTestingWelcome(true);
+      setTestNotice(null);
+      const res = await api.post(`/guilds/${guildId}/welcome/test`);
+      setTestNotice({ type: 'success', message: res.data?.message || 'Welcome card test dispatched to channel!' });
+    } catch (err) {
+      setTestNotice({
+        type: 'error',
+        message: err.response?.data?.error || 'Failed to dispatch test welcome message.'
+      });
+    } finally {
+      setTestingWelcome(false);
+    }
+  };
+
+  const textChannels = channels.filter(c => c.type === 0 || c.type === 'text');
+  const channelOptions = [
+    { value: '', label: 'Select a channel...' },
+    ...textChannels.map(c => ({ value: c.id, label: `#${c.name}` }))
+  ];
+
+  const roleOptions = [
+    { value: '', label: 'No role assigned' },
+    ...roles.map(r => ({ value: r.id, label: `@${r.name}` }))
+  ];
+
   const activeStyleMeta = CARD_STYLES.find(s => s.id === config.card_style) || CARD_STYLES[0];
 
-  if (loading && !savedConfig) {
-    return (
-      <div className="flex flex-col gap-6 animate-fade-in">
-        <div className="card p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <div className="w-48 h-6 bg-surface rounded animate-pulse mb-2" />
-              <div className="w-72 h-4 bg-surface rounded animate-pulse" />
-            </div>
-            <div className="w-12 h-6 bg-surface rounded-full animate-pulse" />
-          </div>
-        </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="card p-6 h-96" />
-          <div className="card p-6 h-96" />
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-col gap-6 animate-fade-in">
-      {/* Page Header with Actions */}
+    <div className="flex flex-col gap-6 animate-fade-in pb-12">
+      {/* Top Page Header */}
       <PageHeader
-        icon={UserPlus}
         title="Welcome & Leave Studio"
-        subtitle="Configure greeting cards, arrival channels, role automation, and departure alerts."
+        description="Craft automated greeting banners, entrance messages, role onboarding, and departure alerts."
+        badge={config.enabled ? 'Active System' : 'Disabled'}
+        badgeVariant={config.enabled ? 'success' : 'neutral'}
         actions={
           <div className="flex items-center gap-2">
             <Button
@@ -268,17 +296,17 @@ export function Welcome() {
               size="sm"
               icon={Send}
               loading={testingWelcome}
-              disabled={!config.channel_id}
-              onClick={() => handleTest('welcome')}
-              title={!config.channel_id ? 'Select a welcome channel first' : 'Send test card to Discord'}
+              onClick={handleTestWelcome}
+              title="Dispatches a live simulation to the configured welcome channel"
             >
               Test Welcome
             </Button>
             <Button
-              variant="outline"
+              variant="secondary"
               size="sm"
-              icon={Sliders}
+              icon={RotateCcw}
               onClick={() => setSyncOpen(true)}
+              title="Copy settings to other servers"
             >
               Sync Servers
             </Button>
@@ -286,61 +314,81 @@ export function Welcome() {
         }
       />
 
-      {/* Inline Feedback Alerts */}
-      {error && (
-        <div className="alert alert-error">
-          <AlertCircle size={18} className="shrink-0" />
-          <div className="flex-1">{error}</div>
-        </div>
-      )}
-
+      {/* Inline Notifications */}
       {testNotice && (
-        <div className={`alert ${testNotice.type === 'success' ? 'alert-success' : 'alert-error'}`}>
-          <div className="flex-1">{testNotice.message}</div>
+        <div className={`p-4 rounded-xl flex items-center justify-between gap-3 text-sm border ${
+          testNotice.type === 'success'
+            ? 'bg-success/10 border-success/30 text-success'
+            : 'bg-danger/10 border-danger/30 text-danger'
+        }`}>
+          <div className="flex items-center gap-2">
+            {testNotice.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+            <span>{testNotice.message}</span>
+          </div>
           <button
             type="button"
             onClick={() => setTestNotice(null)}
-            className="text-muted hover:text-main"
-            style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+            className="text-xs opacity-70 hover:opacity-100 underline"
           >
-            ✕
+            Dismiss
           </button>
         </div>
       )}
 
-      {/* Global Enable / Disable Card */}
-      <div className="card p-5 flex items-center justify-between gap-4 border-border">
-        <div className="flex items-center gap-4">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold ${
-            config.enabled ? 'bg-success/15 text-success border border-success/30' : 'bg-surface text-muted border border-border'
+      {error && (
+        <div className="p-4 rounded-xl bg-danger/10 border border-danger/30 text-danger flex items-center justify-between text-sm">
+          <div className="flex items-center gap-2">
+            <AlertCircle size={16} />
+            <span>{error}</span>
+          </div>
+          <button type="button" onClick={() => setError('')} className="text-xs opacity-70 hover:opacity-100 underline">
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Main Feature Toggle Banner */}
+      <div className={`p-4 sm:p-5 rounded-2xl border transition-all flex items-center justify-between gap-4 ${
+        config.enabled
+          ? 'bg-primary/10 border-primary/30 shadow-sm'
+          : 'bg-surface border-border'
+      }`}>
+        <div className="flex items-center gap-3.5">
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
+            config.enabled ? 'bg-primary text-white shadow-md' : 'bg-surface-elevated text-muted border border-border'
           }`}>
-            <Sparkles size={20} />
+            <UserPlus size={20} />
           </div>
           <div>
-            <div className="text-sm font-semibold text-main">
-              Welcome Automation System is {config.enabled ? 'Enabled' : 'Disabled'}
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-semibold text-main">Welcome Automation System</h3>
+              <Badge variant={config.enabled ? 'success' : 'neutral'} size="sm">
+                {config.enabled ? 'Enabled' : 'Paused'}
+              </Badge>
             </div>
-            <div className="text-xs text-muted">
-              {config.enabled
-                ? 'Welcome cards and greetings will be delivered automatically whenever a member joins.'
-                : 'Turn this on to begin greeting incoming members.'}
-            </div>
+            <p className="text-xs sm:text-sm text-muted mt-0.5">
+              Automatically render banner graphics and deliver greetings when new members join.
+            </p>
           </div>
         </div>
 
         <Toggle
           checked={config.enabled}
-          onChange={(v) => setConfig(c => ({ ...c, enabled: v }))}
-          size="md"
+          onChange={v => setConfig(c => ({ ...c, enabled: v }))}
+          ariaLabel="Toggle Welcome Automation"
         />
       </div>
 
-      {/* Modern Workspace Navigation Tabs */}
-      <div className="nav-tabs">
+      {/* Navigation Tabs Bar */}
+      <div className="flex items-center gap-1 border-b border-border pb-1 overflow-x-auto no-scrollbar">
         <button
           type="button"
-          className={`nav-tab-item ${activeTab === 'card' ? 'active' : ''}`}
           onClick={() => setActiveTab('card')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0 ${
+            activeTab === 'card'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-surface'
+          }`}
         >
           <Palette size={16} />
           <span>Card Design & Layout</span>
@@ -348,8 +396,12 @@ export function Welcome() {
 
         <button
           type="button"
-          className={`nav-tab-item ${activeTab === 'message' ? 'active' : ''}`}
           onClick={() => setActiveTab('message')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0 ${
+            activeTab === 'message'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-surface'
+          }`}
         >
           <MessageSquare size={16} />
           <span>Channel & Text</span>
@@ -357,8 +409,12 @@ export function Welcome() {
 
         <button
           type="button"
-          className={`nav-tab-item ${activeTab === 'autorole' ? 'active' : ''}`}
-          onClick={() => setActiveTab('autorole')}
+          onClick={() => setActiveTab('roles')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0 ${
+            activeTab === 'roles'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-surface'
+          }`}
         >
           <Shield size={16} />
           <span>Auto-Roles on Join</span>
@@ -366,19 +422,23 @@ export function Welcome() {
 
         <button
           type="button"
-          className={`nav-tab-item ${activeTab === 'leave' ? 'active' : ''}`}
           onClick={() => setActiveTab('leave')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0 ${
+            activeTab === 'leave'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-muted hover:text-main hover:bg-surface'
+          }`}
         >
           <LogOut size={16} />
           <span>Leave Alerts</span>
         </button>
       </div>
 
-      {/* TAB 1: CARD DESIGN & LAYOUT */}
+      {/* TAB 1: CARD DESIGN & LIVE PREVIEW */}
       {activeTab === 'card' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-          {/* Left Column: Card Options */}
-          <div className="flex flex-col gap-5">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+          {/* Left Column: Configuration Controls (7 Cols) */}
+          <div className="lg:col-span-6 xl:col-span-7 flex flex-col gap-5">
             {/* Style Selector */}
             <Card>
               <CardHeader>
@@ -392,23 +452,34 @@ export function Welcome() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {CARD_STYLES.map(style => {
                     const isSelected = config.card_style === style.id;
+                    const StyleIcon = style.icon;
                     return (
                       <div
                         key={style.id}
                         onClick={() => setConfig({ ...config, card_style: style.id })}
-                        className={`p-3.5 rounded-lg border cursor-pointer transition-all flex flex-col justify-between ${
+                        className={`p-3.5 rounded-xl border cursor-pointer transition-all flex flex-col justify-between ${
                           isSelected
-                            ? 'bg-primary/10 border-primary shadow-sm ring-1 ring-primary/30'
-                            : 'bg-surface border-border hover:border-border-hover'
+                            ? 'bg-primary/10 border-primary ring-1 ring-primary/40 shadow-sm'
+                            : 'bg-surface border-border hover:border-border-hover hover:bg-surface-elevated'
                         }`}
                       >
-                        <div className="flex items-center justify-between mb-1.5">
-                          <span className="text-sm font-semibold text-main">{style.label}</span>
-                          {isSelected && <Check size={14} className="text-primary" />}
+                        <div>
+                          <div className="flex items-center justify-between mb-1.5">
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-6 h-6 rounded-md flex items-center justify-center text-white"
+                                style={{ backgroundColor: style.accent }}
+                              >
+                                <StyleIcon size={14} />
+                              </div>
+                              <span className="text-sm font-semibold text-main">{style.label}</span>
+                            </div>
+                            {isSelected && <Check size={15} className="text-primary font-bold" />}
+                          </div>
+                          <p className="text-xs text-muted leading-relaxed mt-1">
+                            {style.desc}
+                          </p>
                         </div>
-                        <p className="text-xs text-muted line-clamp-2 leading-relaxed">
-                          {style.desc}
-                        </p>
                       </div>
                     );
                   })}
@@ -416,16 +487,16 @@ export function Welcome() {
               </CardContent>
             </Card>
 
-            {/* Overlays & Elements */}
+            {/* Elements & Modes */}
             <Card>
               <CardHeader>
                 <div>
                   <CardTitle icon={Sliders}>Card Elements & Modes</CardTitle>
-                  <CardDescription>Toggle which details to render on the generated image.</CardDescription>
+                  <CardDescription>Fine-tune which visual layers are composited onto the banner.</CardDescription>
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-3.5">
                   <Toggle
                     label="Draw Member Avatar"
                     description="Renders the user profile photo on the card banner"
@@ -526,170 +597,259 @@ export function Welcome() {
             </Card>
           </div>
 
-          {/* Right Column: Live Interactive Card Mockup */}
-          <div className="lg:sticky lg:top-24">
+          {/* Right Column: Live Interactive Card Mockup (5 Cols) */}
+          <div className="lg:col-span-6 xl:col-span-5 lg:sticky lg:top-20">
             <Card>
               <CardHeader>
                 <div>
                   <CardTitle icon={Sparkles}>Live Graphic Preview</CardTitle>
                   <CardDescription>Real-time simulation of the 1024×500 rendered card.</CardDescription>
                 </div>
-                <Badge variant="neutral" size="sm">1024 × 500</Badge>
+                <Badge variant="neutral" size="sm">1024 × 500 px</Badge>
               </CardHeader>
               <CardContent>
-                <div className="relative w-full aspect-[1024/500] rounded-xl overflow-hidden bg-[#11141c] border border-white/10 shadow-lg flex items-center justify-center">
+                {/* 1024x500 Aspect Ratio Container */}
+                <div className="relative w-full aspect-[1024/500] min-h-[220px] rounded-xl overflow-hidden bg-[#090b10] border border-white/10 shadow-2xl flex items-center justify-center select-none">
                   {/* Background Layer */}
-                  {config.background_url && config.background_url !== 'none' && (
+                  {config.background_url && config.background_url !== 'none' ? (
                     <div
-                      className="absolute inset-0 bg-cover bg-center opacity-85"
+                      className="absolute inset-0 bg-cover bg-center"
                       style={{
                         backgroundImage: `url(${config.background_url})`,
                         filter: config.card_style === 'glass' ? 'blur(3px)' : 'none',
                       }}
                     />
-                  )}
+                  ) : null}
 
                   {/* 1. Legacy Neon Mockup */}
                   {config.card_style === 'legacy' && (
                     <div
-                      className="relative w-full h-full flex items-center px-8 sm:px-12 gap-6 sm:gap-8"
+                      className="relative w-full h-full flex items-center px-6 sm:px-10 gap-5 sm:gap-7 overflow-hidden"
                       style={{
                         background: config.background_url && config.background_url !== 'none'
-                          ? 'rgba(10, 12, 18, 0.78)'
-                          : 'linear-gradient(135deg, #0d0f1a 0%, #15102a 60%, #0a1128 100%)',
+                          ? 'rgba(10, 12, 20, 0.78)'
+                          : 'radial-gradient(circle at 20% 30%, #1e1b4b 0%, #0c0f1d 70%, #070913 100%)',
                       }}
                     >
-                      <div className="absolute top-[-10%] left-[15%] w-48 h-48 bg-purple-500/30 blur-3xl rounded-full" />
-                      <div className="absolute bottom-[-10%] right-[10%] w-56 h-56 bg-cyan-500/25 blur-3xl rounded-full" />
+                      {/* Ambient Neon Blobs */}
+                      <div className="absolute -top-10 -left-10 w-44 h-44 bg-purple-500/25 blur-3xl rounded-full pointer-events-none" />
+                      <div className="absolute -bottom-10 -right-10 w-52 h-52 bg-cyan-500/20 blur-3xl rounded-full pointer-events-none" />
 
+                      {/* Cyber grid lines */}
+                      <div
+                        className="absolute inset-0 opacity-[0.07] pointer-events-none"
+                        style={{
+                          backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
+                          backgroundSize: '24px 24px',
+                        }}
+                      />
+
+                      {/* Avatar */}
                       {config.draw_avatar && (
-                        <div className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-gradient-to-tr from-purple-500 to-blue-500 p-1 shadow-lg shrink-0 z-10">
-                          <div className="w-full h-full rounded-full bg-gray-900 flex items-center justify-center text-white text-2xl">
-                            <User size={36} />
+                        <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-gradient-to-tr from-purple-500 via-indigo-500 to-cyan-400 p-[2.5px] shadow-[0_0_20px_rgba(168,85,247,0.4)] shrink-0 z-10">
+                          <div className="w-full h-full rounded-full bg-gray-950 flex items-center justify-center text-white">
+                            <User size={30} className="text-cyan-300" />
                           </div>
+                          <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-emerald-500 border-2 border-gray-950 shadow" />
                         </div>
                       )}
 
-                      {config.draw_text && (
-                        <div className="relative z-10">
-                          <div className="text-[11px] sm:text-xs font-bold tracking-widest text-cyan-400 uppercase mb-1">
-                            Welcome to the Server
+                      {/* Text */}
+                      {config.draw_text ? (
+                        <div className="relative z-10 min-w-0">
+                          <div className="text-[10px] sm:text-xs font-bold tracking-widest text-cyan-400 uppercase mb-0.5 flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 inline-block animate-pulse" />
+                            WELCOME TO THE SERVER
                           </div>
-                          <div className="text-xl sm:text-2xl font-extrabold text-white leading-tight mb-2">
+                          <div className="text-lg sm:text-2xl font-extrabold text-white leading-tight truncate drop-shadow-md">
                             NewUser#0001
                           </div>
-                          <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-sm px-2.5 py-1 rounded-full text-xs text-gray-200">
+                          <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-md px-2.5 py-0.5 rounded-full text-[11px] text-gray-200 mt-2 border border-white/15">
                             <span>Member #1,234</span>
-                            {config.show_guild_icon && <span>• Server</span>}
+                            {config.show_guild_icon && (
+                              <span className="flex items-center gap-1 text-cyan-300">
+                                • <Globe size={11} /> Community
+                              </span>
+                            )}
                           </div>
                         </div>
-                      )}
+                      ) : !config.draw_avatar ? (
+                        <div className="text-xs text-muted/60 text-center w-full z-10">
+                          [Graphic banner background only — overlays disabled]
+                        </div>
+                      ) : null}
                     </div>
                   )}
 
                   {/* 2. Minimalist Glass Mockup */}
                   {config.card_style === 'glass' && (
                     <div
-                      className="relative w-full h-full flex flex-col items-center justify-center"
+                      className="relative w-full h-full flex flex-col items-center justify-center p-4 overflow-hidden"
                       style={{
                         background: config.background_url && config.background_url !== 'none'
-                          ? 'rgba(10, 12, 18, 0.75)'
-                          : 'linear-gradient(180deg, #13151f 0%, #171926 100%)',
+                          ? 'rgba(12, 14, 24, 0.72)'
+                          : 'linear-gradient(145deg, #0d111c 0%, #151928 50%, #0a0d16 100%)',
                       }}
                     >
-                      <div className="absolute top-[20%] w-56 h-32 bg-indigo-500/35 blur-3xl rounded-full" />
+                      {/* Frosted Center Glass Tile */}
+                      <div className="relative w-[88%] h-[82%] rounded-2xl bg-white/[0.04] border border-white/15 backdrop-blur-md shadow-2xl flex flex-col items-center justify-center p-4">
+                        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-indigo-400/50 to-transparent" />
 
-                      {config.draw_avatar && (
-                        <div className="relative w-20 h-20 sm:w-22 sm:h-22 rounded-full border-2 border-white/40 shadow-xl bg-gray-800 flex items-center justify-center text-white text-2xl mb-3 z-10">
-                          <User size={32} />
-                        </div>
-                      )}
+                        {config.draw_avatar && (
+                          <div className="relative w-16 h-16 sm:w-18 sm:h-18 rounded-full border-2 border-white/30 shadow-xl bg-gray-900/80 flex items-center justify-center text-white mb-2 z-10 ring-4 ring-indigo-500/20">
+                            <User size={28} className="text-indigo-300" />
+                          </div>
+                        )}
 
-                      {config.draw_text && (
-                        <div className="text-center z-10">
-                          <div className="text-lg sm:text-xl font-bold text-white mb-1">
-                            NewUser
+                        {config.draw_text ? (
+                          <div className="text-center z-10 min-w-0">
+                            <div className="text-base sm:text-lg font-bold text-white tracking-wide truncate">
+                              NewUser
+                            </div>
+                            <div className="text-[11px] sm:text-xs text-indigo-200/80 mt-0.5">
+                              Welcome to the server • Member #1,234
+                            </div>
+                            {config.show_guild_icon && (
+                              <div className="mt-1 text-[10px] text-white/50 flex items-center justify-center gap-1">
+                                <Globe size={10} /> Verified Discord Server
+                              </div>
+                            )}
                           </div>
-                          <div className="text-xs text-white/70">
-                            Welcome to the server • Member #1,234
+                        ) : !config.draw_avatar ? (
+                          <div className="text-xs text-muted/60 text-center w-full z-10">
+                            [Glass container with overlays disabled]
                           </div>
-                        </div>
-                      )}
+                        ) : null}
+                      </div>
                     </div>
                   )}
 
                   {/* 3. Ticket Pass Mockup */}
                   {config.card_style === 'ticket' && (
-                    <div className="relative w-[92%] h-[82%] bg-[#171922] rounded-xl border border-white/15 flex shadow-2xl overflow-hidden">
-                      <div className="flex-[3] p-4 sm:p-5 flex flex-col justify-between">
-                        <div className="flex justify-between items-center text-[10px]">
-                          <span className="font-bold text-pink-400 tracking-wider">VIP PASS • ENTRY</span>
-                          <span className="text-white/40 font-mono">#001234</span>
-                        </div>
-
-                        <div className="flex items-center gap-3 my-2">
-                          {config.draw_avatar && (
-                            <div className="w-12 h-12 rounded-lg bg-gray-800 border border-pink-500/50 flex items-center justify-center text-white shrink-0">
-                              <User size={22} />
-                            </div>
-                          )}
-                          {config.draw_text && (
-                            <div>
-                              <div className="text-base font-bold text-white leading-tight">NewUser</div>
-                              <div className="text-[11px] text-gray-400">Granted Member Access</div>
-                            </div>
-                          )}
-                        </div>
-
-                        <div className="flex justify-between border-t border-white/10 pt-2 text-[10px] text-gray-400">
-                          <span>GATE: 01</span>
-                          <span>DATE: TODAY</span>
-                        </div>
-                      </div>
-
-                      <div className="w-0 border-l border-dashed border-white/20 relative" />
-
-                      <div className="flex-1 bg-pink-500/10 p-3 flex flex-col items-center justify-between">
-                        <span className="text-[9px] font-bold text-pink-400 uppercase">ADMIT</span>
-                        <div className="flex gap-0.5 h-7 items-center">
-                          {[3, 2, 4, 1, 3, 2, 4, 2].map((w, idx) => (
-                            <div key={idx} className="bg-white/50" style={{ width: `${w}px`, height: '100%' }} />
-                          ))}
-                        </div>
-                        <span className="text-[8px] text-gray-400 font-mono">VALID</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 4. Cinematic Poster Mockup */}
-                  {config.card_style === 'cinematic' && (
                     <div
-                      className="relative w-full h-full flex flex-col justify-between p-6 sm:p-8"
+                      className="relative w-full h-full flex items-center justify-center p-3 sm:p-5"
                       style={{
                         background: config.background_url && config.background_url !== 'none'
-                          ? 'none'
-                          : 'linear-gradient(135deg, #0a0d16 0%, #040710 100%)',
+                          ? 'rgba(10, 11, 18, 0.75)'
+                          : 'linear-gradient(135deg, #12141f 0%, #0d0e17 100%)',
                       }}
                     >
-                      <div className="flex justify-between items-center z-10 text-[10px]">
-                        <span className="font-bold text-teal-400 tracking-wider border-b border-teal-400 pb-0.5">
-                          MEMBER No. 1,234
-                        </span>
-                        <span className="text-white/60 font-semibold tracking-wider">
-                          ARRIVAL RECEPTION
-                        </span>
-                      </div>
+                      <div className="relative w-[94%] h-[86%] bg-[#171926] rounded-xl border border-pink-500/30 flex shadow-2xl overflow-hidden">
+                        {/* Left section: Ticket Main */}
+                        <div className="flex-[3] p-3.5 sm:p-4 flex flex-col justify-between min-w-0">
+                          <div className="flex justify-between items-center text-[10px]">
+                            <span className="font-bold text-pink-400 tracking-wider">VIP BOARDING PASS</span>
+                            <span className="text-white/40 font-mono">#001234</span>
+                          </div>
 
-                      <div className="z-10">
-                        <div className="text-2xl sm:text-3xl font-black text-white uppercase tracking-tight">
-                          NEWUSER
+                          <div className="flex items-center gap-3 my-1">
+                            {config.draw_avatar && (
+                              <div className="w-11 h-11 rounded-lg bg-gray-900 border border-pink-500/40 flex items-center justify-center text-pink-300 shrink-0">
+                                <User size={20} />
+                              </div>
+                            )}
+                            {config.draw_text ? (
+                              <div className="min-w-0">
+                                <div className="text-sm sm:text-base font-bold text-white leading-tight truncate">
+                                  NewUser
+                                </div>
+                                <div className="text-[10px] sm:text-[11px] text-gray-400">
+                                  Granted Member Clearance
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="flex justify-between border-t border-white/10 pt-1.5 text-[9px] text-gray-400 font-mono">
+                            <span>GATE: 01</span>
+                            <span>DATE: TODAY</span>
+                            {config.show_guild_icon && <span>AUTH: OK</span>}
+                          </div>
                         </div>
-                        <div className="text-xs text-teal-300 mt-1">
-                          has joined the community
+
+                        {/* Perforated Divider */}
+                        <div className="w-0 border-l border-dashed border-white/20 relative">
+                          <div className="absolute -top-2 -left-1.5 w-3 h-3 rounded-full bg-[#090b10]" />
+                          <div className="absolute -bottom-2 -left-1.5 w-3 h-3 rounded-full bg-[#090b10]" />
+                        </div>
+
+                        {/* Right Stub: Barcode */}
+                        <div className="flex-1 bg-pink-500/10 p-2 sm:p-3 flex flex-col items-center justify-between">
+                          <span className="text-[8px] font-bold text-pink-400 uppercase tracking-widest">ADMIT</span>
+                          <div className="flex gap-0.5 h-6 items-center">
+                            {[2, 3, 1, 3, 2, 4, 1, 3, 2].map((w, idx) => (
+                              <div key={idx} className="bg-white/60" style={{ width: `${w}px`, height: '100%' }} />
+                            ))}
+                          </div>
+                          <span className="text-[8px] text-gray-400 font-mono">VALID</span>
                         </div>
                       </div>
                     </div>
                   )}
+
+                  {/* 4. Cinematic Poster Mockup (Fully Restored & Visually Rich!) */}
+                  {config.card_style === 'cinematic' && (
+                    <div
+                      className="relative w-full h-full flex flex-col justify-between overflow-hidden"
+                      style={{
+                        background: config.background_url && config.background_url !== 'none'
+                          ? 'rgba(4, 7, 14, 0.7)'
+                          : 'radial-gradient(circle at 75% 50%, #0d2827 0%, #08151c 45%, #04070e 100%)',
+                      }}
+                    >
+                      {/* Top Letterbox Cinema Bar */}
+                      <div className="relative z-10 w-full px-5 py-2 bg-black/60 backdrop-blur-sm border-b border-teal-500/20 flex justify-between items-center text-[9px] sm:text-[10px] tracking-wider text-teal-400 font-mono">
+                        <span className="font-bold border-b border-teal-400/80 pb-0.5">
+                          MEMBER NO. 1,234
+                        </span>
+                        <span className="text-white/60 uppercase">
+                          ARRIVAL RECEPTION TERMINAL
+                        </span>
+                      </div>
+
+                      {/* Center Stage Dramatic Area */}
+                      <div className="relative z-10 flex items-center px-6 sm:px-10 gap-5 my-auto">
+                        {config.draw_avatar && (
+                          <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-full border-2 border-teal-400/80 bg-gray-950 flex items-center justify-center text-teal-300 shadow-[0_0_30px_rgba(20,184,166,0.5)] shrink-0">
+                            <User size={30} />
+                          </div>
+                        )}
+
+                        {config.draw_text ? (
+                          <div className="min-w-0">
+                            <div className="text-xl sm:text-3xl font-black text-white uppercase tracking-tight truncate drop-shadow-lg">
+                              NEWUSER
+                            </div>
+                            <div className="text-xs sm:text-sm text-teal-300 font-medium tracking-wide uppercase mt-0.5">
+                              has joined the community
+                            </div>
+                          </div>
+                        ) : !config.draw_avatar ? (
+                          <div className="text-xs text-teal-400/60 text-center w-full">
+                            [Cinematic Letterbox Canvas • Overlays Disabled]
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {/* Bottom Letterbox Cinema Bar */}
+                      <div className="relative z-10 w-full px-5 py-2 bg-black/60 backdrop-blur-sm border-t border-teal-500/20 flex justify-between items-center text-[9px] text-gray-400 font-mono">
+                        <span>STATUS: AUTHORIZED</span>
+                        {config.show_guild_icon && <span>VERIFIED GUILD</span>}
+                        <span>SECURE ARRIVAL</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Watermark Tag */}
+                  <div className="absolute bottom-2 right-2.5 z-20 pointer-events-none opacity-40 hover:opacity-100 transition-opacity">
+                    <span className="text-[9px] font-mono text-white/70 bg-black/50 px-1.5 py-0.5 rounded">
+                      Live Simulation
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-3 text-center text-xs text-muted">
+                  Interactive real-time preview reflecting your selected visual style and element toggles.
                 </div>
               </CardContent>
             </Card>
@@ -700,7 +860,6 @@ export function Welcome() {
       {/* TAB 2: CHANNEL & MESSAGE TEXT */}
       {activeTab === 'message' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-          {/* Form */}
           <Card>
             <CardHeader>
               <div>
@@ -709,92 +868,71 @@ export function Welcome() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="form-group mb-5">
-                <label className="form-label">Welcome Text Channel</label>
+              <div className="form-group mb-4">
+                <label className="form-label">Welcome Channel</label>
                 <Select
                   value={config.channel_id}
                   onChange={v => setConfig({ ...config, channel_id: v })}
-                  options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
-                  placeholder="Select a channel..."
+                  options={channelOptions}
                   searchable
                 />
-                <span className="form-hint">
-                  The target Discord text channel where the welcome message will dispatch.
-                </span>
               </div>
 
               <div className="form-group mb-4">
                 <label className="form-label">Welcome Message Text</label>
                 <textarea
-                  className="input-field font-mono text-sm"
-                  rows={5}
+                  className="input-field min-h-[120px] font-mono text-sm leading-relaxed"
                   value={config.message}
                   onChange={e => setConfig({ ...config, message: e.target.value })}
-                  placeholder="Welcome to {server}, {user}! 🎉"
+                  placeholder="Welcome to the server, {user}! 🎉"
                 />
               </div>
 
               <div>
-                <label className="form-label mb-2 block">Dynamic Placeholders</label>
-                <div className="flex flex-wrap gap-1.5 mb-2">
+                <label className="form-label mb-2 block">Dynamic Text Variables</label>
+                <div className="grid grid-cols-2 gap-2">
                   {PLACEHOLDERS.map(p => (
                     <button
                       key={p.label}
                       type="button"
-                      className="badge badge-primary cursor-pointer hover:bg-primary/20"
-                      title={p.desc}
-                      onClick={() => setConfig(c => ({ ...c, message: (c.message + ' ' + p.label).trim() }))}
+                      onClick={() => setConfig(c => ({ ...c, message: `${c.message} ${p.label}` }))}
+                      className="p-2 rounded-lg bg-surface border border-border text-left hover:border-primary/50 transition-colors"
                     >
-                      + {p.label}
+                      <code className="text-xs font-bold text-primary block">{p.label}</code>
+                      <span className="text-[11px] text-muted">{p.desc}</span>
                     </button>
                   ))}
                 </div>
-                <span className="form-hint">
-                  Click any variable to append it to your message.
-                </span>
               </div>
             </CardContent>
           </Card>
 
-          {/* Discord Chat Mockup Preview */}
           <Card>
             <CardHeader>
               <div>
-                <CardTitle icon={Bot}>Discord Message Preview</CardTitle>
-                <CardDescription>Accurate preview of the Discord embed presentation.</CardDescription>
+                <CardTitle icon={Bot}>Discord Message Simulation</CardTitle>
+                <CardDescription>Approximation of the Discord client message delivery.</CardDescription>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="bg-[#313338] rounded-lg p-4 border border-white/5 flex gap-3.5">
-                <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white shrink-0">
-                  <Bot size={20} />
+              <div className="p-4 rounded-xl bg-[#1e1f22] border border-[#2b2d31] font-sans text-sm text-gray-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="font-bold text-white">{botName || 'GKR Bot'}</span>
+                  <span className="bg-[#5865f2] text-[10px] text-white font-semibold px-1 py-0.2 rounded">BOT</span>
+                  <span className="text-xs text-gray-400">Today at 12:00 PM</span>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline gap-2 mb-1">
-                    <span className="text-sm font-semibold text-white">{botName || 'GKR'} Bot</span>
-                    <span className="text-[10px] bg-[#5865F2] text-white px-1.5 py-0.5 rounded font-bold uppercase">APP</span>
-                    <span className="text-xs text-[#949ba4]">Today at 12:00 PM</span>
-                  </div>
-
-                  <div className="text-sm text-[#dbdee1] leading-relaxed whitespace-pre-wrap mb-3">
-                    {config.message
-                      .replace(/{user}/g, '@NewMember')
-                      .replace(/{username}/g, 'NewMember')
-                      .replace(/{server}/g, 'Family Server')
-                      .replace(/{count}/g, '1,234') || 'Type a message on the left to preview...'}
-                  </div>
-
-                  {/* Attachment card representation */}
-                  <div className="max-w-xs rounded-lg bg-[#1e1f22] p-3 border border-white/10 flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-primary/20 flex items-center justify-center text-primary">
-                      <ImageIcon size={18} />
-                    </div>
-                    <div>
-                      <div className="text-xs font-semibold text-white">welcome_card.png</div>
-                      <div className="text-[11px] text-[#949ba4]">{activeStyleMeta.label} Layout</div>
-                    </div>
-                  </div>
+                <div className="text-gray-100 whitespace-pre-line leading-relaxed mb-3">
+                  {config.message
+                    .replace('{user}', '@NewUser')
+                    .replace('{username}', 'NewUser')
+                    .replace('{server}', 'My Awesome Discord')
+                    .replace('{count}', '1,234')}
                 </div>
+                {!config.card_only && (
+                  <div className="text-xs text-indigo-400 bg-indigo-500/10 p-2 rounded border border-indigo-500/20">
+                    🖼️ Card banner graphic is attached to this greeting.
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -802,59 +940,51 @@ export function Welcome() {
       )}
 
       {/* TAB 3: AUTO-ROLES ON JOIN */}
-      {activeTab === 'autorole' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-          {/* Member Auto-Role */}
+      {activeTab === 'roles' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
           <Card>
             <CardHeader>
               <div>
-                <CardTitle icon={User}>Human Member Auto-Role</CardTitle>
-                <CardDescription>Assigned automatically to standard human users upon joining.</CardDescription>
+                <CardTitle icon={Shield}>Human Member Onboarding Role</CardTitle>
+                <CardDescription>Automatically granted to regular users upon joining.</CardDescription>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="form-group mb-0">
+              <div className="form-group">
+                <label className="form-label">Member Role</label>
                 <Select
                   value={config.welcome_role_id}
                   onChange={v => setConfig({ ...config, welcome_role_id: v })}
-                  options={[
-                    { value: '', label: 'None (Disabled)' },
-                    ...roles.map(r => ({ value: r.id, label: '@ ' + r.name }))
-                  ]}
-                  placeholder="Select a member role..."
+                  options={roleOptions}
                   searchable
                 />
-                <span className="form-hint">
-                  Ensure the bot's highest role is positioned above this role in Server Settings &gt; Roles.
-                </span>
               </div>
+              <p className="text-xs text-muted mt-2">
+                Make sure the bot's highest role is positioned above this role in Server Settings &gt; Roles.
+              </p>
             </CardContent>
           </Card>
 
-          {/* Bot Auto-Role */}
           <Card>
             <CardHeader>
               <div>
-                <CardTitle icon={Bot}>Bot Integration Auto-Role</CardTitle>
-                <CardDescription>Assigned automatically to newly authorized bot integrations.</CardDescription>
+                <CardTitle icon={Bot}>Bot Integration Role</CardTitle>
+                <CardDescription>Automatically granted to newly authorized bot applications.</CardDescription>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="form-group mb-0">
+              <div className="form-group">
+                <label className="form-label">Bot Role</label>
                 <Select
                   value={config.bot_role_id}
                   onChange={v => setConfig({ ...config, bot_role_id: v })}
-                  options={[
-                    { value: '', label: 'None (Disabled)' },
-                    ...roles.map(r => ({ value: r.id, label: '@ ' + r.name }))
-                  ]}
-                  placeholder="Select a bot role..."
+                  options={roleOptions}
                   searchable
                 />
-                <span className="form-hint">
-                  Useful for segregating bot accounts under an exclusive "Bots" role.
-                </span>
               </div>
+              <p className="text-xs text-muted mt-2">
+                Useful for categorizing automated integrations separate from regular members.
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -866,111 +996,111 @@ export function Welcome() {
           <Card>
             <CardHeader>
               <div>
-                <CardTitle icon={LogOut}>Departure Announcements</CardTitle>
-                <CardDescription>Broadcast an alert whenever a member leaves or gets kicked.</CardDescription>
+                <CardTitle icon={LogOut}>Departure Notifications</CardTitle>
+                <CardDescription>Post an announcement when a member leaves or is removed.</CardDescription>
               </div>
             </CardHeader>
             <CardContent>
-              <div className="mb-5">
+              <div className="mb-4">
                 <Toggle
-                  label="Enable Leave Announcements"
-                  description="Send departure notices to a dedicated channel"
+                  label="Enable Leave Alerts"
+                  description="Broadcast departure messages when members exit the server"
                   checked={config.leave_enabled}
-                  onChange={v => setConfig(c => ({ ...c, leave_enabled: v }))}
+                  onChange={v => setConfig({ ...config, leave_enabled: v })}
                 />
               </div>
 
               {config.leave_enabled && (
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-4 pt-4 border-t border-border">
                   <div className="form-group">
-                    <label className="form-label">Leave Announcement Channel</label>
+                    <label className="form-label">Departure Log Channel</label>
                     <Select
                       value={config.leave_channel_id}
                       onChange={v => setConfig({ ...config, leave_channel_id: v })}
-                      options={channels.map(ch => ({ value: ch.id, label: '# ' + ch.name }))}
-                      placeholder="Select a leave channel..."
+                      options={channelOptions}
                       searchable
                     />
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">Departure Message</label>
+                    <label className="form-label">Departure Message Text</label>
                     <textarea
-                      className="input-field font-mono text-sm"
-                      rows={3}
+                      className="input-field min-h-[100px] font-mono text-sm leading-relaxed"
                       value={config.leave_message}
                       onChange={e => setConfig({ ...config, leave_message: e.target.value })}
                       placeholder="**{user}** left the server."
                     />
                   </div>
 
-                  <div className="form-group mb-0">
-                    <label className="form-label">Optional Image / Banner URL</label>
+                  <div className="form-group">
+                    <label className="form-label">Departure Image URL (Optional)</label>
                     <input
                       type="text"
                       className="input-field"
+                      placeholder="https://example.com/farewell.gif"
                       value={config.leave_image_url}
                       onChange={e => setConfig({ ...config, leave_image_url: e.target.value })}
-                      placeholder="https://example.com/goodbye.gif"
                     />
                   </div>
                 </div>
               )}
             </CardContent>
           </Card>
-
-          {/* Test Leave Card */}
-          <Card>
-            <CardHeader>
-              <div>
-                <CardTitle icon={Send}>Test Departure Alert</CardTitle>
-                <CardDescription>Dispatch a simulated leave message to the configured channel.</CardDescription>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <p className="text-xs text-muted mb-4">
-                Sends a test leave alert containing your configured message and optional banner image directly to Discord.
-              </p>
-              <Button
-                variant="secondary"
-                icon={Send}
-                loading={testingLeave}
-                disabled={!config.leave_enabled || !config.leave_channel_id}
-                onClick={() => handleTest('leave')}
-              >
-                Send Test Leave Notice
-              </Button>
-            </CardContent>
-          </Card>
         </div>
       )}
 
-      {/* Sticky Bottom Action Bar (Unsaved Changes) */}
-      {isDirty && (
-        <div className="unsaved-changes-banner animate-fade-in">
-          <div className="flex items-center gap-2.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-warning animate-pulse" />
-            <span className="text-sm font-medium text-main">
-              You have unsaved changes in Welcome & Leave settings.
-            </span>
-          </div>
+      {/* Floating Save Actions Bar */}
+      <div className="sticky bottom-4 z-40">
+        <div className="p-3.5 sm:p-4 rounded-2xl bg-card/95 backdrop-blur-md border border-border shadow-2xl flex items-center justify-between gap-4 max-w-3xl mx-auto">
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={handleDiscard}>
-              Discard
-            </Button>
-            <Button variant="primary" size="sm" icon={Save} loading={saving} onClick={handleSave}>
+            {isDirty ? (
+              <span className="text-xs font-semibold text-warning flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-warning animate-pulse" />
+                Unsaved changes pending
+              </span>
+            ) : saved ? (
+              <span className="text-xs font-semibold text-success flex items-center gap-1.5">
+                <Check size={14} /> Settings saved successfully
+              </span>
+            ) : (
+              <span className="text-xs text-muted">All settings saved to server</span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2.5">
+            {isDirty && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleReset}
+                disabled={saving}
+              >
+                Discard
+              </Button>
+            )}
+
+            <Button
+              variant="primary"
+              size="sm"
+              icon={Save}
+              loading={saving}
+              onClick={handleSave}
+              disabled={!isDirty && !saving}
+            >
               Save Changes
             </Button>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Sync Servers Modal */}
       {syncOpen && (
         <SyncModal
-          featureName="Welcome"
-          config={config}
+          isOpen={syncOpen}
           onClose={() => setSyncOpen(false)}
+          sourceGuildId={guildId}
+          featureKey="welcome"
+          featureTitle="Welcome & Leave Studio"
         />
       )}
     </div>
