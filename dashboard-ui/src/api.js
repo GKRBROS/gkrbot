@@ -20,7 +20,17 @@ api.interceptors.request.use((config) => {
 // Clear it from storage and redirect to the login page so the user
 // re-authenticates cleanly instead of getting stuck in a broken state.
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Vercel rewrites unknown /api paths to index.html (HTTP 200). That means
+    // VITE_API_URL is missing or wrong and the bot API was never reached.
+    const type = String(response.headers?.['content-type'] || '');
+    if (type.includes('text/html') || (typeof response.data === 'string' && response.data.trim().startsWith('<'))) {
+      const err = new Error('API returned HTML instead of JSON. Set VITE_API_URL to your bot API URL and redeploy.');
+      err.response = { status: 502, data: { error: err.message } };
+      return Promise.reject(err);
+    }
+    return response;
+  },
   (error) => {
     if (error.response?.status === 401) {
       const currentToken = localStorage.getItem('bot_dashboard_token');

@@ -97,6 +97,7 @@ export function Welcome() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
+  const [channelsError, setChannelsError] = useState('');
   const [syncOpen, setSyncOpen] = useState(false);
 
   // Test state
@@ -128,16 +129,20 @@ export function Welcome() {
   const [savedConfig, setSavedConfig] = useState(null);
 
   const fetchData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [welcomeRes, channelsRes, rolesRes] = await Promise.all([
-        api.get(`/guilds/${guildId}/welcome`),
-        api.get(`/guilds/${guildId}/channels`),
-        api.get(`/guilds/${guildId}/roles`).catch(() => ({ data: { roles: [] } })),
-      ]);
+    setLoading(true);
+    setError('');
+    setChannelsError('');
 
-      if (welcomeRes.data.config) {
-        const c = welcomeRes.data.config;
+    // Each request is independent so one failure never blanks the others.
+    const [welcomeRes, channelsRes, rolesRes] = await Promise.allSettled([
+      api.get(`/guilds/${guildId}/welcome`),
+      api.get(`/guilds/${guildId}/channels`),
+      api.get(`/guilds/${guildId}/roles`),
+    ]);
+
+    if (welcomeRes.status === 'fulfilled') {
+      const c = welcomeRes.value.data?.config;
+      if (c) {
         const normalized = {
           enabled: c.enabled ?? false,
           channel_id: c.channel_id || '',
@@ -161,16 +166,40 @@ export function Welcome() {
         setConfig(normalized);
         setSavedConfig(normalized);
       }
-
-      setChannels(channelsRes.data.channels || []);
-      setRoles(rolesRes.data.roles || []);
-      setError('');
-    } catch (err) {
-      console.error('Failed to load welcome configuration', err);
-      setError('Failed to load configuration. Please try again.');
-    } finally {
-      setLoading(false);
+    } else {
+      console.error('Failed to load welcome configuration', welcomeRes.reason);
+      setError(
+        welcomeRes.reason?.response?.data?.error ||
+        welcomeRes.reason?.message ||
+        'Failed to load configuration. Please try again.'
+      );
     }
+
+    if (channelsRes.status === 'fulfilled') {
+      const d = channelsRes.value.data;
+      const list = Array.isArray(d) ? d : (d?.channels || []);
+      setChannels(list);
+      if (!list.length) {
+        setChannelsError('Bot sees no channels in this server. Check the bot is in the server and has View Channels permission.');
+      }
+    } else {
+      console.error('Failed to load channels', channelsRes.reason);
+      setChannels([]);
+      setChannelsError(
+        channelsRes.reason?.response?.data?.error ||
+        channelsRes.reason?.message ||
+        'Failed to load channels.'
+      );
+    }
+
+    if (rolesRes.status === 'fulfilled') {
+      const d = rolesRes.value.data;
+      setRoles(Array.isArray(d) ? d : (d?.roles || []));
+    } else {
+      setRoles([]);
+    }
+
+    setLoading(false);
   }, [guildId]);
 
   useEffect(() => {
@@ -268,7 +297,14 @@ export function Welcome() {
     }
   };
 
-  const textChannels = channels.filter(c => c.type === 0 || c.type === 'text');
+  // Accept numeric (0 text, 5 announcement) and string types; keep channels with no type.
+  const isTextChannel = c => {
+    const t = c.type;
+    if (t === undefined || t === null) return true;
+    if (typeof t === 'number' || /^\d+$/.test(String(t))) return [0, 5].includes(Number(t));
+    return /text|news|announ/i.test(String(t));
+  };
+  const textChannels = channels.filter(isTextChannel);
   const channelOptions = [
     { value: '', label: 'Select a channel...' },
     ...textChannels.map(c => ({ value: c.id, label: `#${c.name}` }))
@@ -885,6 +921,12 @@ export function Welcome() {
                   options={channelOptions}
                   searchable
                 />
+                {channelsError && (
+                  <div className="flex items-center justify-between gap-3 mt-2! text-xs text-danger">
+                    <span>{channelsError}</span>
+                    <button type="button" onClick={fetchData} className="underline shrink-0">Retry</button>
+                  </div>
+                )}
               </div>
 
               <div className="form-group mb-4!">
@@ -1029,6 +1071,12 @@ export function Welcome() {
                       options={channelOptions}
                       searchable
                     />
+                    {channelsError && (
+                      <div className="flex items-center justify-between gap-3 mt-2! text-xs text-danger">
+                        <span>{channelsError}</span>
+                        <button type="button" onClick={fetchData} className="underline shrink-0">Retry</button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="form-group">
