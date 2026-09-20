@@ -439,6 +439,20 @@ function DiscordWelcomePreview({ config, botName, bg, onBgError }) {
     </ScaledCanvas>
   );
 
+  // Card Only: the bot posts the image as a plain attachment — no embed box at all.
+  if (cardOnly) {
+    return (
+      <div className="p-4! rounded-xl bg-[#313338] border border-[#26272b] font-sans text-sm text-gray-200">
+        <div className="flex items-center gap-2 mb-1.5!">
+          <span className="font-bold text-white">{botName || 'GKR Bot'}</span>
+          <span className="bg-[#5865f2] text-[10px] text-white font-semibold px-1! py-0.5! rounded">BOT</span>
+          <span className="text-xs text-gray-400">Today at 12:00 PM</span>
+        </div>
+        <div className="max-w-[400px] rounded-lg overflow-hidden">{art}</div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4! rounded-xl bg-[#313338] border border-[#26272b] font-sans text-sm text-gray-200">
       <div className="flex items-center gap-2 mb-1.5!">

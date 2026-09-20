@@ -930,7 +930,7 @@ def render_card(style: str, **kwargs) -> io.BytesIO:
     return fn(**kwargs)
 
 
-MAX_GIF_FRAMES = 24
+MAX_GIF_FRAMES = 90
 GIF_MAX_BYTES = 7_500_000   # stay under Discord's upload limit
 
 
@@ -946,12 +946,18 @@ def _is_gif_file(path: Optional[str]) -> bool:
 
 
 def render_animated_card(style: str, gif_path: str, **kwargs) -> io.BytesIO:
-    """Render the chosen card style over EVERY frame of an animated GIF
-    background, so the avatar / text / overlays appear on the animation.
-    Frames are sampled (max MAX_GIF_FRAMES) and the result is shrunk until it
-    fits Discord's upload limit."""
+    """Draw the chosen card style over an animated GIF background WITHOUT
+    losing smoothness.
+
+    The card overlay (dimming, panels, avatar, text) is identical on every frame,
+    so it is rendered only twice — once over pure black, once over pure white.
+    From those two renders we recover the overlay colour and transparency, then
+    composite it over every original GIF frame (fast, pure PIL). All frames and
+    their original timing are kept, and one shared colour palette is used so the
+    animation does not flicker."""
     import shutil
     import tempfile
+    from PIL import ImageChops
 
     kwargs.pop("background_path", None)
     src = Image.open(gif_path)
@@ -959,36 +965,68 @@ def render_animated_card(style: str, gif_path: str, **kwargs) -> io.BytesIO:
     if n <= 1:
         return render_card(style, background_path=gif_path, **kwargs)
 
-    step = max(1, -(-n // MAX_GIF_FRAMES))  # ceil division
-    frames, durations = [], []
+    W, H = 1024, 500
     tmpdir = tempfile.mkdtemp(prefix="welcome_gif_")
     try:
-        idx = 0
-        while idx < n:
-            dur = 0
-            for j in range(idx, min(idx + step, n)):
-                src.seek(j)
-                dur += int(src.info.get("duration", 80) or 80)
-            src.seek(idx)
-            frame_path = os.path.join(tmpdir, f"f{idx}.png")
-            src.convert("RGBA").save(frame_path)
-            card = render_card(style, background_path=frame_path, **kwargs)
-            frames.append(Image.open(card).convert("RGB"))
-            durations.append(max(dur, 40))
-            idx += step
+        renders = {}
+        for tag, colour in (("black", (0, 0, 0)), ("white", (255, 255, 255))):
+            solid = os.path.join(tmpdir, f"{tag}.png")
+            Image.new("RGB", (W, H), colour).save(solid)
+            renders[tag] = Image.open(render_card(style, background_path=solid, **kwargs)).convert("RGB")
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-    out = io.BytesIO()
-    for size in ((896, 438), (768, 375), (640, 313), (512, 250)):
-        resized = [f.resize(size, Image.Resampling.LANCZOS) for f in frames]
-        out = io.BytesIO()
-        resized[0].save(
-            out, format="GIF", save_all=True, append_images=resized[1:],
-            duration=durations, loop=0, disposal=2,
+    overlay = renders["black"]                                    # colour * coverage
+    trans = ImageChops.subtract(renders["white"], renders["black"]).convert("L")  # 1 - coverage
+
+    # Frame selection: keep every frame unless the GIF is huge
+    step = max(1, -(-n // MAX_GIF_FRAMES))
+    idxs = list(range(0, n, step))
+    durs = []
+    for i in idxs:
+        d = 0
+        for j in range(i, min(i + step, n)):
+            src.seek(j)
+            d += int(src.info.get("duration", 80) or 80)
+        durs.append(max(d, 20))
+
+    def build(size, frame_idxs, frame_durs) -> io.BytesIO:
+        cb = overlay.resize(size, Image.Resampling.LANCZOS)
+        tr = trans.resize(size, Image.Resampling.LANCZOS).convert("RGB")
+        frames = []
+        for i in frame_idxs:
+            src.seek(i)
+            f = ImageOps.fit(src.convert("RGB"), size, Image.Resampling.LANCZOS)
+            frames.append(ImageChops.add(ImageChops.multiply(f, tr), cb))
+
+        # One shared palette (built from a sample of frames) => no flicker
+        pick = frames[:: max(1, len(frames) // 8)][:8]
+        tw, th = max(1, size[0] // 2), max(1, size[1] // 2)
+        mosaic = Image.new("RGB", (tw, th * len(pick)))
+        for k, fr in enumerate(pick):
+            mosaic.paste(fr.resize((tw, th), Image.Resampling.BILINEAR), (0, k * th))
+        pal = mosaic.quantize(colors=255, method=Image.Quantize.MEDIANCUT)
+        pframes = [fr.quantize(palette=pal, dither=Image.Dither.NONE) for fr in frames]
+
+        buf = io.BytesIO()
+        pframes[0].save(
+            buf, format="GIF", save_all=True, append_images=pframes[1:],
+            duration=frame_durs, loop=0, disposal=1, optimize=False,
         )
+        return buf
+
+    sizes = [(1024, 500), (896, 438), (768, 375), (640, 313), (512, 250)]
+    start = 0 if len(idxs) <= 30 else (1 if len(idxs) <= 60 else 2)
+    out = None
+    for size in sizes[start:]:
+        out = build(size, idxs, durs)
         if out.tell() <= GIF_MAX_BYTES:
             break
+    else:
+        # Still too big: drop every second frame (timing preserved)
+        half_idx = idxs[::2]
+        half_dur = [durs[i] + (durs[i + 1] if i + 1 < len(durs) else 0) for i in range(0, len(durs), 2)]
+        out = build(sizes[-1], half_idx, half_dur)
     out.seek(0)
     return out
 
@@ -1069,12 +1107,11 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
     # bare embed containing only the image, no author row/description/
     # fields/footer, and no "{member} welcome!" content line.
     if config.card_only:
-        card_embed = discord.Embed(color=0x8250FF)
-        card_embed.set_image(url=image_url)
+        # Just the image posted as a normal attachment — no embed, no text.
         try:
-            await channel.send(embed=card_embed, file=discord_file)
+            await channel.send(file=discord_file)
         except discord.Forbidden:
-            print(f"[Welcome] Missing Send Messages / Embed Links / Attach Files in #{channel.name}")
+            print(f"[Welcome] Missing Send Messages / Attach Files in #{channel.name}")
             raise
         return
 
