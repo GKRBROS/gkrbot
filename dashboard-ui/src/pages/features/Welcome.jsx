@@ -282,7 +282,7 @@ export function Welcome() {
   const activeStyleMeta = CARD_STYLES.find(s => s.id === config.card_style) || CARD_STYLES[0];
 
   return (
-    <div className="flex flex-col gap-6 animate-fade-in pb-28 sm:pb-32">
+    <div className="flex flex-col gap-6 animate-fade-in pb-28! sm:pb-32!">
       {/* Top Page Header */}
       <PageHeader
         title="Welcome & Leave Studio"
@@ -317,11 +317,10 @@ export function Welcome() {
 
       {/* Inline Notifications */}
       {testNotice && (
-        <div className={`p-4 rounded-xl flex items-center justify-between gap-3 text-sm border ${
-          testNotice.type === 'success'
+        <div className={`p-4! rounded-xl flex items-center justify-between gap-3 text-sm border ${testNotice.type === 'success'
             ? 'bg-success/10 border-success/30 text-success'
             : 'bg-danger/10 border-danger/30 text-danger'
-        }`}>
+          }`}>
           <div className="flex items-center gap-2">
             {testNotice.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
             <span>{testNotice.message}</span>
@@ -337,7 +336,7 @@ export function Welcome() {
       )}
 
       {error && (
-        <div className="p-4 rounded-xl bg-danger/10 border border-danger/30 text-danger flex items-center justify-between text-sm">
+        <div className="p-4! rounded-xl bg-danger/10 border border-danger/30 text-danger flex items-center justify-between text-sm">
           <div className="flex items-center gap-2">
             <AlertCircle size={16} />
             <span>{error}</span>
@@ -349,15 +348,13 @@ export function Welcome() {
       )}
 
       {/* Main Feature Toggle Banner */}
-      <div className={`p-4 sm:p-5 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
-        config.enabled
+      <div className={`p-4! sm:p-5! rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${config.enabled
           ? 'bg-primary/10 border-primary/30 shadow-sm'
           : 'bg-surface border-border'
-      }`}>
+        }`}>
         <div className="flex items-center gap-3.5">
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${
-            config.enabled ? 'bg-primary text-white shadow-md' : 'bg-card text-muted border border-border'
-          }`}>
+          <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${config.enabled ? 'bg-primary text-white shadow-md' : 'bg-card text-muted border border-border'
+            }`}>
             <UserPlus size={20} />
           </div>
           <div>
@@ -367,7 +364,7 @@ export function Welcome() {
                 {config.enabled ? 'Enabled' : 'Paused'}
               </Badge>
             </div>
-            <p className="text-xs sm:text-sm text-muted mt-0.5">
+            <p className="text-xs sm:text-sm text-muted mt-0.5!">
               Automatically render banner graphics and deliver greetings when new members join.
             </p>
           </div>
@@ -381,15 +378,14 @@ export function Welcome() {
       </div>
 
       {/* Navigation Tabs Bar */}
-      <div className="flex items-center gap-1 border-b border-border pb-1 overflow-x-auto no-scrollbar">
+      <div className="flex items-center gap-1 border-b border-border pb-1! overflow-x-auto no-scrollbar">
         <button
           type="button"
           onClick={() => setActiveTab('card')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0 ${
-            activeTab === 'card'
+          className={`flex items-center gap-2 px-4! py-2.5! rounded-lg text-sm font-medium transition-all shrink-0 ${activeTab === 'card'
               ? 'bg-primary text-white shadow-sm'
               : 'text-muted hover:text-main hover:bg-surface'
-          }`}
+            }`}
         >
           <Palette size={16} />
           <span>Card Design & Layout</span>
@@ -398,11 +394,10 @@ export function Welcome() {
         <button
           type="button"
           onClick={() => setActiveTab('message')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0 ${
-            activeTab === 'message'
+          className={`flex items-center gap-2 px-4! py-2.5! rounded-lg text-sm font-medium transition-all shrink-0 ${activeTab === 'message'
               ? 'bg-primary text-white shadow-sm'
               : 'text-muted hover:text-main hover:bg-surface'
-          }`}
+            }`}
         >
           <MessageSquare size={16} />
           <span>Channel & Text</span>
@@ -411,11 +406,10 @@ export function Welcome() {
         <button
           type="button"
           onClick={() => setActiveTab('roles')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0 ${
-            activeTab === 'roles'
+          className={`flex items-center gap-2 px-4! py-2.5! rounded-lg text-sm font-medium transition-all shrink-0 ${activeTab === 'roles'
               ? 'bg-primary text-white shadow-sm'
               : 'text-muted hover:text-main hover:bg-surface'
-          }`}
+            }`}
         >
           <Shield size={16} />
           <span>Auto-Roles on Join</span>
@@ -424,11 +418,10 @@ export function Welcome() {
         <button
           type="button"
           onClick={() => setActiveTab('leave')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all shrink-0 ${
-            activeTab === 'leave'
+          className={`flex items-center gap-2 px-4! py-2.5! rounded-lg text-sm font-medium transition-all shrink-0 ${activeTab === 'leave'
               ? 'bg-primary text-white shadow-sm'
               : 'text-muted hover:text-main hover:bg-surface'
-          }`}
+            }`}
         >
           <LogOut size={16} />
           <span>Leave Alerts</span>
@@ -461,14 +454,13 @@ export function Welcome() {
                         role="button"
                         tabIndex={0}
                         onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setConfig({ ...config, card_style: style.id })}
-                        className={`p-3.5 sm:p-4 rounded-xl border cursor-pointer transition-all flex flex-col justify-between select-none ${
-                          isSelected
+                        className={`p-3.5! sm:p-4! rounded-xl border cursor-pointer transition-all flex flex-col justify-between select-none ${isSelected
                             ? 'bg-primary/10 border-primary ring-1 ring-primary/40 shadow-sm'
                             : 'bg-surface border-border hover:border-border-hover hover:bg-card'
-                        }`}
+                          }`}
                       >
                         <div>
-                          <div className="flex items-start justify-between gap-2 mb-1.5">
+                          <div className="flex items-start justify-between gap-2 mb-1.5!">
                             <div className="flex items-center gap-2.5 min-w-0">
                               <div
                                 className="w-7 h-7 rounded-lg flex items-center justify-center text-white shrink-0 shadow-sm"
@@ -489,7 +481,7 @@ export function Welcome() {
                               <div className="w-5 h-5 rounded-full border border-border shrink-0" />
                             )}
                           </div>
-                          <p className="text-xs text-muted leading-relaxed mt-2 line-clamp-2">
+                          <p className="text-xs text-muted leading-relaxed mt-2! line-clamp-2">
                             {style.desc}
                           </p>
                         </div>
@@ -558,7 +550,7 @@ export function Welcome() {
               </CardHeader>
               <CardContent>
                 {config.has_background && (
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-success/10 border border-success/25 mb-4 text-xs">
+                  <div className="flex items-center justify-between p-3! rounded-lg bg-success/10 border border-success/25 mb-4! text-xs">
                     <span className="text-success font-medium flex items-center gap-1.5">
                       <Check size={14} /> Custom server background active
                     </span>
@@ -572,7 +564,7 @@ export function Welcome() {
                   </div>
                 )}
 
-                <div className="form-group mb-3">
+                <div className="form-group mb-3!">
                   <input
                     type="text"
                     className="input-field"
@@ -583,7 +575,7 @@ export function Welcome() {
                 </div>
 
                 <div>
-                  <span className="text-xs text-muted block mb-2">Or select a curated preset:</span>
+                  <span className="text-xs text-muted block mb-2!">Or select a curated preset:</span>
                   <div className="flex flex-wrap gap-2 items-center">
                     {PRESET_BACKGROUNDS.map(p => (
                       <button
@@ -639,7 +631,7 @@ export function Welcome() {
                   {/* 1. Legacy Neon Mockup */}
                   {config.card_style === 'legacy' && (
                     <div
-                      className="relative w-full h-full flex items-center px-4 sm:px-8 gap-3.5 sm:gap-6 overflow-hidden"
+                      className="relative w-full h-full flex items-center px-4! sm:px-8! gap-3.5 sm:gap-6 overflow-hidden"
                       style={{
                         background: config.background_url && config.background_url !== 'none'
                           ? 'rgba(10, 12, 20, 0.78)'
@@ -661,7 +653,7 @@ export function Welcome() {
 
                       {/* Avatar */}
                       {config.draw_avatar && (
-                        <div className="relative w-13 h-13 sm:w-18 sm:h-18 rounded-full bg-gradient-to-tr from-purple-500 via-indigo-500 to-cyan-400 p-[2px] shadow-[0_0_20px_rgba(168,85,247,0.4)] shrink-0 z-10">
+                        <div className="relative w-13 h-13 sm:w-18 sm:h-18 rounded-full bg-gradient-to-tr from-purple-500 via-indigo-500 to-cyan-400 p-[2px]! shadow-[0_0_20px_rgba(168,85,247,0.4)] shrink-0 z-10">
                           <div className="w-full h-full rounded-full bg-gray-950 flex items-center justify-center text-white">
                             <User size={26} className="text-cyan-300" />
                           </div>
@@ -672,14 +664,14 @@ export function Welcome() {
                       {/* Text */}
                       {config.draw_text ? (
                         <div className="relative z-10 min-w-0 flex-1">
-                          <div className="text-[9px] sm:text-[11px] font-bold tracking-widest text-cyan-400 uppercase mb-0.5 flex items-center gap-1.5">
+                          <div className="text-[9px] sm:text-[11px] font-bold tracking-widest text-cyan-400 uppercase mb-0.5! flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 inline-block animate-pulse shrink-0" />
                             <span className="truncate">WELCOME TO THE SERVER</span>
                           </div>
                           <div className="text-base sm:text-xl font-extrabold text-white leading-tight truncate drop-shadow-md">
                             NewUser#0001
                           </div>
-                          <div className="inline-flex items-center gap-1.5 bg-white/10 backdrop-blur-md px-2.5 py-0.5 rounded-full text-[10px] sm:text-[11px] text-gray-200 mt-1.5 border border-white/15 max-w-full">
+                          <div className="inline-flex items-center gap-1.5 bg-white/10 backdrop-blur-md px-2.5! py-0.5! rounded-full text-[10px] sm:text-[11px] text-gray-200 mt-1.5! border border-white/15 max-w-full">
                             <span className="shrink-0">Member #1,234</span>
                             {config.show_guild_icon && (
                               <span className="flex items-center gap-1 text-cyan-300 truncate">
@@ -699,7 +691,7 @@ export function Welcome() {
                   {/* 2. Minimalist Glass Mockup */}
                   {config.card_style === 'glass' && (
                     <div
-                      className="relative w-full h-full flex flex-col items-center justify-center p-3 sm:p-4 overflow-hidden"
+                      className="relative w-full h-full flex flex-col items-center justify-center p-3! sm:p-4! overflow-hidden"
                       style={{
                         background: config.background_url && config.background_url !== 'none'
                           ? 'rgba(12, 14, 24, 0.72)'
@@ -707,11 +699,11 @@ export function Welcome() {
                       }}
                     >
                       {/* Frosted Center Glass Tile */}
-                      <div className="relative w-[90%] max-w-[420px] rounded-2xl bg-white/[0.04] border border-white/15 backdrop-blur-md shadow-2xl flex flex-col items-center justify-center p-3 sm:p-4 text-center my-auto">
+                      <div className="relative w-[90%] max-w-[420px] rounded-2xl bg-white/[0.04] border border-white/15 backdrop-blur-md shadow-2xl flex flex-col items-center justify-center p-3! sm:p-4! text-center my-auto!">
                         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-indigo-400/50 to-transparent" />
 
                         {config.draw_avatar && (
-                          <div className="relative w-12 h-12 sm:w-16 sm:h-16 rounded-full border-2 border-white/30 shadow-xl bg-gray-900/80 flex items-center justify-center text-white mb-2 z-10 ring-4 ring-indigo-500/20 shrink-0">
+                          <div className="relative w-12 h-12 sm:w-16 sm:h-16 rounded-full border-2 border-white/30 shadow-xl bg-gray-900/80 flex items-center justify-center text-white mb-2! z-10 ring-4 ring-indigo-500/20 shrink-0">
                             <User size={24} className="text-indigo-300" />
                           </div>
                         )}
@@ -721,11 +713,11 @@ export function Welcome() {
                             <div className="text-sm sm:text-base font-bold text-white tracking-wide truncate">
                               NewUser
                             </div>
-                            <div className="text-[10px] sm:text-[11px] text-indigo-200/80 mt-0.5 truncate">
+                            <div className="text-[10px] sm:text-[11px] text-indigo-200/80 mt-0.5! truncate">
                               Welcome to the server • Member #1,234
                             </div>
                             {config.show_guild_icon && (
-                              <div className="mt-1 text-[9px] sm:text-[10px] text-white/50 flex items-center justify-center gap-1 truncate">
+                              <div className="mt-1! text-[9px] sm:text-[10px] text-white/50 flex items-center justify-center gap-1 truncate">
                                 <Globe size={10} className="shrink-0" /> <span className="truncate">Verified Discord Server</span>
                               </div>
                             )}
@@ -742,7 +734,7 @@ export function Welcome() {
                   {/* 3. Ticket Pass Mockup */}
                   {config.card_style === 'ticket' && (
                     <div
-                      className="relative w-full h-full flex items-center justify-center p-2.5 sm:p-4"
+                      className="relative w-full h-full flex items-center justify-center p-2.5! sm:p-4!"
                       style={{
                         background: config.background_url && config.background_url !== 'none'
                           ? 'rgba(10, 11, 18, 0.75)'
@@ -751,13 +743,13 @@ export function Welcome() {
                     >
                       <div className="relative w-[95%] h-[90%] bg-[#171926] rounded-xl border border-pink-500/30 flex shadow-2xl overflow-hidden">
                         {/* Left section: Ticket Main */}
-                        <div className="flex-[3] p-3 sm:p-3.5 flex flex-col justify-between min-w-0 h-full">
+                        <div className="flex-[3] p-3! sm:p-3.5! flex flex-col justify-between min-w-0 h-full">
                           <div className="flex justify-between items-center text-[9px] sm:text-[10px]">
                             <span className="font-bold text-pink-400 tracking-wider truncate">VIP BOARDING PASS</span>
-                            <span className="text-white/40 font-mono shrink-0 ml-2">#001234</span>
+                            <span className="text-white/40 font-mono shrink-0 ml-2!">#001234</span>
                           </div>
 
-                          <div className="flex items-center gap-2.5 my-1 min-w-0">
+                          <div className="flex items-center gap-2.5 my-1! min-w-0">
                             {config.draw_avatar && (
                               <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-lg bg-gray-900 border border-pink-500/40 flex items-center justify-center text-pink-300 shrink-0">
                                 <User size={18} />
@@ -775,7 +767,7 @@ export function Welcome() {
                             ) : null}
                           </div>
 
-                          <div className="flex justify-between border-t border-white/10 pt-1 text-[8px] sm:text-[9px] text-gray-400 font-mono gap-1 min-w-0 overflow-hidden">
+                          <div className="flex justify-between border-t border-white/10 pt-1! text-[8px] sm:text-[9px] text-gray-400 font-mono gap-1 min-w-0 overflow-hidden">
                             <span className="truncate">GATE: 01</span>
                             <span className="truncate">DATE: TODAY</span>
                             {config.show_guild_icon && <span className="truncate">AUTH: OK</span>}
@@ -789,7 +781,7 @@ export function Welcome() {
                         </div>
 
                         {/* Right Stub: Barcode */}
-                        <div className="flex-1 bg-pink-500/10 p-2 sm:p-2.5 flex flex-col items-center justify-between shrink-0 min-w-[56px] h-full">
+                        <div className="flex-1 bg-pink-500/10 p-2! sm:p-2.5! flex flex-col items-center justify-between shrink-0 min-w-[56px] h-full">
                           <span className="text-[7px] sm:text-[8px] font-bold text-pink-400 uppercase tracking-widest">ADMIT</span>
                           <div className="flex gap-0.5 h-5 sm:h-6 items-center">
                             {[2, 3, 1, 3, 2, 3, 1, 2].map((w, idx) => (
@@ -813,8 +805,8 @@ export function Welcome() {
                       }}
                     >
                       {/* Top Letterbox Cinema Bar */}
-                      <div className="relative z-10 w-full px-3 sm:px-4 py-1.5 bg-black/75 backdrop-blur-sm border-b border-teal-500/20 flex justify-between items-center text-[8px] sm:text-[9px] tracking-wider text-teal-400 font-mono gap-2 min-w-0 overflow-hidden">
-                        <span className="font-bold border-b border-teal-400/80 pb-0.5 truncate">
+                      <div className="relative z-10 w-full px-3! sm:px-4! py-1.5! bg-black/75 backdrop-blur-sm border-b border-teal-500/20 flex justify-between items-center text-[8px] sm:text-[9px] tracking-wider text-teal-400 font-mono gap-2 min-w-0 overflow-hidden">
+                        <span className="font-bold border-b border-teal-400/80 pb-0.5! truncate">
                           MEMBER NO. 1,234
                         </span>
                         <span className="text-white/60 uppercase truncate">
@@ -823,7 +815,7 @@ export function Welcome() {
                       </div>
 
                       {/* Center Stage Dramatic Area */}
-                      <div className="relative z-10 flex items-center px-4 sm:px-8 gap-3 sm:gap-5 my-auto min-w-0">
+                      <div className="relative z-10 flex items-center px-4! sm:px-8! gap-3 sm:gap-5 my-auto! min-w-0">
                         {config.draw_avatar && (
                           <div className="relative w-13 h-13 sm:w-16 sm:h-16 rounded-full border-2 border-teal-400/80 bg-gray-950 flex items-center justify-center text-teal-300 shadow-[0_0_24px_rgba(20,184,166,0.4)] shrink-0">
                             <User size={24} />
@@ -835,7 +827,7 @@ export function Welcome() {
                             <div className="text-base sm:text-xl font-black text-white uppercase tracking-tight truncate drop-shadow-lg">
                               NEWUSER
                             </div>
-                            <div className="text-[10px] sm:text-xs text-teal-300 font-medium tracking-wide uppercase mt-0.5 truncate">
+                            <div className="text-[10px] sm:text-xs text-teal-300 font-medium tracking-wide uppercase mt-0.5! truncate">
                               has joined the community
                             </div>
                           </div>
@@ -847,7 +839,7 @@ export function Welcome() {
                       </div>
 
                       {/* Bottom Letterbox Cinema Bar */}
-                      <div className="relative z-10 w-full px-3 sm:px-4 py-1.5 bg-black/75 backdrop-blur-sm border-t border-teal-500/20 flex justify-between items-center text-[8px] sm:text-[9px] text-gray-400 font-mono gap-2 min-w-0 overflow-hidden">
+                      <div className="relative z-10 w-full px-3! sm:px-4! py-1.5! bg-black/75 backdrop-blur-sm border-t border-teal-500/20 flex justify-between items-center text-[8px] sm:text-[9px] text-gray-400 font-mono gap-2 min-w-0 overflow-hidden">
                         <span className="truncate">STATUS: AUTHORIZED</span>
                         {config.show_guild_icon && <span className="hidden sm:inline truncate">VERIFIED GUILD</span>}
                         <span className="truncate">SECURE ARRIVAL</span>
@@ -858,14 +850,14 @@ export function Welcome() {
                   {/* Watermark Tag */}
                   {config.card_style !== 'cinematic' && (
                     <div className="absolute top-2.5 right-2.5 z-20 pointer-events-none opacity-40 hover:opacity-100 transition-opacity">
-                      <span className="text-[9px] font-mono text-white/70 bg-black/50 px-1.5 py-0.5 rounded">
+                      <span className="text-[9px] font-mono text-white/70 bg-black/50 px-1.5! py-0.5! rounded">
                         Live Simulation
                       </span>
                     </div>
                   )}
                 </div>
 
-                <div className="mt-3 text-center text-xs text-muted">
+                <div className="mt-3! text-center text-xs text-muted">
                   Interactive real-time preview reflecting your selected visual style and element toggles.
                 </div>
               </CardContent>
@@ -885,7 +877,7 @@ export function Welcome() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="form-group mb-4">
+              <div className="form-group mb-4!">
                 <label className="form-label">Welcome Channel</label>
                 <Select
                   value={config.channel_id}
@@ -895,7 +887,7 @@ export function Welcome() {
                 />
               </div>
 
-              <div className="form-group mb-4">
+              <div className="form-group mb-4!">
                 <label className="form-label">Welcome Message Text</label>
                 <textarea
                   className="input-field min-h-[120px] font-mono text-sm leading-relaxed"
@@ -906,14 +898,14 @@ export function Welcome() {
               </div>
 
               <div>
-                <label className="form-label mb-2 block">Dynamic Text Variables</label>
+                <label className="form-label mb-2! block">Dynamic Text Variables</label>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {PLACEHOLDERS.map(p => (
                     <button
                       key={p.label}
                       type="button"
                       onClick={() => setConfig(c => ({ ...c, message: `${c.message} ${p.label}` }))}
-                      className="p-2 rounded-lg bg-surface border border-border text-left hover:border-primary/50 transition-colors"
+                      className="p-2! rounded-lg bg-surface border border-border text-left hover:border-primary/50 transition-colors"
                     >
                       <code className="text-xs font-bold text-primary block">{p.label}</code>
                       <span className="text-[11px] text-muted">{p.desc}</span>
@@ -932,13 +924,13 @@ export function Welcome() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="p-4 rounded-xl bg-[#1e1f22] border border-[#2b2d31] font-sans text-sm text-gray-200">
-                <div className="flex items-center gap-2 mb-2">
+              <div className="p-4! rounded-xl bg-[#1e1f22] border border-[#2b2d31] font-sans text-sm text-gray-200">
+                <div className="flex items-center gap-2 mb-2!">
                   <span className="font-bold text-white">{botName || 'GKR Bot'}</span>
-                  <span className="bg-[#5865f2] text-[10px] text-white font-semibold px-1 py-0.2 rounded">BOT</span>
+                  <span className="bg-[#5865f2] text-[10px] text-white font-semibold px-1! py-0.2! rounded">BOT</span>
                   <span className="text-xs text-gray-400">Today at 12:00 PM</span>
                 </div>
-                <div className="text-gray-100 whitespace-pre-line leading-relaxed mb-3 break-words">
+                <div className="text-gray-100 whitespace-pre-line leading-relaxed mb-3! break-words">
                   {config.message
                     .replace('{user}', '@NewUser')
                     .replace('{username}', 'NewUser')
@@ -946,7 +938,7 @@ export function Welcome() {
                     .replace('{count}', '1,234')}
                 </div>
                 {!config.card_only && (
-                  <div className="text-xs text-indigo-400 bg-indigo-500/10 p-2 rounded border border-indigo-500/20">
+                  <div className="text-xs text-indigo-400 bg-indigo-500/10 p-2! rounded border border-indigo-500/20">
                     🖼️ Card banner graphic is attached to this greeting.
                   </div>
                 )}
@@ -976,7 +968,7 @@ export function Welcome() {
                   searchable
                 />
               </div>
-              <p className="text-xs text-muted mt-2">
+              <p className="text-xs text-muted mt-2!">
                 Make sure the bot's highest role is positioned above this role in Server Settings &gt; Roles.
               </p>
             </CardContent>
@@ -999,7 +991,7 @@ export function Welcome() {
                   searchable
                 />
               </div>
-              <p className="text-xs text-muted mt-2">
+              <p className="text-xs text-muted mt-2!">
                 Useful for categorizing automated integrations separate from regular members.
               </p>
             </CardContent>
@@ -1018,7 +1010,7 @@ export function Welcome() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="mb-4">
+              <div className="mb-4!">
                 <Toggle
                   label="Enable Leave Alerts"
                   description="Broadcast departure messages when members exit the server"
@@ -1028,7 +1020,7 @@ export function Welcome() {
               </div>
 
               {config.leave_enabled && (
-                <div className="flex flex-col gap-4 pt-4 border-t border-border">
+                <div className="flex flex-col gap-4 pt-4! border-t border-border">
                   <div className="form-group">
                     <label className="form-label">Departure Log Channel</label>
                     <Select
@@ -1073,13 +1065,13 @@ export function Welcome() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="p-4 rounded-xl bg-[#1e1f22] border border-[#2b2d31] font-sans text-sm text-gray-200">
-                <div className="flex items-center gap-2 mb-2">
+              <div className="p-4! rounded-xl bg-[#1e1f22] border border-[#2b2d31] font-sans text-sm text-gray-200">
+                <div className="flex items-center gap-2 mb-2!">
                   <span className="font-bold text-white">{botName || 'GKR Bot'}</span>
-                  <span className="bg-[#5865f2] text-[10px] text-white font-semibold px-1 py-0.2 rounded">BOT</span>
+                  <span className="bg-[#5865f2] text-[10px] text-white font-semibold px-1! py-0.2! rounded">BOT</span>
                   <span className="text-xs text-gray-400">Today at 12:00 PM</span>
                 </div>
-                <div className="text-gray-100 whitespace-pre-line leading-relaxed mb-3 break-words">
+                <div className="text-gray-100 whitespace-pre-line leading-relaxed mb-3! break-words">
                   {config.leave_message
                     .replace('{user}', 'DepartedMember')
                     .replace('{username}', 'DepartedMember')
@@ -1087,7 +1079,7 @@ export function Welcome() {
                     .replace('{count}', '1,233')}
                 </div>
                 {config.leave_image_url && (
-                  <div className="mt-2 rounded-lg overflow-hidden border border-white/10 max-h-48 bg-black/40">
+                  <div className="mt-2! rounded-lg overflow-hidden border border-white/10 max-h-48 bg-black/40">
                     <img
                       src={config.leave_image_url}
                       alt="Departure attachment preview"
@@ -1103,48 +1095,48 @@ export function Welcome() {
       )}
 
       {(isDirty || saving || saved) && (
-      <div className="sticky bottom-4 z-40 mt-8">
-        <div className="p-3.5 sm:p-4 rounded-2xl bg-card/95 backdrop-blur-md border border-border shadow-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 max-w-3xl mx-auto">
-          <div className="flex items-center gap-2">
-            {isDirty ? (
-              <span className="text-xs font-semibold text-warning flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-warning animate-pulse shrink-0" />
-                <span>Unsaved changes pending</span>
-              </span>
-            ) : saved ? (
-              <span className="text-xs font-semibold text-success flex items-center gap-1.5">
-                <Check size={14} className="shrink-0" /> <span>Settings saved successfully</span>
-              </span>
-            ) : (
-              <span className="text-xs text-muted">All settings saved to server</span>
-            )}
-          </div>
+        <div className="sticky bottom-4 z-40 mt-8!">
+          <div className="p-3.5! sm:p-4! rounded-2xl bg-card/95 backdrop-blur-md border border-border shadow-2xl flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 sm:gap-4 max-w-3xl mx-auto!">
+            <div className="flex items-center gap-2">
+              {isDirty ? (
+                <span className="text-xs font-semibold text-warning flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-warning animate-pulse shrink-0" />
+                  <span>Unsaved changes pending</span>
+                </span>
+              ) : saved ? (
+                <span className="text-xs font-semibold text-success flex items-center gap-1.5">
+                  <Check size={14} className="shrink-0" /> <span>Settings saved successfully</span>
+                </span>
+              ) : (
+                <span className="text-xs text-muted">All settings saved to server</span>
+              )}
+            </div>
 
-          <div className="flex items-center gap-2.5 justify-end">
-            {isDirty && (
+            <div className="flex items-center gap-2.5 justify-end">
+              {isDirty && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleReset}
+                  disabled={saving}
+                >
+                  Discard
+                </Button>
+              )}
+
               <Button
-                variant="ghost"
+                variant="primary"
                 size="sm"
-                onClick={handleReset}
-                disabled={saving}
+                icon={Save}
+                loading={saving}
+                onClick={handleSave}
+                disabled={!isDirty && !saving}
               >
-                Discard
+                Save Changes
               </Button>
-            )}
-
-            <Button
-              variant="primary"
-              size="sm"
-              icon={Save}
-              loading={saving}
-              onClick={handleSave}
-              disabled={!isDirty && !saving}
-            >
-              Save Changes
-            </Button>
+            </div>
           </div>
         </div>
-      </div>
       )}
 
       {/* Sync Servers Modal */}
