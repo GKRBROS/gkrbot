@@ -1,5 +1,5 @@
 import { Outlet, Link, useParams, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useMemo } from 'react';
 import api from '../api';
 import { autoSyncEnabled, setAutoSyncEnabled } from '../sync';
 import { useBotName } from '../BotContext';
@@ -116,6 +116,11 @@ export function DashboardLayout({ user }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [serverPickerOpen, setServerPickerOpen] = useState(false);
 
+  // Gliding active-link highlight
+  const navRef = useRef(null);
+  const [indicator, setIndicator] = useState({ top: 0, height: 0, visible: false });
+  const [indicatorReady, setIndicatorReady] = useState(false);
+
   const toggleAutoSync = () => {
     const next = !autoSync;
     setAutoSync(next);
@@ -165,6 +170,31 @@ export function DashboardLayout({ user }) {
       items: group.items.filter(item => item.name.toLowerCase().includes(q))
     })).filter(group => group.items.length > 0);
   }, [searchQuery]);
+
+  // Measure the active sidebar link and move the single highlight to it.
+  useLayoutEffect(() => {
+    const nav = navRef.current;
+    if (!nav) return undefined;
+
+    const measure = () => {
+      const el = nav.querySelector('.sidebar-link.active');
+      if (!el) {
+        setIndicator(prev => (prev.visible ? { ...prev, visible: false } : prev));
+        return;
+      }
+      setIndicator({ top: el.offsetTop, height: el.offsetHeight, visible: true });
+    };
+
+    measure();
+    // Enable the glide transition only after the first placement.
+    const raf = requestAnimationFrame(() => setIndicatorReady(true));
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    ro?.observe(nav);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+    };
+  }, [activeSegment, collapsed, searchQuery, guildId]);
 
   const handleLogout = () => {
     localStorage.removeItem('bot_dashboard_token');
@@ -263,7 +293,7 @@ export function DashboardLayout({ user }) {
         )}
 
         {/* Navigation Items */}
-        <nav className="sidebar-nav" aria-label="Main Navigation">
+        <nav className="sidebar-nav" aria-label="Main Navigation" ref={navRef}>
           {filteredNavGroups.map((group, gIdx) => (
             <div key={gIdx} className="mb-2">
               {!collapsed && (
@@ -289,6 +319,16 @@ export function DashboardLayout({ user }) {
               })}
             </div>
           ))}
+
+          <span
+            className={`sidebar-indicator ${indicatorReady ? 'ready' : ''}`}
+            style={{
+              transform: `translateY(${indicator.top}px)`,
+              height: indicator.height,
+              opacity: indicator.visible ? 1 : 0,
+            }}
+            aria-hidden="true"
+          />
         </nav>
 
         {/* Footer Profile */}
@@ -323,6 +363,8 @@ export function DashboardLayout({ user }) {
       <div className="main-viewport">
         {/* Top Header */}
         <header className="topbar">
+          {/* Sweeps across the top bar on every page change */}
+          <span key={location.pathname} className="route-progress" aria-hidden="true" />
           <div className="flex items-center gap-3 min-w-0">
             <button
               type="button"

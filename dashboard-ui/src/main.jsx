@@ -4,6 +4,10 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
 import { BotProvider } from './BotContext.jsx';
 import './index.css';
+import './theme-flow.css';
+import { initMotion } from './motion.js';
+
+initMotion();
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>

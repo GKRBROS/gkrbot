@@ -242,6 +242,13 @@ export function ServerSelector() {
                 className="server-card group"
                 title={`Manage ${guild.name}`}
               >
+                {guild.icon && (
+                  <span
+                    className="server-card-glow"
+                    style={{ backgroundImage: `url(${guild.icon})` }}
+                    aria-hidden="true"
+                  />
+                )}
                 <div className="server-card-avatar-wrap">
                   {guild.icon ? (
                     <img
