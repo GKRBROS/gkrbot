@@ -13,7 +13,6 @@ import {
   ArrowRight,
   ShieldCheck,
   LogOut,
-  Bot,
   ExternalLink,
   Sparkles,
   X
@@ -70,8 +69,8 @@ export function ServerSelector() {
       <header className="server-selector-nav">
         <div className="server-selector-nav-inner">
           <div className="flex items-center gap-3">
-            <div className="server-selector-brand-icon">
-              <Bot size={20} />
+            <div className="server-selector-brand-icon server-selector-brand-icon--logo">
+              <img src="/logo-mark.png" alt="" />
             </div>
             <div>
               <div className="flex items-center gap-2">

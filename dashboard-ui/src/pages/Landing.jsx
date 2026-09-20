@@ -10,7 +10,6 @@ import {
   Pin,
   Zap,
   SlidersHorizontal,
-  Bot,
   Sparkles,
   Lock,
   Radio,
@@ -80,8 +79,8 @@ export function Landing() {
       <div className="landing-container">
         <main className="landing-card-elevated">
           {/* Brand Logo */}
-          <div className="landing-brand-icon">
-            <Bot size={36} strokeWidth={2.2} />
+          <div className="landing-brand-icon landing-brand-icon--logo">
+            <img src="/logo-wordmark.png" alt="GKR" />
           </div>
 
           {/* Eyebrow Label */}

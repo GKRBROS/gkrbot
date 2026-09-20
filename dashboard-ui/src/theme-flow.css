@@ -1094,6 +1094,90 @@ h3,
   z-index: 1;
 }
 
+
+/* ── #GKR! brand logo ───────────────────────────────────────── */
+@keyframes glitchShift {
+
+  0%,
+  100% {
+    filter: drop-shadow(0 0 0 transparent);
+    transform: none;
+  }
+
+  20% {
+    filter: drop-shadow(-2px 0 #ff2bd6) drop-shadow(2px 0 #22e6ff);
+    transform: translateX(1px);
+  }
+
+  45% {
+    filter: drop-shadow(2px 0 #ff2bd6) drop-shadow(-2px 0 #22e6ff);
+    transform: translateX(-1px);
+  }
+
+  70% {
+    filter: drop-shadow(-1px 0 #ff2bd6) drop-shadow(1px 0 #22e6ff);
+    transform: none;
+  }
+}
+
+.sidebar-brand-logo,
+.sidebar-brand-mark {
+  display: block;
+  width: auto;
+  filter: drop-shadow(0 0 14px rgba(124, 140, 255, 0.3));
+}
+
+.sidebar-brand-logo {
+  height: 24px;
+}
+
+.sidebar-brand-mark {
+  height: 30px;
+}
+
+.sidebar-brand:hover .sidebar-brand-logo,
+.sidebar-brand:hover .sidebar-brand-mark {
+  animation: glitchShift 0.5s steps(3, end);
+}
+
+.landing-card-elevated>.landing-brand-icon--logo {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  margin-bottom: 28px;
+}
+
+.landing-brand-icon--logo img {
+  display: block;
+  width: min(270px, 72%);
+  height: auto;
+  filter: drop-shadow(0 8px 28px rgba(124, 140, 255, 0.35));
+}
+
+.landing-brand-icon--logo:hover img {
+  animation: glitchShift 0.5s steps(3, end);
+}
+
+.server-selector-brand-icon--logo {
+  background: none;
+  box-shadow: none;
+}
+
+.server-selector-brand-icon--logo img {
+  display: block;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 12px rgba(124, 140, 255, 0.35));
+  transition: transform 0.45s var(--ease-spring);
+}
+
+.server-selector-brand-icon--logo:hover img {
+  animation: glitchShift 0.5s steps(3, end);
+}
+
 /* ── Reduced motion: keep layout, drop the show ─────────────── */
 @media (prefers-reduced-motion: reduce) {
 
@@ -1103,6 +1187,10 @@ h3,
   .page-header-icon-box,
   .landing-card-elevated>.landing-brand-icon,
   .landing-discord-btn::after,
+  .sidebar-brand:hover .sidebar-brand-logo,
+  .sidebar-brand:hover .sidebar-brand-mark,
+  .landing-brand-icon--logo:hover img,
+  .server-selector-brand-icon--logo:hover img,
   .route-progress,
   .autosync-pill.on .autosync-dot {
     animation: none !important;

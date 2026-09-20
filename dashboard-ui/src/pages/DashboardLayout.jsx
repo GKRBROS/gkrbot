@@ -196,6 +196,10 @@ export function DashboardLayout({ user }) {
     };
   }, [activeSegment, collapsed, searchQuery, guildId]);
 
+  const brandName = botName
+    ? (botName.toLowerCase().endsWith('bot') ? botName : `${botName} Bot`)
+    : 'GKR Bot';
+
   const handleLogout = () => {
     localStorage.removeItem('bot_dashboard_token');
     window.location.href = '/';
@@ -215,14 +219,11 @@ export function DashboardLayout({ user }) {
       <aside className={`sidebar ${collapsed ? 'collapsed' : ''} ${mobileNavOpen ? 'mobile-open' : ''}`}>
         {/* Brand Header */}
         <div className="sidebar-header">
-          <Link to={`/dashboard/${guildId}/overview`} className="sidebar-brand">
-            <div className="sidebar-brand-icon">
-              <Bot size={18} />
-            </div>
-            {!collapsed && (
-              <span className="sidebar-brand-name">
-                {botName ? (botName.toLowerCase().endsWith('bot') ? botName : `${botName} Bot`) : 'GKR Bot'}
-              </span>
+          <Link to={`/dashboard/${guildId}/overview`} className="sidebar-brand" aria-label={brandName}>
+            {collapsed ? (
+              <img src="/logo-mark.png" alt={brandName} className="sidebar-brand-mark" />
+            ) : (
+              <img src="/logo-wordmark.png" alt={brandName} className="sidebar-brand-logo" />
             )}
           </Link>
 
