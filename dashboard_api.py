@@ -1121,6 +1121,9 @@ async def handle_welcome_test(request: web.Request):
         config.leave_enabled = True
         try:
             await send_leave(member, config)
+        except Exception as e:
+            print(f"[Welcome API] Test leave failed: {e!r}")
+            return web.json_response({"error": f"Test failed: {e}"}, status=500)
         finally:
             config.leave_enabled = old_leave
         return web.json_response({"success": True, "message": "Test leave message sent successfully!"})
@@ -1131,6 +1134,9 @@ async def handle_welcome_test(request: web.Request):
         config.enabled = True
         try:
             await send_welcome(member, config)
+        except Exception as e:
+            print(f"[Welcome API] Test welcome failed: {e!r}")
+            return web.json_response({"error": f"Test failed: {e}"}, status=500)
         finally:
             config.enabled = old_enabled
         return web.json_response({"success": True, "message": "Test welcome card sent successfully!"})

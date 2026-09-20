@@ -1,4 +1,5 @@
 import os
+import re
 import io
 import aiohttp
 import sqlite3
@@ -1031,6 +1032,17 @@ def render_animated_card(style: str, gif_path: str, **kwargs) -> io.BytesIO:
     return out
 
 
+def fill_placeholders(template: str, values: dict) -> str:
+    """Replace {key} placeholders with values. Safe for ANY text: stray '{' or '}',
+    unknown keys, JSON-like text or format specs are left untouched instead of raising."""
+    if not template:
+        return ""
+    def repl(m):
+        key = m.group(1)
+        return str(values[key]) if key in values else m.group(0)
+    return re.sub(r"\{(\w+)\}", repl, template)
+
+
 async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
     if not config.enabled or not config.channel_id:
         return
@@ -1116,20 +1128,16 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
         return
 
     # ── Format the custom welcome message ────────────────────────────────────
-    import string
-    class SafeDict(dict):
-        def __missing__(self, key):
-            return "{" + key + "}"
-
-    custom_msg = string.Formatter().vformat(
-        config.welcome_message, (), SafeDict(
+    custom_msg = fill_placeholders(
+        config.welcome_message,
+        dict(
             member=member.mention,
             user=member.mention,              # dashboard placeholder {user}
             username=member.display_name,     # dashboard placeholder {username}
             server=member.guild.name,
             count=member_count,               # dashboard placeholder {count}
             member_count=member_count,
-        )
+        ),
     )
 
     # ── Ordinal suffix for member count ──────────────────────────────────────
@@ -1222,20 +1230,16 @@ async def send_leave(member: discord.Member, config: WelcomeConfig) -> None:
     if not isinstance(channel, (discord.TextChannel, discord.Thread, discord.ForumChannel)):
         return
 
-    import string
-    class SafeDict(dict):
-        def __missing__(self, key):
-            return "{" + key + "}"
-
-    custom_leave = string.Formatter().vformat(
-        config.leave_message, (), SafeDict(
+    custom_leave = fill_placeholders(
+        config.leave_message,
+        dict(
             user=member.display_name,
             username=member.display_name,
             member=member.mention,
             server=member.guild.name,
             count=member.guild.member_count,
             member_count=member.guild.member_count,
-        )
+        ),
     )
 
     remaining = member.guild.member_count or 0
