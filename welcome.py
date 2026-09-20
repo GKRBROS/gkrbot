@@ -26,7 +26,7 @@ os.makedirs(ASSETS_DIR, exist_ok=True)
 @dataclass
 class WelcomeConfig:
     guild_id: int
-    enabled: bool = True
+    enabled: bool = False  # OFF until the user turns it on
     channel_id: Optional[int] = None
     welcome_message: str = (
         "🎊 **Welcome to FAMILY** 🎊\n\n"
@@ -96,7 +96,7 @@ class WelcomeDatabase:
                 """
                 CREATE TABLE IF NOT EXISTS welcome_configs (
                     guild_id        TEXT PRIMARY KEY,
-                    enabled         INTEGER NOT NULL DEFAULT 1,
+                    enabled         INTEGER NOT NULL DEFAULT 0,
                     channel_id      TEXT,
                     welcome_message TEXT NOT NULL DEFAULT 'Welcome {member} to {server}! 🎉',
                     background_path TEXT,

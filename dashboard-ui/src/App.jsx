@@ -38,22 +38,34 @@ function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // StrictMode runs this effect twice. Ignore results of the stale run so a
+    // failed duplicate request cannot delete the token of a successful one.
+    let cancelled = false;
+
     const fetchUser = async () => {
       const token = localStorage.getItem('bot_dashboard_token');
       if (!token) {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
         return;
       }
       try {
         const res = await api.get('/users/@me');
-        setUser(res.data.user);
+        if (!cancelled) setUser(res.data.user);
       } catch (err) {
-        console.error('Session invalid', err);
-        localStorage.removeItem('bot_dashboard_token');
+        if (cancelled) return;
+        console.error('Session check failed', err.response?.status, err.response?.data || err.message);
+        // Drop the token only when the server rejects it. Network errors and
+        // 5xx must not log the user out.
+        const status = err.response?.status;
+        if (status === 400 || status === 401 || status === 403) {
+          localStorage.removeItem('bot_dashboard_token');
+        }
       }
-      setLoading(false);
+      if (!cancelled) setLoading(false);
     };
     fetchUser();
+
+    return () => { cancelled = true; };
   }, []);
 
   if (loading) {
@@ -64,10 +76,10 @@ function App() {
     <Routes>
       <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Landing />} />
       <Route path="/auth/callback" element={<AuthCallback setUser={setUser} />} />
-      
+
       {/* Protected Routes */}
       <Route path="/dashboard" element={user ? <ServerSelector /> : <Navigate to="/" />} />
-      
+
       <Route path="/dashboard/:guildId" element={user ? <DashboardLayout user={user} /> : <Navigate to="/" />}>
         {/* Default route inside a guild dashboard defaults to Overview */}
         <Route index element={<Navigate to="overview" replace />} />

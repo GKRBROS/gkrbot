@@ -86,6 +86,34 @@ const PLACEHOLDERS = [
   { label: '{count}', desc: 'Total member count' },
 ];
 
+// DB drivers can return 0/1 or "0"/"1" instead of booleans. "0" is truthy in JS,
+// so coerce strictly to avoid features showing as ON by accident.
+const toBool = (v, fallback = false) => {
+  if (v === undefined || v === null) return fallback;
+  return v === true || v === 1 || v === '1' || v === 'true' || v === 't';
+};
+
+const DEFAULT_CONFIG = {
+  enabled: false,
+  channel_id: '',
+  message: 'Welcome to the server, {user}! 🎉',
+  card_style: 'legacy',
+  card_only: false,
+  background_url: '',
+  has_background: false,
+  clear_background: false,
+  show_avatar: true,
+  show_guild_icon: false,
+  draw_avatar: true,
+  draw_text: true,
+  welcome_role_id: '',
+  bot_role_id: '',
+  leave_enabled: false,
+  leave_channel_id: '',
+  leave_message: '**{user}** left the server.',
+  leave_image_url: '',
+};
+
 export function Welcome() {
   const { guildId } = useParams();
   const botName = useBotName();
@@ -105,26 +133,7 @@ export function Welcome() {
   const [testingLeave, setTestingLeave] = useState(false);
   const [testNotice, setTestNotice] = useState(null);
 
-  const [config, setConfig] = useState({
-    enabled: false,
-    channel_id: '',
-    message: 'Welcome to the server, {user}! 🎉',
-    card_style: 'legacy',
-    card_only: false,
-    background_url: '',
-    has_background: false,
-    clear_background: false,
-    show_avatar: true,
-    show_guild_icon: false,
-    draw_avatar: true,
-    draw_text: true,
-    welcome_role_id: '',
-    bot_role_id: '',
-    leave_enabled: false,
-    leave_channel_id: '',
-    leave_message: '**{user}** left the server.',
-    leave_image_url: '',
-  });
+  const [config, setConfig] = useState(DEFAULT_CONFIG);
 
   const [savedConfig, setSavedConfig] = useState(null);
 
@@ -142,29 +151,33 @@ export function Welcome() {
 
     if (welcomeRes.status === 'fulfilled') {
       const c = welcomeRes.value.data?.config;
+      console.log('[welcome] server enabled =', c?.enabled, typeof c?.enabled, c);
       if (c) {
         const normalized = {
-          enabled: c.enabled ?? false,
+          enabled: toBool(c.enabled, false),
           channel_id: c.channel_id || '',
           message: c.message || 'Welcome to the server, {user}! 🎉',
           card_style: c.card_style || 'legacy',
-          card_only: c.card_only ?? false,
+          card_only: toBool(c.card_only, false),
           background_url: '',
-          has_background: c.has_background ?? Boolean(c.background_path),
+          has_background: toBool(c.has_background, Boolean(c.background_path)),
           clear_background: false,
-          show_avatar: c.show_avatar ?? true,
-          show_guild_icon: c.show_guild_icon ?? false,
-          draw_avatar: c.draw_avatar ?? true,
-          draw_text: c.draw_text ?? true,
+          show_avatar: toBool(c.show_avatar, true),
+          show_guild_icon: toBool(c.show_guild_icon, false),
+          draw_avatar: toBool(c.draw_avatar, true),
+          draw_text: toBool(c.draw_text, true),
           welcome_role_id: c.welcome_role_id || '',
           bot_role_id: c.bot_role_id || '',
-          leave_enabled: c.leave_enabled ?? false,
+          leave_enabled: toBool(c.leave_enabled, false),
           leave_channel_id: c.leave_channel_id || '',
           leave_message: c.leave_message || '**{user}** left the server.',
           leave_image_url: c.leave_image_url || '',
         };
         setConfig(normalized);
         setSavedConfig(normalized);
+      } else {
+        setConfig(DEFAULT_CONFIG);
+        setSavedConfig(DEFAULT_CONFIG);
       }
     } else {
       console.error('Failed to load welcome configuration', welcomeRes.reason);
