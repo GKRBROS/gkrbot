@@ -276,6 +276,7 @@ def _replicate_welcome(bot, source_guild_id):
                 tgt_cfg.enabled = src_cfg.enabled
                 tgt_cfg.welcome_message = src_cfg.welcome_message
                 tgt_cfg.card_style = src_cfg.card_style
+                tgt_cfg.card_only = getattr(src_cfg, "card_only", False)
                 tgt_cfg.show_avatar = src_cfg.show_avatar
                 tgt_cfg.show_guild_icon = src_cfg.show_guild_icon
                 tgt_cfg.draw_avatar = src_cfg.draw_avatar
@@ -953,6 +954,11 @@ async def handle_welcome_get(request: web.Request):
         "card_styles": CARD_STYLES
     })
 
+def _to_bool(v):
+    if isinstance(v, str):
+        return v.strip().lower() in ("1", "true", "t", "yes", "on")
+    return bool(v)
+
 async def handle_welcome_post(request: web.Request):
     user_id = await get_user_id(request)
     if not user_id: return web.json_response({"error": "Unauthorized"}, status=401)
@@ -968,7 +974,7 @@ async def handle_welcome_post(request: web.Request):
     config = db.get_config(int(guild_id))
     
     if "enabled" in data:
-        config.enabled = bool(data["enabled"])
+        config.enabled = _to_bool(data["enabled"])
     if "channel_id" in data:
         config.channel_id = int(data["channel_id"]) if data["channel_id"] else None
     if "message" in data:
@@ -980,16 +986,16 @@ async def handle_welcome_post(request: web.Request):
             config.card_style = style
             
     if "card_only" in data:
-        config.card_only = bool(data["card_only"])
+        config.card_only = _to_bool(data["card_only"])
 
     if "show_avatar" in data:
-        config.show_avatar = bool(data["show_avatar"])
+        config.show_avatar = _to_bool(data["show_avatar"])
     if "show_guild_icon" in data:
-        config.show_guild_icon = bool(data["show_guild_icon"])
+        config.show_guild_icon = _to_bool(data["show_guild_icon"])
     if "draw_avatar" in data:
-        config.draw_avatar = bool(data["draw_avatar"])
+        config.draw_avatar = _to_bool(data["draw_avatar"])
     if "draw_text" in data:
-        config.draw_text = bool(data["draw_text"])
+        config.draw_text = _to_bool(data["draw_text"])
         
     if "welcome_role_id" in data:
         config.welcome_role_id = int(data["welcome_role_id"]) if data["welcome_role_id"] else None
@@ -1020,7 +1026,7 @@ async def handle_welcome_post(request: web.Request):
                 print(f"[Welcome API] Failed to download background: {e}")
                 
     if "leave_enabled" in data:
-        config.leave_enabled = bool(data["leave_enabled"])
+        config.leave_enabled = _to_bool(data["leave_enabled"])
     if "leave_channel_id" in data:
         config.leave_channel_id = int(data["leave_channel_id"]) if data["leave_channel_id"] else None
     if "leave_message" in data:
@@ -1029,6 +1035,8 @@ async def handle_welcome_post(request: web.Request):
         config.leave_image_url = data["leave_image_url"] if data["leave_image_url"] else None
         
     db.save_config(config)
+    print(f"[Welcome API] saved guild={guild_id} enabled={config.enabled} "
+          f"style={getattr(config, 'card_style', None)} card_only={getattr(config, 'card_only', None)}")
 
     if _auto_sync_requested(data, request):
         bot: commands.Bot = request.app["bot"]

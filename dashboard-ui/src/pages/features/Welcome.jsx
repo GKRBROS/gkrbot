@@ -272,9 +272,8 @@ export function Welcome() {
         payload.clear_background = true;
       }
 
-      await withSync(guildId, 'welcome', payload, () =>
-        api.post(`/guilds/${guildId}/welcome`, payload)
-      );
+      // withSync(data) only adds the sync_all flag; it does not perform the request.
+      await api.post(`/guilds/${guildId}/welcome`, withSync(payload));
 
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -367,8 +366,8 @@ export function Welcome() {
       {/* Inline Notifications */}
       {testNotice && (
         <div className={`p-4! rounded-xl flex items-center justify-between gap-3 text-sm border ${testNotice.type === 'success'
-            ? 'bg-success/10 border-success/30 text-success'
-            : 'bg-danger/10 border-danger/30 text-danger'
+          ? 'bg-success/10 border-success/30 text-success'
+          : 'bg-danger/10 border-danger/30 text-danger'
           }`}>
           <div className="flex items-center gap-2">
             {testNotice.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
@@ -398,8 +397,8 @@ export function Welcome() {
 
       {/* Main Feature Toggle Banner */}
       <div className={`p-4! sm:p-5! rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${config.enabled
-          ? 'bg-primary/10 border-primary/30 shadow-sm'
-          : 'bg-surface border-border'
+        ? 'bg-primary/10 border-primary/30 shadow-sm'
+        : 'bg-surface border-border'
         }`}>
         <div className="flex items-center gap-3.5">
           <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${config.enabled ? 'bg-primary text-white shadow-md' : 'bg-card text-muted border border-border'
@@ -432,8 +431,8 @@ export function Welcome() {
           type="button"
           onClick={() => setActiveTab('card')}
           className={`flex items-center gap-2 px-4! py-2.5! rounded-lg text-sm font-medium transition-all shrink-0 ${activeTab === 'card'
-              ? 'bg-primary text-white shadow-sm'
-              : 'text-muted hover:text-main hover:bg-surface'
+            ? 'bg-primary text-white shadow-sm'
+            : 'text-muted hover:text-main hover:bg-surface'
             }`}
         >
           <Palette size={16} />
@@ -444,8 +443,8 @@ export function Welcome() {
           type="button"
           onClick={() => setActiveTab('message')}
           className={`flex items-center gap-2 px-4! py-2.5! rounded-lg text-sm font-medium transition-all shrink-0 ${activeTab === 'message'
-              ? 'bg-primary text-white shadow-sm'
-              : 'text-muted hover:text-main hover:bg-surface'
+            ? 'bg-primary text-white shadow-sm'
+            : 'text-muted hover:text-main hover:bg-surface'
             }`}
         >
           <MessageSquare size={16} />
@@ -456,8 +455,8 @@ export function Welcome() {
           type="button"
           onClick={() => setActiveTab('roles')}
           className={`flex items-center gap-2 px-4! py-2.5! rounded-lg text-sm font-medium transition-all shrink-0 ${activeTab === 'roles'
-              ? 'bg-primary text-white shadow-sm'
-              : 'text-muted hover:text-main hover:bg-surface'
+            ? 'bg-primary text-white shadow-sm'
+            : 'text-muted hover:text-main hover:bg-surface'
             }`}
         >
           <Shield size={16} />
@@ -468,8 +467,8 @@ export function Welcome() {
           type="button"
           onClick={() => setActiveTab('leave')}
           className={`flex items-center gap-2 px-4! py-2.5! rounded-lg text-sm font-medium transition-all shrink-0 ${activeTab === 'leave'
-              ? 'bg-primary text-white shadow-sm'
-              : 'text-muted hover:text-main hover:bg-surface'
+            ? 'bg-primary text-white shadow-sm'
+            : 'text-muted hover:text-main hover:bg-surface'
             }`}
         >
           <LogOut size={16} />
@@ -504,8 +503,8 @@ export function Welcome() {
                         tabIndex={0}
                         onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && setConfig({ ...config, card_style: style.id })}
                         className={`p-3.5! sm:p-4! rounded-xl border cursor-pointer transition-all flex flex-col justify-between select-none ${isSelected
-                            ? 'bg-primary/10 border-primary ring-1 ring-primary/40 shadow-sm'
-                            : 'bg-surface border-border hover:border-border-hover hover:bg-card'
+                          ? 'bg-primary/10 border-primary ring-1 ring-primary/40 shadow-sm'
+                          : 'bg-surface border-border hover:border-border-hover hover:bg-card'
                           }`}
                       >
                         <div>
@@ -987,10 +986,12 @@ export function Welcome() {
                 </div>
                 <div className="text-gray-100 whitespace-pre-line leading-relaxed mb-3! break-words">
                   {config.message
-                    .replace('{user}', '@NewUser')
-                    .replace('{username}', 'NewUser')
-                    .replace('{server}', 'My Awesome Discord')
-                    .replace('{count}', '1,234')}
+                    .replaceAll('{user}', '@NewUser')
+                    .replaceAll('{member}', '@NewUser')
+                    .replaceAll('{username}', 'NewUser')
+                    .replaceAll('{server}', 'My Awesome Discord')
+                    .replaceAll('{member_count}', '1,234')
+                    .replaceAll('{count}', '1,234')}
                 </div>
                 {!config.card_only && (
                   <div className="text-xs text-indigo-400 bg-indigo-500/10 p-2! rounded border border-indigo-500/20">

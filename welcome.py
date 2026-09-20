@@ -964,7 +964,11 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
     if config.card_only:
         card_embed = discord.Embed(color=0x8250FF)
         card_embed.set_image(url=image_url)
-        await channel.send(embed=card_embed, file=discord_file)
+        try:
+            await channel.send(embed=card_embed, file=discord_file)
+        except discord.Forbidden:
+            print(f"[Welcome] Missing Send Messages / Embed Links / Attach Files in #{channel.name}")
+            raise
         return
 
     # ── Format the custom welcome message ────────────────────────────────────
@@ -976,7 +980,10 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
     custom_msg = string.Formatter().vformat(
         config.welcome_message, (), SafeDict(
             member=member.mention,
+            user=member.mention,              # dashboard placeholder {user}
+            username=member.display_name,     # dashboard placeholder {username}
             server=member.guild.name,
+            count=member_count,               # dashboard placeholder {count}
             member_count=member_count,
         )
     )
@@ -1079,8 +1086,10 @@ async def send_leave(member: discord.Member, config: WelcomeConfig) -> None:
     custom_leave = string.Formatter().vformat(
         config.leave_message, (), SafeDict(
             user=member.display_name,
+            username=member.display_name,
             member=member.mention,
             server=member.guild.name,
+            count=member.guild.member_count,
             member_count=member.guild.member_count,
         )
     )
