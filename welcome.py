@@ -335,6 +335,18 @@ def make_circle_avatar(
     return bordered
 
 
+def _paste_guild_badge(canvas: Image.Image, icon_bytes: bytes, cx: int, cy: int, size: int) -> None:
+    """Paste the server icon as a small round badge centred on (cx, cy)."""
+    if not icon_bytes:
+        return
+    try:
+        icon = Image.open(io.BytesIO(icon_bytes)).convert("RGBA")
+        circ = make_circle_avatar(icon, size=size, border_color=(255, 255, 255), border_width=2)
+        canvas.paste(circ, (cx - circ.width // 2, cy - circ.height // 2), mask=circ)
+    except Exception:
+        pass
+
+
 def render_welcome_card(
     avatar_bytes: bytes,
     guild_icon_bytes: bytes,
@@ -450,6 +462,9 @@ def render_welcome_card(
         paste_x = av_cx - circ.width  // 2
         paste_y = av_cy - circ.height // 2
         bg.paste(circ, (paste_x, paste_y), mask=circ)
+
+    if show_guild_icon:
+        _paste_guild_badge(bg, guild_icon_bytes, W - 56, H - 52, 52)
 
     # ── Fonts ─────────────────────────────────────────────────────────────────
     font_header  = load_font(FONT_BOLD_PATH,    44)   # "WELCOME TO"
@@ -646,6 +661,9 @@ def render_card_glass(
         bg.alpha_composite(ring)
         bg.paste(circ, (W // 2 - 100, 76), mask=circ)
 
+    if show_guild_icon:
+        _paste_guild_badge(bg, guild_icon_bytes, W - 56, H - 52, 52)
+
     if draw_text:
         td = ImageDraw.Draw(bg)
         f_name = load_font(FONT_BOLD_PATH, 46)
@@ -788,6 +806,9 @@ def render_card_ticket(
             td.rectangle((bx, by, bx + bw, by + bh), fill=(120, 115, 135, 255))
             bx += bw + rng.choice([3, 5, 7])
 
+    if show_guild_icon:
+        _paste_guild_badge(ticket, guild_icon_bytes, tw_ - 50, 44, 48)
+
     bg.paste(ticket, (MARGIN, MARGIN), mask=ticket)
     output = io.BytesIO()
     bg.convert("RGB").save(output, format="JPEG", quality=93)
@@ -850,6 +871,9 @@ def render_card_cinematic(
         a = int(210 * max(0, (t - 0.35) / 0.65))
         sd.line([(0, y), (W, y)], fill=(6, 8, 10, a))
     bg.alpha_composite(scrim)
+
+    if show_guild_icon:
+        _paste_guild_badge(bg, guild_icon_bytes, W - 56, H - 52, 52)
 
     if draw_text:
         td = ImageDraw.Draw(bg)

@@ -114,6 +114,388 @@ const DEFAULT_CONFIG = {
   leave_image_url: '',
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Live preview components.
+// CardArt is drawn in the SAME 1024×500 coordinate space as the Python renderers
+// in welcome.py (render_welcome_card / glass / ticket / cinematic) and scaled down,
+// so the dashboard preview matches the card the bot really posts.
+// ─────────────────────────────────────────────────────────────────────────────
+const SAMPLE = { name: 'NewUser', server: 'My Server', count: 1234, guildName: 'My Awesome Discord' };
+const FONT = "'Outfit', 'Inter', system-ui, sans-serif";
+const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a})`;
+const ABS = { position: 'absolute' };
+const ACCENT = [130, 80, 255];
+const ACCENT2 = [0, 200, 255];
+const GOLD = [255, 195, 0];
+const TICKET_GOLD = [255, 190, 60];
+const TEAL = [120, 230, 210];
+
+const ordinalSuffix = n => {
+  const m = n % 100;
+  if (m >= 11 && m <= 13) return 'th';
+  return { 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th';
+};
+
+// Fixed pseudo-random numbers so particles/barcode don't jump on every render
+const seeded = seed => {
+  let s = seed;
+  return () => {
+    s = (s * 1664525 + 1013904223) % 4294967296;
+    return s / 4294967296;
+  };
+};
+
+function ScaledCanvas({ children }) {
+  const ref = useRef(null);
+  const [scale, setScale] = useState(0.4);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const update = () => setScale(el.clientWidth / 1024);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return (
+    <div
+      ref={ref}
+      className="relative w-full overflow-hidden rounded-xl border border-white/10 shadow-2xl bg-[#090b10] select-none"
+      style={{ aspectRatio: '1024 / 500' }}
+    >
+      <div style={{ ...ABS, left: 0, top: 0, width: 1024, height: 500, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function AvatarDot({ size, style }) {
+  return (
+    <div
+      style={{
+        width: size, height: size, borderRadius: '50%', overflow: 'hidden',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'linear-gradient(135deg,#4f8cff,#7c5cff 60%,#00c8ff)', color: '#fff', ...style,
+      }}
+    >
+      <User size={size * 0.5} />
+    </div>
+  );
+}
+
+function ServerBadge({ size, style }) {
+  return (
+    <div
+      style={{
+        ...ABS, width: size, height: size, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.85)',
+        background: 'linear-gradient(135deg,#5865f2,#3b82f6)', color: '#fff',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', ...style,
+      }}
+    >
+      <Globe size={size * 0.5} />
+    </div>
+  );
+}
+
+const center = (top, extra = {}) => ({
+  ...ABS, left: 0, width: 1024, top, transform: 'translateY(-50%)', textAlign: 'center', whiteSpace: 'nowrap', ...extra,
+});
+
+function CardArt({ style, bg, drawAvatar, drawText, showIcon, onBgError, sample = SAMPLE }) {
+  const W = 1024;
+  const H = 500;
+  const { name, server, count } = sample;
+  const hasBg = Boolean(bg);
+  const bgImg = hasBg ? (
+    <img
+      src={bg}
+      alt=""
+      referrerPolicy="no-referrer"
+      onError={onBgError}
+      style={{ ...ABS, left: 0, top: 0, width: W, height: H, objectFit: 'cover' }}
+    />
+  ) : null;
+
+  // Bot behaviour: with every overlay off it posts the raw background file
+  if (hasBg && !drawAvatar && !drawText && !showIcon) {
+    return <div style={{ ...ABS, inset: 0, width: W, height: H }}>{bgImg}</div>;
+  }
+
+  const root = { ...ABS, left: 0, top: 0, width: W, height: H, overflow: 'hidden', fontFamily: FONT };
+
+  // ── Legacy Neon ────────────────────────────────────────────────────────────
+  if (style === 'legacy') {
+    const rng = seeded(42);
+    const dots = Array.from({ length: 38 }, () => {
+      const r = 1 + Math.floor(rng() * 3);
+      const col = [ACCENT, ACCENT2, [255, 255, 255]][Math.floor(rng() * 3)];
+      return { x: 8 + rng() * 394, y: 8 + rng() * 484, r, a: (40 + rng() * 90) / 255, col };
+    });
+    const SPLIT = 410;
+    const RCX = SPLIT + (W - SPLIT) / 2;
+    return (
+      <div style={root}>
+        {hasBg ? bgImg : (
+          <div style={{ ...ABS, inset: 0, background: 'linear-gradient(90deg,#0c0816 0%,#140c20 40%,#0a0a12 40%,#10101a 100%)' }} />
+        )}
+        {hasBg && <div style={{ ...ABS, inset: 0, background: 'rgba(0,0,0,0.69)' }} />}
+        <div
+          style={{
+            ...ABS, inset: 0,
+            background: `radial-gradient(circle at 205px 250px, ${rgba(ACCENT2, 0.16)} 0, ${rgba(ACCENT2, 0.1)} 90px, ${rgba(ACCENT, 0.2)} 100px, ${rgba(ACCENT, 0.14)} 170px, ${rgba(ACCENT, 0.08)} 220px, transparent 240px)`,
+          }}
+        />
+        {dots.map((d, i) => (
+          <div key={i} style={{ ...ABS, left: d.x - d.r, top: d.y - d.r, width: d.r * 2, height: d.r * 2, borderRadius: '50%', background: rgba(d.col, d.a) }} />
+        ))}
+        <div style={{ ...ABS, left: SPLIT, top: 0, width: W - SPLIT, height: H, background: 'rgba(10,10,22,0.78)' }} />
+        <div style={{ ...ABS, left: SPLIT - 2, top: 0, width: 5, height: H, background: `linear-gradient(90deg, transparent, ${rgba(ACCENT, 0.9)} 50%, transparent)` }} />
+        <div style={{ ...ABS, left: SPLIT + 20, top: 0, width: W - SPLIT - 40, height: 2, background: rgba(ACCENT, 0.47) }} />
+        <div style={{ ...ABS, left: SPLIT + 20, top: H - 1, width: W - SPLIT - 40, height: 1, background: rgba(ACCENT, 0.31) }} />
+        <div style={{ ...ABS, left: SPLIT, top: 0, width: 2, height: 30, background: rgba(ACCENT2, 0.7) }} />
+        <div style={{ ...ABS, left: SPLIT, top: 0, width: 30, height: 2, background: rgba(ACCENT2, 0.7) }} />
+
+        {drawAvatar && (
+          <>
+            {[[125, ACCENT, 0.24, 2], [115, ACCENT2, 0.31, 3], [105, ACCENT, 0.47, 4]].map(([r, c, a, w]) => (
+              <div key={r} style={{ ...ABS, left: 205 - r, top: 250 - r, width: r * 2, height: r * 2, borderRadius: '50%', border: `${w}px solid ${rgba(c, a)}`, boxSizing: 'border-box' }} />
+            ))}
+            <AvatarDot size={200} style={{ ...ABS, left: 105, top: 150, border: `5px solid ${rgba(ACCENT, 1)}`, boxSizing: 'border-box' }} />
+          </>
+        )}
+
+        {drawText && (
+          <>
+            <div style={{ ...ABS, left: SPLIT, width: W - SPLIT, top: 76, transform: 'translateY(-50%)', textAlign: 'center', fontSize: 44, fontWeight: 700, color: 'rgb(190,160,255)', textShadow: `0 0 8px ${rgba(ACCENT, 0.6)}`, whiteSpace: 'nowrap' }}>WELCOME TO</div>
+            <div style={{ ...ABS, left: SPLIT + 28, width: W - SPLIT - 56, top: 100, height: 1, background: rgba(ACCENT, 0.4) }} />
+            <div style={{ ...ABS, left: SPLIT, width: W - SPLIT, top: 122, transform: 'translateY(-50%)', textAlign: 'center', fontSize: 22, color: rgba(ACCENT2, 0.86), whiteSpace: 'nowrap' }}>{server.toUpperCase()}</div>
+            <div style={{ ...ABS, left: SPLIT, width: W - SPLIT, top: 178, transform: 'translateY(-50%)', textAlign: 'center', fontSize: 58, fontWeight: 700, color: '#fff', textShadow: `0 0 10px ${rgba(ACCENT, 0.5)}`, whiteSpace: 'nowrap' }}>{name}</div>
+            <div style={{ ...ABS, left: RCX - 80, top: 226, width: 160, height: 1, background: rgba(ACCENT2, 0.31) }} />
+            <div style={{ ...ABS, left: RCX - 4, top: 222, width: 8, height: 8, background: rgba(ACCENT2, 0.78), transform: 'rotate(45deg)' }} />
+            <div style={{ ...ABS, left: RCX, top: 258, transform: 'translate(-50%,-50%)', padding: '6px 22px', borderRadius: 999, background: rgba(GOLD, 0.11), border: `1px solid ${rgba(GOLD, 0.51)}`, color: rgba(GOLD, 0.9), fontSize: 26, whiteSpace: 'nowrap' }}>
+              {`#${count.toLocaleString()}${ordinalSuffix(count)} Member`}
+            </div>
+            <div style={{ ...ABS, left: SPLIT, width: W - SPLIT, top: 312, transform: 'translateY(-50%)', textAlign: 'center', fontSize: 18, color: 'rgba(160,160,200,0.7)', whiteSpace: 'nowrap' }}>We&apos;re glad you&apos;re here ✦</div>
+          </>
+        )}
+        {showIcon && <ServerBadge size={52} style={{ left: W - 56 - 26, top: H - 52 - 26 }} />}
+      </div>
+    );
+  }
+
+  // ── Minimalist Glass ───────────────────────────────────────────────────────
+  if (style === 'glass') {
+    const acc = [130, 110, 255];
+    return (
+      <div style={root}>
+        {hasBg ? bgImg : <div style={{ ...ABS, inset: 0, background: 'linear-gradient(180deg,#16171e,#1c1d28)' }} />}
+        {hasBg && <div style={{ ...ABS, inset: 0, background: 'rgba(10,10,14,0.745)' }} />}
+        <div style={{ ...ABS, inset: 0, background: `radial-gradient(ellipse 300px 230px at 512px 20px, ${rgba(acc, 0.3)}, transparent 100%)` }} />
+        {drawAvatar && (
+          <>
+            <div style={{ ...ABS, left: W / 2 - 104, top: 74, width: 208, height: 208, borderRadius: '50%', background: 'rgba(0,0,0,0.47)', filter: 'blur(18px)' }} />
+            <div style={{ ...ABS, left: W / 2 - 108, top: 68, width: 216, height: 216, borderRadius: '50%', border: '2px solid rgba(255,255,255,0.235)', boxSizing: 'border-box' }} />
+            <AvatarDot size={200} style={{ ...ABS, left: W / 2 - 100, top: 76 }} />
+          </>
+        )}
+        {drawText && (
+          <>
+            <div style={center(324, { fontSize: 46, fontWeight: 700, color: '#fff' })}>{name}</div>
+            <div style={center(370, { fontSize: 21, color: 'rgb(165,165,180)' })}>{`just joined ${sample.server}`}</div>
+            <div style={{ ...ABS, left: W / 2 - 60, top: 400, width: 120, height: 2, background: rgba(acc, 0.59) }} />
+            <div style={{ ...ABS, left: W / 2, top: 438, transform: 'translate(-50%,-50%)', padding: '7px 16px', borderRadius: 999, border: `1px solid ${rgba(acc, 0.78)}`, color: 'rgb(190,175,255)', fontSize: 16, fontWeight: 700, whiteSpace: 'nowrap' }}>
+              {`MEMBER #${count.toLocaleString()}`}
+            </div>
+          </>
+        )}
+        {showIcon && <ServerBadge size={52} style={{ left: W - 56 - 26, top: H - 52 - 26 }} />}
+      </div>
+    );
+  }
+
+  // ── Ticket Pass ────────────────────────────────────────────────────────────
+  if (style === 'ticket') {
+    const M = 40;
+    const TW = W - M * 2;
+    const TH = H - M * 2;
+    const STUB = 260;
+    const rng = seeded(count || 1);
+    const bars = [];
+    let bx = 340 - M;
+    while (bx < TW - 30) {
+      const bw = [2, 2, 4, 6, 2][Math.floor(rng() * 5)];
+      const bh = 28 + Math.floor(rng() * 15);
+      bars.push({ x: bx, w: bw, h: bh });
+      bx += bw + [3, 5, 7][Math.floor(rng() * 3)];
+    }
+    return (
+      <div style={root}>
+        {hasBg ? bgImg : <div style={{ ...ABS, inset: 0, background: 'rgb(18,18,22)' }} />}
+        {hasBg && <div style={{ ...ABS, inset: 0, background: 'rgba(0,0,0,0.59)' }} />}
+        <div style={{ ...ABS, left: M, top: M, width: TW, height: TH, borderRadius: 22, background: 'rgba(28,26,34,0.92)', overflow: 'hidden' }}>
+          <div style={{ ...ABS, left: 0, top: 0, width: STUB, height: TH, background: 'rgba(38,34,52,0.92)' }} />
+          <div style={{ ...ABS, left: STUB - 1, top: 0, width: 0, height: TH, borderLeft: '2px dashed rgb(90,85,110)' }} />
+          {drawAvatar && (
+            <>
+              <div style={{ ...ABS, left: STUB / 2 - 70, top: 70, width: 140, height: 140, borderRadius: '50%', border: `3px solid ${rgba(TICKET_GOLD, 0.78)}`, boxSizing: 'border-box' }} />
+              <AvatarDot size={128} style={{ ...ABS, left: STUB / 2 - 64, top: 76, border: `3px solid ${rgba(TICKET_GOLD, 1)}`, boxSizing: 'border-box' }} />
+            </>
+          )}
+          {drawText && (
+            <>
+              <div style={{ ...ABS, left: 0, width: STUB, top: 226, transform: 'translateY(-50%)', textAlign: 'center', fontSize: 15, fontWeight: 700, color: rgba(TICKET_GOLD, 0.86) }}>PASSENGER</div>
+              <div style={{ ...ABS, left: 0, width: STUB, top: 256, transform: 'translateY(-50%)', textAlign: 'center', fontSize: 28, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{name}</div>
+              <div style={{ ...ABS, left: STUB + 40, top: 46, transform: 'translateY(-50%)', fontSize: 20, fontWeight: 700, color: rgba(TICKET_GOLD, 1), whiteSpace: 'pre' }}>ADMIT ONE  ✦  NEW ARRIVAL</div>
+              <div style={{ ...ABS, left: STUB + 40, top: 102, transform: 'translateY(-50%)', fontSize: 46, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{`Welcome, ${name}`}</div>
+              {[['VENUE', server], ['MEMBER NO.', `#${count.toLocaleString()}`], ['BOARDED', 'just now']].map(([l, v], i) => (
+                <div key={l} style={{ ...ABS, left: STUB + 40 + i * 230, top: 172 }}>
+                  <div style={{ fontSize: 15, color: 'rgb(150,145,165)', lineHeight: '20px' }}>{l}</div>
+                  <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', lineHeight: '28px' }}>{v}</div>
+                </div>
+              ))}
+              {bars.map((b, i) => (
+                <div key={i} style={{ ...ABS, left: b.x, top: TH - 60, width: b.w, height: b.h, background: 'rgb(120,115,135)' }} />
+              ))}
+            </>
+          )}
+          {showIcon && <ServerBadge size={48} style={{ left: TW - 50 - 24, top: 44 - 24 }} />}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Cinematic Poster ───────────────────────────────────────────────────────
+  return (
+    <div style={root}>
+      {hasBg ? bgImg : (
+        <>
+          <div style={{ ...ABS, inset: 0, background: 'linear-gradient(180deg,#0e2a34,#0a1620 55%,#0e0e12)' }} />
+          <div style={{ ...ABS, left: 0, top: 0, width: W, height: H, clipPath: `polygon(${W * 0.62}px 0, ${W * 0.95}px 0, ${W * 0.55}px ${H}px, ${W * 0.22}px ${H}px)`, background: 'rgba(90,220,200,0.14)', filter: 'blur(30px)' }} />
+        </>
+      )}
+      {hasBg && <div style={{ ...ABS, inset: 0, background: 'rgba(0,0,0,0.55)' }} />}
+      {drawAvatar && (
+        <div style={{ ...ABS, left: W - 460, top: -60, width: 520, height: 520, WebkitMaskImage: 'radial-gradient(circle at center, #000 58%, transparent 71%)', maskImage: 'radial-gradient(circle at center, #000 58%, transparent 71%)' }}>
+          <AvatarDot size={520} style={{ borderRadius: 0 }} />
+        </div>
+      )}
+      <div style={{ ...ABS, inset: 0, background: 'linear-gradient(180deg, transparent 35%, rgba(6,8,10,0.82) 100%)' }} />
+      {showIcon && <ServerBadge size={52} style={{ left: W - 56 - 26, top: H - 52 - 26 }} />}
+      {drawText && (
+        <>
+          <div style={{ ...ABS, left: 44, top: 40, fontSize: 18, fontWeight: 700, color: rgba(TEAL, 1), whiteSpace: 'nowrap' }}>{`MEMBER No. ${count.toLocaleString()}`}</div>
+          <div style={{ ...ABS, left: 44, top: 68, width: 186, height: 2, background: rgba(TEAL, 0.7) }} />
+          <div style={{ ...ABS, right: 44, top: 40, fontSize: 16, fontWeight: 700, color: 'rgba(200,200,200,0.78)', whiteSpace: 'nowrap' }}>{server.toUpperCase()}</div>
+          <div style={{ ...ABS, left: 42, top: H - 160, fontSize: 74, fontWeight: 700, lineHeight: '90px', color: '#fff', whiteSpace: 'nowrap' }}>{name.toUpperCase()}</div>
+          <div style={{ ...ABS, left: 46, top: H - 84, fontSize: 24, color: 'rgba(210,235,230,0.9)', whiteSpace: 'nowrap' }}>has entered the server</div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Tiny Discord-style markdown: **bold**, *italic*, @mentions, "## " headings
+const renderInline = line =>
+  line.split(/(\*\*[^*]+\*\*|\*[^*]+\*|@NewUser)/g).filter(Boolean).map((p, i) => {
+    if (p.startsWith('**') && p.endsWith('**') && p.length > 4) return <strong key={i}>{p.slice(2, -2)}</strong>;
+    if (p.startsWith('*') && p.endsWith('*') && p.length > 2) return <em key={i}>{p.slice(1, -1)}</em>;
+    if (p === '@NewUser') return <span key={i} className="rounded px-0.5 bg-[#5865f2]/30 text-[#c9cdfb]">{p}</span>;
+    return <span key={i}>{p}</span>;
+  });
+
+const renderMd = text =>
+  text.split('\n').map((line, i) => {
+    if (line.startsWith('## ')) {
+      return <div key={i} className="text-xl font-bold text-white leading-snug">{renderInline(line.slice(3))}</div>;
+    }
+    return <div key={i} className="min-h-[1.25em]">{renderInline(line)}</div>;
+  });
+
+const fillPlaceholders = (text, sample = SAMPLE) =>
+  (text || '')
+    .replaceAll('{user}', '@NewUser')
+    .replaceAll('{member}', '@NewUser')
+    .replaceAll('{username}', sample.name)
+    .replaceAll('{server}', sample.guildName)
+    .replaceAll('{member_count}', sample.count.toLocaleString())
+    .replaceAll('{count}', sample.count.toLocaleString());
+
+// Mirrors send_welcome() in welcome.py: content line, embed (author, description,
+// fields, card image, footer) — or a bare image embed in Card Only mode.
+function DiscordWelcomePreview({ config, botName, bg, onBgError }) {
+  const cardOnly = config.card_only;
+  const divider = '─'.repeat(35);
+  const art = (
+    <ScaledCanvas>
+      <CardArt
+        style={config.card_style}
+        bg={bg}
+        drawAvatar={config.draw_avatar}
+        drawText={config.draw_text}
+        showIcon={config.show_guild_icon}
+        onBgError={onBgError}
+      />
+    </ScaledCanvas>
+  );
+
+  return (
+    <div className="p-4! rounded-xl bg-[#313338] border border-[#26272b] font-sans text-sm text-gray-200">
+      <div className="flex items-center gap-2 mb-1.5!">
+        <span className="font-bold text-white">{botName || 'GKR Bot'}</span>
+        <span className="bg-[#5865f2] text-[10px] text-white font-semibold px-1! py-0.5! rounded">BOT</span>
+        <span className="text-xs text-gray-400">Today at 12:00 PM</span>
+      </div>
+
+      {!cardOnly && (
+        <div className="text-gray-100 mb-2! break-words">
+          👋&nbsp; <span className="rounded px-0.5 bg-[#5865f2]/30 text-[#c9cdfb]">@NewUser</span> — <strong>Welcome to the family!</strong> 🎊
+        </div>
+      )}
+
+      <div className="rounded-md bg-[#2b2d31] p-3! max-w-[520px] flex flex-col gap-2" style={{ borderLeft: '4px solid #8250FF' }}>
+        {!cardOnly && (
+          <div className="flex items-center gap-2 text-[13px] font-semibold text-white">
+            <AvatarDot size={22} />
+            <span>✦&nbsp; NewUser &nbsp;✦</span>
+          </div>
+        )}
+
+        {!cardOnly && (
+          <div className="break-words leading-snug flex flex-col gap-0.5">
+            <div className="text-xl font-bold text-white leading-snug">🎉&nbsp; Welcome to <strong>{SAMPLE.guildName}</strong>!</div>
+            <div className="text-gray-500 overflow-hidden whitespace-nowrap">{divider}</div>
+            <div className="my-1!">{renderMd(fillPlaceholders(config.message))}</div>
+            <div className="text-gray-500 overflow-hidden whitespace-nowrap">{divider}</div>
+          </div>
+        )}
+
+        {!cardOnly && (
+          <div className="grid grid-cols-2 gap-3 text-[13px]">
+            <div>
+              <div className="font-bold text-white">🏅&nbsp; Member</div>
+              <div className="font-bold">{`#${SAMPLE.count.toLocaleString()}${ordinalSuffix(SAMPLE.count)}`}</div>
+            </div>
+            <div>
+              <div className="font-bold text-white">🕰️&nbsp; Account Age</div>
+              <div className="font-bold">2y 3mo</div>
+            </div>
+          </div>
+        )}
+
+        {art}
+
+        {!cardOnly && (
+          <div className="flex items-center gap-2 text-[11px] text-gray-400">
+            <span className="w-5 h-5 rounded-full bg-gradient-to-br from-[#5865f2] to-blue-500 inline-flex items-center justify-center shrink-0"><Globe size={11} className="text-white" /></span>
+            <span className="truncate">{SAMPLE.guildName}&nbsp; ·&nbsp; We&apos;re glad you&apos;re here</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function Welcome() {
   const { guildId } = useParams();
   const botName = useBotName();
@@ -368,6 +750,7 @@ export function Welcome() {
     : (typedBg || (config.has_background ? savedBgUrl : ''));
 
   useEffect(() => { setBgFailed(false); }, [previewBg]);
+  const cardBg = previewBg && !bgFailed ? previewBg : '';
 
   const activeStyleMeta = CARD_STYLES.find(s => s.id === config.card_style) || CARD_STYLES[0];
 
@@ -705,248 +1088,16 @@ export function Welcome() {
                 </div>
               </CardHeader>
               <CardContent>
-                {/* 1024x500 Aspect Ratio Container */}
-                <div className="relative w-full aspect-[1024/500] min-h-[190px] sm:min-h-[220px] rounded-xl overflow-hidden bg-[#090b10] border border-white/10 shadow-2xl flex items-center justify-center select-none">
-                  {/* Background Layer */}
-                  {previewBg && !bgFailed ? (
-                    <img
-                      src={previewBg}
-                      alt=""
-                      referrerPolicy="no-referrer"
-                      onError={() => setBgFailed(true)}
-                      className="absolute inset-0 w-full h-full object-cover"
-                      style={{ filter: config.card_style === 'glass' ? 'blur(3px)' : 'none' }}
-                    />
-                  ) : null}
-
-                  {/* 1. Legacy Neon Mockup */}
-                  {config.card_style === 'legacy' && (
-                    <div
-                      className="relative w-full h-full flex items-center px-4! sm:px-8! gap-3.5 sm:gap-6 overflow-hidden"
-                      style={{
-                        background: (previewBg && !bgFailed)
-                          ? 'rgba(10, 12, 20, 0.45)'
-                          : 'radial-gradient(circle at 20% 30%, #1e1b4b 0%, #0c0f1d 70%, #070913 100%)',
-                      }}
-                    >
-                      {/* Ambient Neon Blobs */}
-                      <div className="absolute -top-10 -left-10 w-44 h-44 bg-purple-500/25 blur-3xl rounded-full pointer-events-none" />
-                      <div className="absolute -bottom-10 -right-10 w-52 h-52 bg-cyan-500/20 blur-3xl rounded-full pointer-events-none" />
-
-                      {/* Cyber grid lines */}
-                      <div
-                        className="absolute inset-0 opacity-[0.07] pointer-events-none"
-                        style={{
-                          backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)',
-                          backgroundSize: '24px 24px',
-                        }}
-                      />
-
-                      {/* Avatar */}
-                      {config.draw_avatar && (
-                        <div className="relative w-13 h-13 sm:w-18 sm:h-18 rounded-full bg-gradient-to-tr from-purple-500 via-indigo-500 to-cyan-400 p-[2px]! shadow-[0_0_20px_rgba(168,85,247,0.4)] shrink-0 z-10">
-                          <div className="w-full h-full rounded-full bg-gray-950 flex items-center justify-center text-white">
-                            <User size={26} className="text-cyan-300" />
-                          </div>
-                          <span className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-gray-950 shadow" />
-                        </div>
-                      )}
-
-                      {/* Text */}
-                      {config.draw_text ? (
-                        <div className="relative z-10 min-w-0 flex-1">
-                          <div className="text-[9px] sm:text-[11px] font-bold tracking-widest text-cyan-400 uppercase mb-0.5! flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 inline-block animate-pulse shrink-0" />
-                            <span className="truncate">WELCOME TO THE SERVER</span>
-                          </div>
-                          <div className="text-base sm:text-xl font-extrabold text-white leading-tight truncate drop-shadow-md">
-                            NewUser#0001
-                          </div>
-                          <div className="inline-flex items-center gap-1.5 bg-white/10 backdrop-blur-md px-2.5! py-0.5! rounded-full text-[10px] sm:text-[11px] text-gray-200 mt-1.5! border border-white/15 max-w-full">
-                            <span className="shrink-0">Member #1,234</span>
-                            {config.show_guild_icon && (
-                              <span className="flex items-center gap-1 text-cyan-300 truncate">
-                                • <Globe size={11} className="shrink-0" /> <span className="truncate">Community</span>
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      ) : !config.draw_avatar ? (
-                        <div className="text-xs text-muted/60 text-center w-full z-10">
-                          [Graphic banner background only — overlays disabled]
-                        </div>
-                      ) : null}
-                    </div>
-                  )}
-
-                  {/* 2. Minimalist Glass Mockup */}
-                  {config.card_style === 'glass' && (
-                    <div
-                      className="relative w-full h-full flex flex-col items-center justify-center p-3! sm:p-4! overflow-hidden"
-                      style={{
-                        background: (previewBg && !bgFailed)
-                          ? 'rgba(12, 14, 24, 0.40)'
-                          : 'linear-gradient(145deg, #0d111c 0%, #151928 50%, #0a0d16 100%)',
-                      }}
-                    >
-                      {/* Frosted Center Glass Tile */}
-                      <div className="relative w-[90%] max-w-[420px] rounded-2xl bg-white/[0.04] border border-white/15 backdrop-blur-md shadow-2xl flex flex-col items-center justify-center p-3! sm:p-4! text-center my-auto!">
-                        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-indigo-400/50 to-transparent" />
-
-                        {config.draw_avatar && (
-                          <div className="relative w-12 h-12 sm:w-16 sm:h-16 rounded-full border-2 border-white/30 shadow-xl bg-gray-900/80 flex items-center justify-center text-white mb-2! z-10 ring-4 ring-indigo-500/20 shrink-0">
-                            <User size={24} className="text-indigo-300" />
-                          </div>
-                        )}
-
-                        {config.draw_text ? (
-                          <div className="z-10 min-w-0 max-w-full">
-                            <div className="text-sm sm:text-base font-bold text-white tracking-wide truncate">
-                              NewUser
-                            </div>
-                            <div className="text-[10px] sm:text-[11px] text-indigo-200/80 mt-0.5! truncate">
-                              Welcome to the server • Member #1,234
-                            </div>
-                            {config.show_guild_icon && (
-                              <div className="mt-1! text-[9px] sm:text-[10px] text-white/50 flex items-center justify-center gap-1 truncate">
-                                <Globe size={10} className="shrink-0" /> <span className="truncate">Verified Discord Server</span>
-                              </div>
-                            )}
-                          </div>
-                        ) : !config.draw_avatar ? (
-                          <div className="text-xs text-muted/60 text-center w-full z-10">
-                            [Glass container with overlays disabled]
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 3. Ticket Pass Mockup */}
-                  {config.card_style === 'ticket' && (
-                    <div
-                      className="relative w-full h-full flex items-center justify-center p-2.5! sm:p-4!"
-                      style={{
-                        background: (previewBg && !bgFailed)
-                          ? 'rgba(10, 11, 18, 0.45)'
-                          : 'linear-gradient(135deg, #12141f 0%, #0d0e17 100%)',
-                      }}
-                    >
-                      <div className="relative w-[95%] h-[90%] bg-[#171926] rounded-xl border border-pink-500/30 flex shadow-2xl overflow-hidden">
-                        {/* Left section: Ticket Main */}
-                        <div className="flex-[3] p-3! sm:p-3.5! flex flex-col justify-between min-w-0 h-full">
-                          <div className="flex justify-between items-center text-[9px] sm:text-[10px]">
-                            <span className="font-bold text-pink-400 tracking-wider truncate">VIP BOARDING PASS</span>
-                            <span className="text-white/40 font-mono shrink-0 ml-2!">#001234</span>
-                          </div>
-
-                          <div className="flex items-center gap-2.5 my-1! min-w-0">
-                            {config.draw_avatar && (
-                              <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-lg bg-gray-900 border border-pink-500/40 flex items-center justify-center text-pink-300 shrink-0">
-                                <User size={18} />
-                              </div>
-                            )}
-                            {config.draw_text ? (
-                              <div className="min-w-0 flex-1">
-                                <div className="text-xs sm:text-sm font-bold text-white leading-tight truncate">
-                                  NewUser
-                                </div>
-                                <div className="text-[9px] sm:text-[10px] text-gray-400 truncate">
-                                  Granted Member Clearance
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-
-                          <div className="flex justify-between border-t border-white/10 pt-1! text-[8px] sm:text-[9px] text-gray-400 font-mono gap-1 min-w-0 overflow-hidden">
-                            <span className="truncate">GATE: 01</span>
-                            <span className="truncate">DATE: TODAY</span>
-                            {config.show_guild_icon && <span className="truncate">AUTH: OK</span>}
-                          </div>
-                        </div>
-
-                        {/* Perforated Divider */}
-                        <div className="w-0 border-l border-dashed border-white/20 relative shrink-0">
-                          <div className="absolute -top-1.5 -left-1.5 w-3 h-3 rounded-full bg-[#090b10]" />
-                          <div className="absolute -bottom-1.5 -left-1.5 w-3 h-3 rounded-full bg-[#090b10]" />
-                        </div>
-
-                        {/* Right Stub: Barcode */}
-                        <div className="flex-1 bg-pink-500/10 p-2! sm:p-2.5! flex flex-col items-center justify-between shrink-0 min-w-[56px] h-full">
-                          <span className="text-[7px] sm:text-[8px] font-bold text-pink-400 uppercase tracking-widest">ADMIT</span>
-                          <div className="flex gap-0.5 h-5 sm:h-6 items-center">
-                            {[2, 3, 1, 3, 2, 3, 1, 2].map((w, idx) => (
-                              <div key={idx} className="bg-white/60" style={{ width: `${w}px`, height: '100%' }} />
-                            ))}
-                          </div>
-                          <span className="text-[7px] sm:text-[8px] text-gray-400 font-mono">VALID</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* 4. Cinematic Poster Mockup */}
-                  {config.card_style === 'cinematic' && (
-                    <div
-                      className="relative w-full h-full flex flex-col justify-between overflow-hidden"
-                      style={{
-                        background: (previewBg && !bgFailed)
-                          ? 'rgba(4, 7, 14, 0.40)'
-                          : 'radial-gradient(circle at 75% 50%, #0d2827 0%, #08151c 45%, #04070e 100%)',
-                      }}
-                    >
-                      {/* Top Letterbox Cinema Bar */}
-                      <div className="relative z-10 w-full px-3! sm:px-4! py-1.5! bg-black/75 backdrop-blur-sm border-b border-teal-500/20 flex justify-between items-center text-[8px] sm:text-[9px] tracking-wider text-teal-400 font-mono gap-2 min-w-0 overflow-hidden">
-                        <span className="font-bold border-b border-teal-400/80 pb-0.5! truncate">
-                          MEMBER NO. 1,234
-                        </span>
-                        <span className="text-white/60 uppercase truncate">
-                          ARRIVAL RECEPTION TERMINAL
-                        </span>
-                      </div>
-
-                      {/* Center Stage Dramatic Area */}
-                      <div className="relative z-10 flex items-center px-4! sm:px-8! gap-3 sm:gap-5 my-auto! min-w-0">
-                        {config.draw_avatar && (
-                          <div className="relative w-13 h-13 sm:w-16 sm:h-16 rounded-full border-2 border-teal-400/80 bg-gray-950 flex items-center justify-center text-teal-300 shadow-[0_0_24px_rgba(20,184,166,0.4)] shrink-0">
-                            <User size={24} />
-                          </div>
-                        )}
-
-                        {config.draw_text ? (
-                          <div className="min-w-0 flex-1">
-                            <div className="text-base sm:text-xl font-black text-white uppercase tracking-tight truncate drop-shadow-lg">
-                              NEWUSER
-                            </div>
-                            <div className="text-[10px] sm:text-xs text-teal-300 font-medium tracking-wide uppercase mt-0.5! truncate">
-                              has joined the community
-                            </div>
-                          </div>
-                        ) : !config.draw_avatar ? (
-                          <div className="text-xs text-teal-400/60 text-center w-full">
-                            [Cinematic Letterbox Canvas • Overlays Disabled]
-                          </div>
-                        ) : null}
-                      </div>
-
-                      {/* Bottom Letterbox Cinema Bar */}
-                      <div className="relative z-10 w-full px-3! sm:px-4! py-1.5! bg-black/75 backdrop-blur-sm border-t border-teal-500/20 flex justify-between items-center text-[8px] sm:text-[9px] text-gray-400 font-mono gap-2 min-w-0 overflow-hidden">
-                        <span className="truncate">STATUS: AUTHORIZED</span>
-                        {config.show_guild_icon && <span className="hidden sm:inline truncate">VERIFIED GUILD</span>}
-                        <span className="truncate">SECURE ARRIVAL</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Watermark Tag */}
-                  {config.card_style !== 'cinematic' && (
-                    <div className="absolute top-2.5 right-2.5 z-20 pointer-events-none opacity-40 hover:opacity-100 transition-opacity">
-                      <span className="text-[9px] font-mono text-white/70 bg-black/50 px-1.5! py-0.5! rounded">
-                        Live Simulation
-                      </span>
-                    </div>
-                  )}
-                </div>
+                <ScaledCanvas>
+                  <CardArt
+                    style={config.card_style}
+                    bg={cardBg}
+                    drawAvatar={config.draw_avatar}
+                    drawText={config.draw_text}
+                    showIcon={config.show_guild_icon}
+                    onBgError={() => setBgFailed(true)}
+                  />
+                </ScaledCanvas>
 
                 {bgFailed && (
                   <div className="mt-3! text-center text-xs text-danger">
@@ -954,10 +1105,24 @@ export function Welcome() {
                   </div>
                 )}
                 <div className="mt-3! text-center text-xs text-muted">
-                  Interactive real-time preview reflecting your selected visual style and element toggles.
+                  Same layout the bot renders. Your avatar, name and server icon replace the placeholders.
                 </div>
               </CardContent>
             </Card>
+
+            <div className="mt-5!">
+              <Card>
+                <CardHeader>
+                  <div>
+                    <CardTitle icon={MessageSquare}>Message Preview</CardTitle>
+                    <CardDescription>How the greeting looks in Discord, text included.</CardDescription>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <DiscordWelcomePreview config={config} botName={botName} bg={cardBg} onBgError={() => setBgFailed(true)} />
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
       )}
@@ -1026,27 +1191,7 @@ export function Welcome() {
               </div>
             </CardHeader>
             <CardContent>
-              <div className="p-4! rounded-xl bg-[#1e1f22] border border-[#2b2d31] font-sans text-sm text-gray-200">
-                <div className="flex items-center gap-2 mb-2!">
-                  <span className="font-bold text-white">{botName || 'GKR Bot'}</span>
-                  <span className="bg-[#5865f2] text-[10px] text-white font-semibold px-1! py-0.2! rounded">BOT</span>
-                  <span className="text-xs text-gray-400">Today at 12:00 PM</span>
-                </div>
-                <div className="text-gray-100 whitespace-pre-line leading-relaxed mb-3! break-words">
-                  {config.message
-                    .replaceAll('{user}', '@NewUser')
-                    .replaceAll('{member}', '@NewUser')
-                    .replaceAll('{username}', 'NewUser')
-                    .replaceAll('{server}', 'My Awesome Discord')
-                    .replaceAll('{member_count}', '1,234')
-                    .replaceAll('{count}', '1,234')}
-                </div>
-                {!config.card_only && (
-                  <div className="text-xs text-indigo-400 bg-indigo-500/10 p-2! rounded border border-indigo-500/20">
-                    🖼️ Card banner graphic is attached to this greeting.
-                  </div>
-                )}
-              </div>
+              <DiscordWelcomePreview config={config} botName={botName} bg={cardBg} onBgError={() => setBgFailed(true)} />
             </CardContent>
           </Card>
         </div>
