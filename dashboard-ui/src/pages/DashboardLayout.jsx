@@ -334,24 +334,24 @@ export function DashboardLayout({ user }) {
             </button>
 
             {/* Breadcrumb Navigation */}
-            <div className="topbar-breadcrumbs">
-              <Link to="/dashboard" className="breadcrumb-link">
+            <div className="topbar-breadcrumbs min-w-0">
+              <Link to="/dashboard" className="breadcrumb-link hidden sm:flex">
                 <Server size={14} className="text-muted" />
                 <span>Servers</span>
               </Link>
 
-              <span className="breadcrumb-separator">/</span>
+              <span className="breadcrumb-separator hidden sm:inline">/</span>
 
               {guild && (
-                <Link to={`/dashboard/${guildId}/overview`} className="breadcrumb-link">
-                  <span className="max-w-[140px] truncate">{guild.name}</span>
+                <Link to={`/dashboard/${guildId}/overview`} className="breadcrumb-link min-w-0">
+                  <span className="max-w-[100px] sm:max-w-[160px] truncate">{guild.name}</span>
                 </Link>
               )}
 
               {currentPageItem && (
                 <>
                   <span className="breadcrumb-separator">/</span>
-                  <span className="breadcrumb-current">
+                  <span className="breadcrumb-current max-w-[110px] sm:max-w-[200px] truncate">
                     {currentPageItem.name}
                   </span>
                 </>

@@ -111,7 +111,7 @@ function Music() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 1fr) minmax(280px, 1fr)', gap: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: '24px' }}>
         {/* Now Playing */}
         <Card>
           <CardContent style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>

@@ -580,7 +580,7 @@ function Tickets() {
 
       {/* TAB 2: HUB BUILDER */}
       {activeTab === 'hub' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(360px, 1fr) minmax(360px, 1fr)', gap: '24px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 360px), 1fr))', gap: '24px' }}>
           {/* Builder Form */}
           <Card>
             <CardHeader>

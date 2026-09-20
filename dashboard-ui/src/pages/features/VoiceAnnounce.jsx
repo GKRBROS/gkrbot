@@ -174,7 +174,7 @@ export default function VoiceAnnounce() {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 1.3fr) minmax(280px, 0.7fr)', gap: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: '24px' }}>
         {/* Left: Announcement Dispatcher */}
         <Card>
           <CardHeader>

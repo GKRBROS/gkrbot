@@ -254,7 +254,7 @@ export default function AISystem() {
         </CardContent>
       </Card>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(340px, 1.2fr) minmax(320px, 0.8fr)', gap: '24px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 340px), 1fr))', gap: '24px' }}>
         {/* Left Column: Personality, Channel & Directives */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
           {/* Persona Picker Card */}
