@@ -1003,6 +1003,7 @@ async def handle_welcome_post(request: web.Request):
         config.bot_role_id = int(data["bot_role_id"]) if data["bot_role_id"] else None
         
     # Background URL handling - safe preservation
+    bg_warning = None
     if data.get("clear_background"):
         config.background_path = None
     elif "background_url" in data:
@@ -1012,19 +1013,38 @@ async def handle_welcome_post(request: web.Request):
         elif bg_url.startswith("http://") or bg_url.startswith("https://"):
             try:
                 import aiohttp
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(bg_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                        if resp.status == 200:
+                from PIL import Image
+                import io as _io
+                headers = {"User-Agent": "Mozilla/5.0 (compatible; GKRBot/1.0)"}
+                async with aiohttp.ClientSession(headers=headers) as session:
+                    async with session.get(bg_url, timeout=aiohttp.ClientTimeout(total=20)) as resp:
+                        if resp.status != 200:
+                            bg_warning = f"Background not saved: the URL returned HTTP {resp.status}."
+                        else:
                             bg_data = await resp.read()
-                            is_gif = bg_url.lower().split("?")[0].endswith(".gif")
-                            fname = f"bg_{guild_id}.gif" if is_gif else f"bg_{guild_id}.png"
-                            dest = os.path.join(ASSETS_DIR, fname)
-                            with open(dest, "wb") as f:
-                                f.write(bg_data)
-                            config.background_path = dest
+                            try:
+                                img = Image.open(_io.BytesIO(bg_data))
+                                fmt = (img.format or "").upper()
+                                img.verify()
+                            except Exception:
+                                bg_warning = "Background not saved: that URL is not a valid image/GIF (use a direct image link)."
+                                fmt = None
+                            if fmt:
+                                # Decide by file CONTENT, not the URL extension
+                                ext = "gif" if fmt == "GIF" else "png"
+                                for old_ext in ("gif", "png"):
+                                    old_path = os.path.join(ASSETS_DIR, f"bg_{guild_id}.{old_ext}")
+                                    if old_ext != ext and os.path.exists(old_path):
+                                        try: os.remove(old_path)
+                                        except OSError: pass
+                                dest = os.path.join(ASSETS_DIR, f"bg_{guild_id}.{ext}")
+                                with open(dest, "wb") as f:
+                                    f.write(bg_data)
+                                config.background_path = dest
             except Exception as e:
                 print(f"[Welcome API] Failed to download background: {e}")
-                
+                bg_warning = f"Background not saved: could not download the URL ({e.__class__.__name__})."
+
     if "leave_enabled" in data:
         config.leave_enabled = _to_bool(data["leave_enabled"])
     if "leave_channel_id" in data:
@@ -1043,7 +1063,30 @@ async def handle_welcome_post(request: web.Request):
         synced = _replicate_welcome(bot, int(guild_id))
         print(f"[AutoSync] Welcome config replicated to {synced} other server(s)")
 
-    return web.json_response({"success": True})
+    resp = {"success": True}
+    if bg_warning:
+        resp["warning"] = bg_warning
+    return web.json_response(resp)
+
+async def handle_welcome_background(request: web.Request):
+    """Serve the saved welcome background so the dashboard preview can show it."""
+    user_id = await get_user_id(request)
+    if not user_id: return web.json_response({"error": "Unauthorized"}, status=401)
+
+    guild_id = request.match_info['guild_id']
+    if not await check_guild_permissions(request, guild_id, user_id):
+        return web.json_response({"error": "Missing permissions"}, status=403)
+
+    from welcome import WelcomeDatabase
+    config = WelcomeDatabase().get_config(int(guild_id))
+    path = config.background_path
+    if not path or not os.path.exists(path):
+        return web.json_response({"error": "No background set"}, status=404)
+
+    with open(path, "rb") as f:
+        body = f.read()
+    ctype = "image/gif" if body[:6] in (b"GIF87a", b"GIF89a") else "image/png"
+    return web.Response(body=body, content_type=ctype, headers={"Cache-Control": "no-store"})
 
 async def handle_welcome_test(request: web.Request):
     user_id = await get_user_id(request)
@@ -3575,6 +3618,7 @@ class DashboardAPI(commands.Cog):
             # Welcome
             web.get("/api/guilds/{guild_id}/welcome", handle_welcome_get),
             web.post("/api/guilds/{guild_id}/welcome", handle_welcome_post),
+            web.get("/api/guilds/{guild_id}/welcome/background", handle_welcome_background),
             web.post("/api/guilds/{guild_id}/welcome/test", handle_welcome_test),
             # Security & Anti-Nuke
             web.get("/api/guilds/{guild_id}/security", handle_security_get),

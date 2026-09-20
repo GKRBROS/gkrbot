@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../api';
 import SyncModal from './SyncModal';
@@ -137,6 +137,29 @@ export function Welcome() {
 
   const [savedConfig, setSavedConfig] = useState(null);
 
+  // Object URL of the background already saved on the server (for the preview)
+  const [savedBgUrl, setSavedBgUrl] = useState('');
+  const savedBgRef = useRef('');
+  const [bgFailed, setBgFailed] = useState(false);
+
+  const loadSavedBackground = useCallback(async () => {
+    try {
+      const res = await api.get(`/guilds/${guildId}/welcome/background`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      if (savedBgRef.current) URL.revokeObjectURL(savedBgRef.current);
+      savedBgRef.current = url;
+      setSavedBgUrl(url);
+    } catch {
+      if (savedBgRef.current) URL.revokeObjectURL(savedBgRef.current);
+      savedBgRef.current = '';
+      setSavedBgUrl('');
+    }
+  }, [guildId]);
+
+  useEffect(() => () => {
+    if (savedBgRef.current) URL.revokeObjectURL(savedBgRef.current);
+  }, []);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError('');
@@ -175,6 +198,13 @@ export function Welcome() {
         };
         setConfig(normalized);
         setSavedConfig(normalized);
+        if (normalized.has_background) {
+          loadSavedBackground();
+        } else {
+          if (savedBgRef.current) URL.revokeObjectURL(savedBgRef.current);
+          savedBgRef.current = '';
+          setSavedBgUrl('');
+        }
       } else {
         setConfig(DEFAULT_CONFIG);
         setSavedConfig(DEFAULT_CONFIG);
@@ -213,7 +243,7 @@ export function Welcome() {
     }
 
     setLoading(false);
-  }, [guildId]);
+  }, [guildId, loadSavedBackground]);
 
   useEffect(() => {
     fetchData();
@@ -273,7 +303,8 @@ export function Welcome() {
       }
 
       // withSync(data) only adds the sync_all flag; it does not perform the request.
-      await api.post(`/guilds/${guildId}/welcome`, withSync(payload));
+      const res = await api.post(`/guilds/${guildId}/welcome`, withSync(payload));
+      if (res.data?.warning) setError(res.data.warning);
 
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -326,6 +357,17 @@ export function Welcome() {
     { value: '', label: 'No role assigned' },
     ...roles.map(r => ({ value: r.id, label: `@${r.name}` }))
   ];
+
+  // What the live preview should show as background:
+  //  - a freshly pasted/selected URL wins,
+  //  - 'none' (Remove / Reset) means no background,
+  //  - otherwise fall back to the background already saved on the server.
+  const typedBg = (config.background_url || '').trim();
+  const previewBg = typedBg === 'none'
+    ? ''
+    : (typedBg || (config.has_background ? savedBgUrl : ''));
+
+  useEffect(() => { setBgFailed(false); }, [previewBg]);
 
   const activeStyleMeta = CARD_STYLES.find(s => s.id === config.card_style) || CARD_STYLES[0];
 
@@ -666,13 +708,14 @@ export function Welcome() {
                 {/* 1024x500 Aspect Ratio Container */}
                 <div className="relative w-full aspect-[1024/500] min-h-[190px] sm:min-h-[220px] rounded-xl overflow-hidden bg-[#090b10] border border-white/10 shadow-2xl flex items-center justify-center select-none">
                   {/* Background Layer */}
-                  {config.background_url && config.background_url !== 'none' ? (
-                    <div
-                      className="absolute inset-0 bg-cover bg-center"
-                      style={{
-                        backgroundImage: `url(${config.background_url})`,
-                        filter: config.card_style === 'glass' ? 'blur(3px)' : 'none',
-                      }}
+                  {previewBg && !bgFailed ? (
+                    <img
+                      src={previewBg}
+                      alt=""
+                      referrerPolicy="no-referrer"
+                      onError={() => setBgFailed(true)}
+                      className="absolute inset-0 w-full h-full object-cover"
+                      style={{ filter: config.card_style === 'glass' ? 'blur(3px)' : 'none' }}
                     />
                   ) : null}
 
@@ -681,8 +724,8 @@ export function Welcome() {
                     <div
                       className="relative w-full h-full flex items-center px-4! sm:px-8! gap-3.5 sm:gap-6 overflow-hidden"
                       style={{
-                        background: config.background_url && config.background_url !== 'none'
-                          ? 'rgba(10, 12, 20, 0.78)'
+                        background: (previewBg && !bgFailed)
+                          ? 'rgba(10, 12, 20, 0.45)'
                           : 'radial-gradient(circle at 20% 30%, #1e1b4b 0%, #0c0f1d 70%, #070913 100%)',
                       }}
                     >
@@ -741,8 +784,8 @@ export function Welcome() {
                     <div
                       className="relative w-full h-full flex flex-col items-center justify-center p-3! sm:p-4! overflow-hidden"
                       style={{
-                        background: config.background_url && config.background_url !== 'none'
-                          ? 'rgba(12, 14, 24, 0.72)'
+                        background: (previewBg && !bgFailed)
+                          ? 'rgba(12, 14, 24, 0.40)'
                           : 'linear-gradient(145deg, #0d111c 0%, #151928 50%, #0a0d16 100%)',
                       }}
                     >
@@ -784,8 +827,8 @@ export function Welcome() {
                     <div
                       className="relative w-full h-full flex items-center justify-center p-2.5! sm:p-4!"
                       style={{
-                        background: config.background_url && config.background_url !== 'none'
-                          ? 'rgba(10, 11, 18, 0.75)'
+                        background: (previewBg && !bgFailed)
+                          ? 'rgba(10, 11, 18, 0.45)'
                           : 'linear-gradient(135deg, #12141f 0%, #0d0e17 100%)',
                       }}
                     >
@@ -847,8 +890,8 @@ export function Welcome() {
                     <div
                       className="relative w-full h-full flex flex-col justify-between overflow-hidden"
                       style={{
-                        background: config.background_url && config.background_url !== 'none'
-                          ? 'rgba(4, 7, 14, 0.7)'
+                        background: (previewBg && !bgFailed)
+                          ? 'rgba(4, 7, 14, 0.40)'
                           : 'radial-gradient(circle at 75% 50%, #0d2827 0%, #08151c 45%, #04070e 100%)',
                       }}
                     >
@@ -905,6 +948,11 @@ export function Welcome() {
                   )}
                 </div>
 
+                {bgFailed && (
+                  <div className="mt-3! text-center text-xs text-danger">
+                    Couldn't load that image for the preview. Use a direct link to an image or GIF (ending in .png, .jpg or .gif).
+                  </div>
+                )}
                 <div className="mt-3! text-center text-xs text-muted">
                   Interactive real-time preview reflecting your selected visual style and element toggles.
                 </div>

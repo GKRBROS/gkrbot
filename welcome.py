@@ -906,6 +906,69 @@ def render_card(style: str, **kwargs) -> io.BytesIO:
     return fn(**kwargs)
 
 
+MAX_GIF_FRAMES = 24
+GIF_MAX_BYTES = 7_500_000   # stay under Discord's upload limit
+
+
+def _is_gif_file(path: Optional[str]) -> bool:
+    """Detect GIFs by content, not by file extension."""
+    if not path or not os.path.exists(path):
+        return False
+    try:
+        with open(path, "rb") as f:
+            return f.read(6) in (b"GIF87a", b"GIF89a")
+    except Exception:
+        return False
+
+
+def render_animated_card(style: str, gif_path: str, **kwargs) -> io.BytesIO:
+    """Render the chosen card style over EVERY frame of an animated GIF
+    background, so the avatar / text / overlays appear on the animation.
+    Frames are sampled (max MAX_GIF_FRAMES) and the result is shrunk until it
+    fits Discord's upload limit."""
+    import shutil
+    import tempfile
+
+    kwargs.pop("background_path", None)
+    src = Image.open(gif_path)
+    n = getattr(src, "n_frames", 1)
+    if n <= 1:
+        return render_card(style, background_path=gif_path, **kwargs)
+
+    step = max(1, -(-n // MAX_GIF_FRAMES))  # ceil division
+    frames, durations = [], []
+    tmpdir = tempfile.mkdtemp(prefix="welcome_gif_")
+    try:
+        idx = 0
+        while idx < n:
+            dur = 0
+            for j in range(idx, min(idx + step, n)):
+                src.seek(j)
+                dur += int(src.info.get("duration", 80) or 80)
+            src.seek(idx)
+            frame_path = os.path.join(tmpdir, f"f{idx}.png")
+            src.convert("RGBA").save(frame_path)
+            card = render_card(style, background_path=frame_path, **kwargs)
+            frames.append(Image.open(card).convert("RGB"))
+            durations.append(max(dur, 40))
+            idx += step
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    out = io.BytesIO()
+    for size in ((896, 438), (768, 375), (640, 313), (512, 250)):
+        resized = [f.resize(size, Image.Resampling.LANCZOS) for f in frames]
+        out = io.BytesIO()
+        resized[0].save(
+            out, format="GIF", save_all=True, append_images=resized[1:],
+            duration=durations, loop=0, disposal=2,
+        )
+        if out.tell() <= GIF_MAX_BYTES:
+            break
+    out.seek(0)
+    return out
+
+
 async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
     if not config.enabled or not config.channel_id:
         return
@@ -916,10 +979,13 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
 
     member_count = member.guild.member_count
 
-    is_gif = config.background_path and config.background_path.lower().endswith(".gif")
-    
-    # If it's a GIF or all overlays are disabled, send the raw file directly
-    if (is_gif or (not config.draw_avatar and not config.show_guild_icon and not config.draw_text)) and config.background_path and os.path.exists(config.background_path):
+    bg_exists = bool(config.background_path and os.path.exists(config.background_path))
+    is_gif = _is_gif_file(config.background_path)
+    no_overlays = not config.draw_avatar and not config.show_guild_icon and not config.draw_text
+
+    # Only when EVERY overlay is disabled do we post the raw background file.
+    # Animated GIFs now get the card drawn over each frame (see below).
+    if no_overlays and bg_exists:
         filename = "welcome.gif" if is_gif else "welcome.png"
         discord_file = discord.File(config.background_path, filename=filename)
         image_url = f"attachment://{filename}"
@@ -940,21 +1006,38 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
             except Exception:
                 pass
 
-        # Render card (dispatches to whichever style is configured)
-        card_file_bytes = render_card(
-            config.card_style,
+        render_kwargs = dict(
             avatar_bytes=avatar_bytes,
             guild_icon_bytes=guild_icon_bytes,
             username=member.display_name,
             member_count=member_count,
             guild_name=member.guild.name,
-            background_path=config.background_path,
             draw_avatar=config.draw_avatar,
             show_guild_icon=config.show_guild_icon,
             draw_text=config.draw_text,
         )
-        discord_file = discord.File(card_file_bytes, filename=f"welcome_{member.id}.jpg")
-        image_url = f"attachment://welcome_{member.id}.jpg"
+
+        import asyncio
+        loop = asyncio.get_running_loop()
+        ext = "jpg"
+        card_file_bytes = None
+        if is_gif and bg_exists:
+            try:
+                # PIL work is CPU-heavy: keep it off the event loop
+                card_file_bytes = await loop.run_in_executor(
+                    None,
+                    lambda: render_animated_card(config.card_style, config.background_path, **render_kwargs),
+                )
+                ext = "gif"
+            except Exception as e:
+                print(f"[Welcome] Animated card render failed, using static card: {e}")
+        if card_file_bytes is None:
+            card_file_bytes = await loop.run_in_executor(
+                None,
+                lambda: render_card(config.card_style, background_path=config.background_path, **render_kwargs),
+            )
+        discord_file = discord.File(card_file_bytes, filename=f"welcome_{member.id}.{ext}")
+        image_url = f"attachment://welcome_{member.id}.{ext}"
 
     # ── FEATURE: card-only mode ────────────────────────────────────────────
     # If enabled, skip the custom welcome_message entirely (it isn't needed
