@@ -5,7 +5,10 @@ import App from './App.jsx';
 import { BotProvider } from './BotContext.jsx';
 import './index.css';
 import './theme-flow.css';
+import './live-bg.css';
+import './landing.css';
 import { initMotion } from './motion.js';
+import AnimatedBackground from './AnimatedBackground.jsx';
 
 initMotion();
 
@@ -27,6 +30,7 @@ setHeadLink('apple-touch-icon', '/apple-touch-icon.png');
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
+      <AnimatedBackground />
       <BotProvider>
         <App />
       </BotProvider>

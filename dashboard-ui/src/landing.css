@@ -1,0 +1,289 @@
+/* ============================================================
+   landing.css — login / landing page design + motion
+   Import LAST:  index.css → theme-flow.css → live-bg.css → landing.css
+   Motion rules: only transform + opacity are animated (no blur/filter
+   animations), so it stays smooth on top of the live background.
+   ============================================================ */
+
+@property --ang {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes riseIn {
+  from { opacity: 0; transform: translate3d(0, 14px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes cardRise {
+  from { opacity: 0; transform: perspective(1100px) translate3d(0, 26px, 0) scale(0.97); }
+  to   { opacity: 1; transform: perspective(1100px) none; }
+}
+@keyframes chipPop {
+  from { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.92); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes gridRun   { to { transform: translate3d(0, 56px, 0); } }
+@keyframes spinAng   { to { --ang: 360deg; } }
+@keyframes textFlow  { to { background-position: 200% 0; } }
+@keyframes btnFlow   { to { background-position: 100% 0; } }
+@keyframes beamSwayA { from { transform: rotate(13deg); } to { transform: rotate(27deg); } }
+@keyframes beamSwayB { from { transform: rotate(-12deg); } to { transform: rotate(-28deg); } }
+@keyframes statusPing {
+  0%   { transform: scale(1);   opacity: 0.7; }
+  80%, 100% { transform: scale(3.2); opacity: 0; }
+}
+
+/* ── Stage ─────────────────────────────────────────────────── */
+/* One screen, no scrolling: the page is exactly the viewport tall and clips
+   everything. (It only scrolls on a really tiny window, where the card can't fit.) */
+.landing-viewport {
+  isolation: isolate;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.landing-viewport::-webkit-scrollbar { display: none; }
+
+/* Fixed + clipped layer for all decoration => adds nothing to the scroll height */
+.landing-decor {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Perspective grid floor that endlessly runs toward the viewer */
+.landing-grid {
+  position: absolute;
+  left: 50%;
+  bottom: -8%;
+  width: 190%;
+  height: 64%;
+  transform: translateX(-50%) perspective(520px) rotateX(63deg);
+  transform-origin: 50% 100%;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.55;
+  -webkit-mask-image: linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.5) 45%, transparent 90%);
+  mask-image: linear-gradient(to top, #000 0%, rgba(0, 0, 0, 0.5) 45%, transparent 90%);
+}
+.landing-grid::before {
+  content: '';
+  position: absolute;
+  inset: -56px 0 0 0;
+  background-image:
+    linear-gradient(rgba(124, 140, 255, 0.42) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(124, 140, 255, 0.42) 1px, transparent 1px);
+  background-size: 56px 56px;
+  animation: gridRun 2.8s linear infinite;
+  will-change: transform;
+}
+
+/* Two soft light beams that sway from the top */
+.landing-beam {
+  position: absolute;
+  top: -22%;
+  width: 34vmax;
+  height: 150%;
+  transform-origin: 50% 0;
+  filter: blur(34px);
+  mix-blend-mode: screen;
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform;
+}
+.landing-beam--a {
+  left: 6%;
+  background: linear-gradient(180deg, rgba(124, 140, 255, 0.26), transparent 68%);
+  animation: beamSwayA 15s ease-in-out infinite alternate;
+}
+.landing-beam--b {
+  right: 4%;
+  background: linear-gradient(180deg, rgba(56, 189, 248, 0.20), transparent 68%);
+  animation: beamSwayB 19s ease-in-out infinite alternate;
+}
+
+/* ── Card ──────────────────────────────────────────────────── */
+.landing-viewport .landing-card-elevated {
+  background: linear-gradient(180deg, rgba(22, 27, 45, 0.62), rgba(10, 12, 22, 0.70));
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 28px;
+  padding: 50px 44px 40px;
+  -webkit-backdrop-filter: blur(22px) saturate(165%);
+  backdrop-filter: blur(22px) saturate(165%);
+  box-shadow:
+    0 44px 90px -34px rgba(0, 0, 0, 0.9),
+    0 0 90px -34px rgba(124, 140, 255, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transform: perspective(1100px) rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform 0.28s ease-out;
+  animation: cardRise 0.95s var(--ease-out) backwards;
+  will-change: transform;
+}
+
+/* Rotating light travelling around the card edge */
+.landing-card-border {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.5px;
+  pointer-events: none;
+  background: conic-gradient(from var(--ang),
+      transparent 0 58%,
+      rgba(124, 140, 255, 0.95) 74%,
+      rgba(56, 189, 248, 0.95) 88%,
+      transparent 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: spinAng 7s linear infinite;
+}
+
+/* Soft light that follows the cursor */
+.landing-card-sheen {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(440px circle at var(--gx, 50%) var(--gy, 0%), rgba(140, 155, 255, 0.15), transparent 60%);
+  opacity: 0;
+  transition: opacity 0.35s ease;
+}
+.landing-viewport .landing-card-elevated:hover .landing-card-sheen { opacity: 1; }
+
+/* Staggered entrance: transform + opacity only */
+.landing-viewport .landing-card-elevated > :not(.landing-deco) {
+  animation: riseIn 0.7s var(--ease-out) backwards;
+  animation-delay: calc(0.22s + var(--n, 0) * 0.08s);
+}
+.landing-viewport .landing-card-elevated > .landing-brand-icon {
+  animation:
+    riseIn 0.7s var(--ease-out) 0.22s backwards,
+    floatY 6s ease-in-out 1.2s infinite;
+}
+.landing-viewport .landing-card-elevated > .landing-deco { animation: none; }
+.landing-viewport .landing-card-elevated > .landing-card-border { animation: spinAng 7s linear infinite; }
+
+/* ── Type ──────────────────────────────────────────────────── */
+.landing-viewport .landing-card-elevated > .landing-heading {
+  background: linear-gradient(100deg, #ffffff 0%, #c7d2ff 22%, #a78bfa 45%, #7dd3fc 70%, #ffffff 100%);
+  background-size: 200% 100%;
+  background-repeat: repeat-x;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation:
+    riseIn 0.7s var(--ease-out) calc(0.22s + var(--n, 0) * 0.08s) backwards,
+    textFlow 9s linear 1.2s infinite;
+}
+
+.landing-eyebrow {
+  background: linear-gradient(90deg, rgba(88, 101, 242, 0.16), rgba(56, 189, 248, 0.10));
+  border-color: rgba(124, 140, 255, 0.35);
+}
+
+.landing-description { color: #a3b1c6; }
+
+/* ── Feature chips ─────────────────────────────────────────── */
+.landing-viewport .landing-feature-chip {
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  animation: chipPop 0.55s var(--ease-spring) backwards;
+  animation-delay: calc(0.62s + var(--i, 0) * 0.05s);
+}
+.landing-viewport .landing-feature-chip:hover {
+  background: rgba(124, 140, 255, 0.16);
+  border-color: rgba(150, 165, 255, 0.55);
+  box-shadow: 0 0 22px -6px rgba(124, 140, 255, 0.7);
+  transform: translateY(-2px) scale(1.05);
+}
+
+/* ── Sign-in button ────────────────────────────────────────── */
+.landing-viewport .landing-discord-btn {
+  background: linear-gradient(110deg, #5865f2 0%, #7c5cff 40%, #38a0f8 75%, #5865f2 100%);
+  background-size: 200% 100%;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  box-shadow:
+    0 14px 38px -10px rgba(88, 101, 242, 0.85),
+    0 0 0 1px rgba(255, 255, 255, 0.06) inset,
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  animation: btnFlow 6s linear infinite;
+}
+.landing-viewport .landing-discord-btn:hover:not(:disabled) {
+  background: linear-gradient(110deg, #5865f2 0%, #7c5cff 40%, #38a0f8 75%, #5865f2 100%);
+  background-size: 200% 100%;
+  transform: translateY(-2px) scale(1.015);
+  box-shadow:
+    0 20px 46px -10px rgba(88, 101, 242, 0.95),
+    0 0 40px -8px rgba(56, 189, 248, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.landing-viewport .landing-discord-btn:disabled { animation-play-state: paused; }
+
+/* ── Footer status ─────────────────────────────────────────── */
+.landing-footer { color: #94a3b8; }
+
+.landing-status-dot {
+  position: relative;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+}
+.landing-status-dot::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: #10b981;
+  animation: statusPing 2.4s ease-out infinite;
+}
+
+/* ── Short screens: tighten spacing so everything fits without scrolling ── */
+@media (max-height: 860px) {
+  .landing-viewport { padding-top: 16px; padding-bottom: 16px; }
+  .landing-viewport .landing-card-elevated { padding: 34px 38px 28px; }
+  .landing-card-elevated > .landing-brand-icon--logo { margin-bottom: 16px; }
+  .landing-brand-icon--logo img { width: min(210px, 62%); }
+  .landing-eyebrow { margin-bottom: 12px; }
+  .landing-heading { margin-bottom: 8px; }
+  .landing-description { margin-bottom: 18px; }
+  .landing-features-grid { margin-bottom: 22px; }
+  .landing-permission-note { margin-top: 12px; }
+  .landing-footer { margin-top: 14px; }
+}
+@media (max-height: 720px) {
+  .landing-brand-icon--logo img { width: min(170px, 52%); }
+  .landing-description { display: none; }
+}
+
+/* ── Small screens / touch ─────────────────────────────────── */
+@media (max-width: 640px) {
+  .landing-viewport .landing-card-elevated { padding: 36px 20px 30px; border-radius: 22px; }
+  .landing-grid { opacity: 0.4; }
+  .landing-beam { filter: blur(24px); }
+}
+@media (hover: none) {
+  .landing-viewport .landing-card-elevated { transform: none; }
+}
+
+/* ── Reduced motion ────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .landing-grid::before,
+  .landing-beam,
+  .landing-card-border,
+  .landing-status-dot::after,
+  .landing-viewport .landing-discord-btn,
+  .landing-viewport .landing-card-elevated > .landing-heading {
+    animation: none !important;
+  }
+  .landing-viewport .landing-card-elevated { transform: none; animation: none; }
+  .landing-viewport .landing-card-elevated > * { animation: none !important; }
+}

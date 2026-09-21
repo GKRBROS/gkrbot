@@ -1,0 +1,25 @@
+/* Animated page background — import AFTER theme-flow.css */
+.live-bg {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: -1;            /* above body::before (dot grid), below all UI */
+  display: block;
+  pointer-events: none;
+  opacity: 0;
+  animation: liveBgIn 1.6s ease-out 0.1s forwards;
+}
+
+@keyframes liveBgIn {
+  to { opacity: 1; }
+}
+
+/* The canvas replaces the old CSS aurora blobs */
+html.has-live-bg body::after {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-bg { animation: none; opacity: 1; }
+}

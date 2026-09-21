@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import api from '../api';
 import { useBotName } from '../BotContext';
 import {
@@ -32,6 +32,26 @@ const FEATURES = [
 export function Landing() {
   const botName = useBotName();
   const [loading, setLoading] = useState(false);
+  const cardRef = useRef(null);
+
+  // Card tilts toward the cursor and a soft light follows it
+  const handlePointerMove = (e) => {
+    const el = cardRef.current;
+    if (!el || e.pointerType === 'touch') return;
+    const r = el.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width;
+    const py = (e.clientY - r.top) / r.height;
+    el.style.setProperty('--rx', `${((0.5 - py) * 5).toFixed(2)}deg`);
+    el.style.setProperty('--ry', `${((px - 0.5) * 7).toFixed(2)}deg`);
+    el.style.setProperty('--gx', `${(px * 100).toFixed(1)}%`);
+    el.style.setProperty('--gy', `${(py * 100).toFixed(1)}%`);
+  };
+  const handlePointerLeave = () => {
+    const el = cardRef.current;
+    if (!el) return;
+    el.style.setProperty('--rx', '0deg');
+    el.style.setProperty('--ry', '0deg');
+  };
 
   // Normalize bot title so it never becomes "Bot Bot" or empty
   const cleanName = (botName || '').trim();
@@ -72,39 +92,50 @@ export function Landing() {
   return (
     <div className="landing-viewport">
       {/* Background ambient lighting */}
-      <div className="landing-glow-top" aria-hidden="true" />
-      <div className="landing-glow-bottom" aria-hidden="true" />
+      {/* Decor lives in its own fixed, clipped layer so it can never make the page scroll */}
+      <div className="landing-decor" aria-hidden="true">
+        <div className="landing-grid" />
+        <div className="landing-beam landing-beam--a" />
+        <div className="landing-beam landing-beam--b" />
+        <div className="landing-glow-top" />
+        <div className="landing-glow-bottom" />
+      </div>
 
       {/* Main Container */}
       <div className="landing-container">
-        <main className="landing-card-elevated">
+        <main
+          ref={cardRef}
+          className="landing-card-elevated"
+          onPointerMove={handlePointerMove}
+          onPointerLeave={handlePointerLeave}
+        >
           {/* Brand Logo */}
-          <div className="landing-brand-icon landing-brand-icon--logo">
+          <div className="landing-brand-icon landing-brand-icon--logo" style={{ '--n': 0 }}>
             <img src="/logo-wordmark.png" alt="GKR" />
           </div>
 
           {/* Eyebrow Label */}
-          <div className="landing-eyebrow">
+          <div className="landing-eyebrow" style={{ '--n': 1 }}>
             <Sparkles size={13} />
             <span>Management Dashboard</span>
           </div>
 
           {/* Bot Title */}
-          <h1 className="landing-heading">
+          <h1 className="landing-heading" style={{ '--n': 2 }}>
             {titleName} Bot Dashboard
           </h1>
 
           {/* Description */}
-          <p className="landing-description">
+          <p className="landing-description" style={{ '--n': 3 }}>
             Configure server automations, tickets, stream alerts, moderation, and community features seamlessly from one unified control center.
           </p>
 
           {/* Feature Badges */}
-          <div className="landing-features-grid" role="list" aria-label="Feature list">
+          <div className="landing-features-grid" role="list" aria-label="Feature list" style={{ '--n': 4 }}>
             {FEATURES.map((f, i) => {
               const Icon = f.icon;
               return (
-                <span key={i} className="landing-feature-chip" role="listitem">
+                <span key={i} className="landing-feature-chip" role="listitem" style={{ '--i': i }}>
                   <Icon size={13} />
                   <span>{f.label}</span>
                 </span>
@@ -113,7 +144,7 @@ export function Landing() {
           </div>
 
           {/* Discord Login Button */}
-          <div className="landing-btn-wrapper">
+          <div className="landing-btn-wrapper" style={{ '--n': 5 }}>
             <button
               onClick={handleLogin}
               disabled={loading}
@@ -149,15 +180,19 @@ export function Landing() {
           </div>
 
           {/* Permissions note */}
-          <p className="landing-permission-note">
+          <p className="landing-permission-note" style={{ '--n': 6 }}>
             <Lock size={12} />
             <span>Requires Administrator or Manage Server permissions.</span>
           </p>
+
+          {/* Decorative layers (absolute, never take part in layout) */}
+          <span className="landing-deco landing-card-border" aria-hidden="true" />
+          <span className="landing-deco landing-card-sheen" aria-hidden="true" />
         </main>
 
         {/* Subtle Footer */}
         <footer className="landing-footer">
-          <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10b981' }} />
+          <span className="landing-status-dot" aria-hidden="true" />
           <span>Unified Bot Control Panel</span>
         </footer>
       </div>
