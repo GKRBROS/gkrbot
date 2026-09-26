@@ -769,23 +769,46 @@ async def ping_bot(interaction: discord.Interaction):
 @ping_group.command(name="role", description="Mention a specific role (pinging only)")
 @app_commands.default_permissions(manage_messages=True)
 async def ping_role(interaction: discord.Interaction, role: discord.Role, message: str = None):
-    # Temporarily make the role mentionable if it isn't
-    was_mentionable = role.mentionable
-    try:
-        if not was_mentionable:
+    me = interaction.guild.me
+    bot_can_force_ping = me.guild_permissions.mention_everyone  # "Mention @everyone, @here, and All Roles"
+
+    # Only bother toggling `mentionable` if the bot can't already force-ping via permission,
+    # AND the role isn't already mentionable, AND the bot is actually able to edit it
+    # (Manage Roles + sits above the role in the hierarchy).
+    need_toggle = (
+        not role.mentionable
+        and not bot_can_force_ping
+        and me.guild_permissions.manage_roles
+        and me.top_role > role
+    )
+
+    toggled = False
+    if need_toggle:
+        try:
             await role.edit(mentionable=True)
-        
+            toggled = True
+        except (discord.Forbidden, discord.HTTPException):
+            toggled = False  # fall through and try sending anyway
+
+    try:
         content = f"{role.mention}"
         if message:
             content += f"\n{message}"
-            
+
         await interaction.response.send_message(content, allowed_mentions=discord.AllowedMentions(roles=True))
-    except discord.Forbidden:
-        await interaction.response.send_message("❌ I do not have permission to mention that role or edit its status.", ephemeral=True)
+
+        # Warn (quietly) if we likely couldn't actually notify anyone
+        if not role.mentionable and not bot_can_force_ping and not toggled:
+            await interaction.followup.send(
+                "⚠️ That role isn't mentionable and I don't have the **Mention @everyone, @here, and All Roles** "
+                "permission (or I can't edit that role due to role hierarchy), so this may not have actually "
+                "notified members. Grant me that permission, move my role above it, or make the role mentionable.",
+                ephemeral=True,
+            )
     except Exception as e:
         await interaction.response.send_message(f"❌ Error: {e}", ephemeral=True)
     finally:
-        if not was_mentionable:
+        if toggled:
             try:
                 await role.edit(mentionable=False)
             except Exception:
