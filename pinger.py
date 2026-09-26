@@ -338,6 +338,9 @@ class PingerCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
+    # bot.add_cog() already walks the cog's class attributes and registers
+    # `pinger` (an app_commands.Group) on the tree — a second, manual
+    # bot.tree.add_command(cog.pinger) call here re-adds the same group and
+    # raises CommandAlreadyRegistered.
     cog = PingerCog(bot)
     await bot.add_cog(cog)
-    bot.tree.add_command(cog.pinger)
