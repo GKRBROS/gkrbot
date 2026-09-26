@@ -5,6 +5,7 @@ import { Button } from '../components/Button';
 import { Badge } from '../components/Badge';
 import { EmptyState } from '../components/EmptyState';
 import { Skeleton } from '../components/Skeleton';
+import { Loader } from '../components/Loader';
 import { useBotName } from '../BotContext';
 import {
   Search,
@@ -187,17 +188,7 @@ export function ServerSelector() {
 
         {/* Grid or States */}
         {loading ? (
-          <div className="server-grid">
-            {[1, 2, 3, 4, 5, 6].map(i => (
-              <div key={i} className="server-card-skeleton">
-                <Skeleton width="52px" height="52px" rounded="xl" />
-                <div className="flex-1 min-w-0">
-                  <Skeleton width="65%" height="16px" style={{ marginBottom: '8px' }} />
-                  <Skeleton width="40%" height="12px" />
-                </div>
-              </div>
-            ))}
-          </div>
+          <Loader label="Loading your servers…" />
         ) : guilds.length === 0 ? (
           <div className="server-empty-panel">
             <EmptyState

@@ -3583,7 +3583,35 @@ class DashboardAPI(commands.Cog):
         _load_sessions()
         app = web.Application(middlewares=[cors_middleware])
         app["bot"] = self.bot
-        
+
+        # Public marketing-site + support-ticket routes, and the owner-only admin panel.
+        # Wrapped so a missing file or bad import can NEVER silently swallow these
+        # routes -- you will see it printed at startup instead of getting a
+        # confusing 404/405 from the site later.
+        try:
+            from public_site_api import register_public_routes
+            register_public_routes(app, _get_session)
+            print("[Dashboard] Public site routes registered (stats, commands, config, support/tickets)")
+        except Exception as e:
+            print(f"[Dashboard] FAILED to register public site routes: {e!r}")
+            print("[Dashboard] Check that public_site_api.py is uploaded next to dashboard_api.py and the bot was restarted.")
+
+        try:
+            from admin_api import register_admin_routes
+            register_admin_routes(app, get_user_id)
+            print("[Dashboard] Admin panel routes registered (whoami, tickets, bot-banner)")
+        except Exception as e:
+            print(f"[Dashboard] FAILED to register admin routes: {e!r}")
+            print("[Dashboard] Check that admin_api.py is uploaded next to dashboard_api.py and the bot was restarted.")
+
+        try:
+            from devnews_api import register_devnews_routes
+            register_devnews_routes(app, get_user_id)
+            print("[Dashboard] Dev News routes registered (public feed + admin create/delete)")
+        except Exception as e:
+            print(f"[Dashboard] FAILED to register Dev News routes: {e!r}")
+            print("[Dashboard] Check that devnews_api.py is uploaded next to dashboard_api.py and the bot was restarted.")
+
         # Add routes
         app.add_routes([
             web.get("/api/auth/discord", handle_login),

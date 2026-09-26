@@ -433,6 +433,7 @@ async def setup_hook():
         "voice_announce",    # New: Voice Channel Announcer (Edge Neural TTS)
         "radio",             # New: 24/7 Ultra-Low PC Usage Radio & Audio Streaming
         "cache_cleaner",     # New: Owner-only /clearcache (pycache, temp, .cache)
+        "pinger",            # New: /pinger - repeating role ping in a channel
     ]
     for ext in extensions:
         try:

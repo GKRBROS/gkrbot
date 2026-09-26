@@ -1,11 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import api from './api';
+import { Loader } from './components/Loader';
 
 // Pages
-import Landing from './pages/Landing';
+import Home from './pages/Home';
 import AuthCallback from './pages/AuthCallback';
 import ServerSelector from './pages/ServerSelector';
+import Commands from './pages/Commands';
+import DevNews from './pages/DevNews';
+import Support from './pages/Support';
+import Docs from './pages/Docs';
+import Status from './pages/Status';
+import Admin from './pages/Admin';
 import DashboardLayout from './pages/DashboardLayout';
 import Overview from './pages/features/Overview';
 import StreamAlerts from './pages/features/StreamAlerts';
@@ -36,16 +43,37 @@ import Community from './pages/features/Community';
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  // The deck loader fires exactly twice by design:
+  //  1) HERE, once, on the very first load/refresh of the site -- any route.
+  //     `loading` only starts true and is only ever set back to false; it
+  //     never resets on navigation, so this can't re-appear later.
+  //  2) Inside ServerSelector (Dashboard) and Admin, which mount fresh (and
+  //     so start their own `loading`/`checking` state) every time you
+  //     navigate to /dashboard or /admin -- covering Home -> Dashboard and
+  //     Dashboard -> Admin without this component needing to know about
+  //     routes at all. Every other page has no such mount-time fetch gate,
+  //     so navigating between them is always instant.
 
   useEffect(() => {
     // StrictMode runs this effect twice. Ignore results of the stale run so a
     // failed duplicate request cannot delete the token of a successful one.
     let cancelled = false;
 
+    // The loader's card animation needs real time to actually play — without
+    // this, a fast/no-token check (the common case on the Home page) hides it
+    // almost instantly and the deck never finishes its first cycle.
+    const MIN_LOADER_MS = 3400;
+    const started = Date.now();
+    const finishLoading = () => {
+      const elapsed = Date.now() - started;
+      const wait = Math.max(0, MIN_LOADER_MS - elapsed);
+      setTimeout(() => { if (!cancelled) setLoading(false); }, wait);
+    };
+
     const fetchUser = async () => {
       const token = localStorage.getItem('bot_dashboard_token');
       if (!token) {
-        if (!cancelled) setLoading(false);
+        finishLoading();
         return;
       }
       try {
@@ -61,7 +89,7 @@ function App() {
           localStorage.removeItem('bot_dashboard_token');
         }
       }
-      if (!cancelled) setLoading(false);
+      finishLoading();
     };
     fetchUser();
 
@@ -69,12 +97,23 @@ function App() {
   }, []);
 
   if (loading) {
-    return <div style={{ display: 'flex', height: '100vh', alignItems: 'center', justifyContent: 'center' }}>Loading...</div>;
+    return <Loader label="Loading..." />;
   }
 
   return (
     <Routes>
-      <Route path="/" element={user ? <Navigate to="/dashboard" /> : <Landing />} />
+      {/* Public marketing site — always visible, signed in or not */}
+      <Route path="/" element={<Home user={user} />} />
+      <Route path="/commands" element={<Commands user={user} />} />
+      <Route path="/devnews" element={<DevNews user={user} />} />
+      <Route path="/support" element={<Support user={user} />} />
+      <Route path="/docs" element={<Docs user={user} />} />
+      <Route path="/status" element={<Status user={user} />} />
+      <Route path="/admin" element={<Admin user={user} />} />
+      {/* "admin" typed/linked as if it were a guild id under /dashboard -- send it to the real Admin route */}
+      <Route path="/dashboard/admin" element={<Navigate to="/admin" replace />} />
+      <Route path="/dashboard/admin/*" element={<Navigate to="/admin" replace />} />
+
       <Route path="/auth/callback" element={<AuthCallback setUser={setUser} />} />
 
       {/* Protected Routes */}
