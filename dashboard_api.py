@@ -293,6 +293,29 @@ def _replicate_welcome(bot, source_guild_id):
         print(f"[AutoSync] welcome failed: {e}")
         return 0
 
+def _replicate_pinger(bot, source_guild_id):
+    try:
+        from pinger import PingerDatabase
+        p_db = PingerDatabase()
+        src_cfg = p_db.get(int(source_guild_id))
+        count = 0
+        for g in _target_guilds(bot, source_guild_id):
+            try:
+                tgt_cfg = p_db.get(g.id)
+                tgt_cfg.text = src_cfg.text
+                tgt_cfg.interval_seconds = src_cfg.interval_seconds
+                # Channel and role IDs are server-specific, so they never copy across —
+                # only the reusable settings (message text, interval) are synced.
+                p_db.save(tgt_cfg)
+                count += 1
+            except Exception as e:
+                print(f"[AutoSync] pinger -> {g.name}: {e}")
+        return count
+    except Exception as e:
+        print(f"[AutoSync] pinger failed: {e}")
+        return 0
+
+
 def _replicate_security(bot, source_guild_id):
     try:
         import security
@@ -1142,6 +1165,114 @@ async def handle_welcome_test(request: web.Request):
         return web.json_response({"success": True, "message": "Test welcome card sent successfully!"})
 
 # --- Music ---
+
+# --- Pinger Endpoints ---
+async def handle_pinger_get(request: web.Request):
+    user_id = await get_user_id(request)
+    if not user_id: return web.json_response({"error": "Unauthorized"}, status=401)
+
+    guild_id = request.match_info['guild_id']
+    if not await check_guild_permissions(request, guild_id, user_id):
+        return web.json_response({"error": "Missing permissions"}, status=403)
+
+    from pinger import PingerDatabase, MIN_INTERVAL_SECONDS, MAX_ROLES_PER_GUILD, MAX_TEXT_LENGTH
+    cfg = PingerDatabase().get(int(guild_id))
+
+    return web.json_response({
+        "config": {
+            "enabled": cfg.enabled,
+            "channel_id": str(cfg.channel_id) if cfg.channel_id else "",
+            "role_ids": [str(r) for r in cfg.role_ids],
+            "text": cfg.text,
+            "interval_seconds": cfg.interval_seconds,
+        },
+        "limits": {
+            "min_interval_seconds": MIN_INTERVAL_SECONDS,
+            "max_roles": MAX_ROLES_PER_GUILD,
+            "max_text_length": MAX_TEXT_LENGTH,
+        }
+    })
+
+async def handle_pinger_post(request: web.Request):
+    user_id = await get_user_id(request)
+    if not user_id: return web.json_response({"error": "Unauthorized"}, status=401)
+
+    guild_id = request.match_info['guild_id']
+    if not await check_guild_permissions(request, guild_id, user_id):
+        return web.json_response({"error": "Missing permissions"}, status=403)
+
+    data = await request.json()
+
+    from pinger import PingerDatabase, MIN_INTERVAL_SECONDS, MAX_ROLES_PER_GUILD, MAX_TEXT_LENGTH
+    db = PingerDatabase()
+    cfg = db.get(int(guild_id))
+
+    if "channel_id" in data:
+        cfg.channel_id = int(data["channel_id"]) if data["channel_id"] else None
+
+    if "role_ids" in data:
+        try:
+            role_ids = [int(r) for r in data["role_ids"] if str(r).strip()]
+        except (TypeError, ValueError):
+            return web.json_response({"error": "Invalid role list."}, status=400)
+        if len(role_ids) > MAX_ROLES_PER_GUILD:
+            return web.json_response({"error": f"You can add at most {MAX_ROLES_PER_GUILD} roles."}, status=400)
+        cfg.role_ids = role_ids
+
+    if "text" in data:
+        text = str(data["text"] or "")
+        if len(text) > MAX_TEXT_LENGTH:
+            return web.json_response({"error": f"Text must be {MAX_TEXT_LENGTH} characters or fewer."}, status=400)
+        cfg.text = text
+
+    if "interval_seconds" in data:
+        try:
+            interval = int(data["interval_seconds"])
+        except (TypeError, ValueError):
+            return web.json_response({"error": "Interval must be a number of seconds."}, status=400)
+        if interval < MIN_INTERVAL_SECONDS:
+            return web.json_response({"error": f"Interval must be at least {MIN_INTERVAL_SECONDS} seconds."}, status=400)
+        cfg.interval_seconds = interval
+
+    warning = None
+    if "enabled" in data:
+        turning_on = _to_bool(data["enabled"])
+        if turning_on and not cfg.enabled:
+            # Mirror the /pinger start slash command: require a channel and at
+            # least one role, and fire on the very next loop tick.
+            if not cfg.channel_id:
+                return web.json_response({"error": "Set a channel before starting Pinger."}, status=400)
+            if not cfg.role_ids:
+                return web.json_response({"error": "Add at least one role before starting Pinger."}, status=400)
+            cfg.next_run_at = 0
+        if not turning_on and cfg.enabled:
+            # Mirror /pinger stop: delete the live ping so it doesn't sit
+            # there forever with the automation now switched off.
+            bot: commands.Bot = request.app["bot"]
+            if cfg.channel_id and cfg.last_message_id:
+                channel = bot.get_channel(cfg.channel_id)
+                if channel:
+                    try:
+                        old = await channel.fetch_message(cfg.last_message_id)
+                        await old.delete()
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        pass
+            cfg.last_message_id = None
+        cfg.enabled = turning_on
+
+    db.save(cfg)
+    print(f"[Pinger API] saved guild={guild_id} enabled={cfg.enabled} "
+          f"channel={cfg.channel_id} roles={len(cfg.role_ids)} interval={cfg.interval_seconds}")
+
+    if _auto_sync_requested(data, request):
+        bot: commands.Bot = request.app["bot"]
+        synced = _replicate_pinger(bot, int(guild_id))
+        print(f"[AutoSync] Pinger config replicated to {synced} other server(s)")
+
+    resp = {"success": True}
+    if warning:
+        resp["warning"] = warning
+    return web.json_response(resp)
 
 async def handle_music_get(request: web.Request):
     user_id = await get_user_id(request)
@@ -3652,6 +3783,8 @@ class DashboardAPI(commands.Cog):
             # Welcome
             web.get("/api/guilds/{guild_id}/welcome", handle_welcome_get),
             web.post("/api/guilds/{guild_id}/welcome", handle_welcome_post),
+            web.get("/api/guilds/{guild_id}/pinger", handle_pinger_get),
+            web.post("/api/guilds/{guild_id}/pinger", handle_pinger_post),
             web.get("/api/guilds/{guild_id}/welcome/background", handle_welcome_background),
             web.post("/api/guilds/{guild_id}/welcome/test", handle_welcome_test),
             # Security & Anti-Nuke

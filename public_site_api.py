@@ -133,13 +133,17 @@ def _collect_commands(bot) -> list:
 async def _resolve_ticket_channel(bot):
     raw = (os.getenv("SUPPORT_TICKET_CHANNEL_ID") or "").strip()
     if not raw.isdigit():
+        print("[PublicSite] SUPPORT_TICKET_CHANNEL_ID is not set (or not numeric) — tickets will 503.")
         return None
     cid = int(raw)
     ch = bot.get_channel(cid)
     if ch is None:
         try:
             ch = await bot.fetch_channel(cid)
-        except Exception:
+        except Exception as e:
+            # Distinguish "wrong ID" / "bot not in that server" / "no permission"
+            # from "not configured" so this doesn't have to be guessed from a 503 alone.
+            print(f"[PublicSite] Could not resolve SUPPORT_TICKET_CHANNEL_ID={cid}: {e!r}")
             return None
     return ch
 

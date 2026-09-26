@@ -39,6 +39,7 @@ import ServerLogs from './pages/features/ServerLogs';
 import Birthdays from './pages/features/Birthdays';
 import Leaderboard from './pages/features/Leaderboard';
 import Community from './pages/features/Community';
+import Pinger from './pages/features/Pinger';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -147,6 +148,7 @@ function App() {
         <Route path="voice-announce" element={<VoiceAnnounce />} />
         <Route path="role-sync" element={<RoleSync />} />
         <Route path="sync" element={<ServerSync />} />
+        <Route path="pinger" element={<Pinger />} />
       </Route>
 
       {/* Fallback route for unknown paths */}

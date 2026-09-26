@@ -22,6 +22,7 @@ import {
   Zap,
   Terminal,
   Mic,
+  Bell,
   Music,
   Radio,
   Coins,
@@ -81,6 +82,7 @@ const PAGE_DEFINITIONS = [
       { id: 'auto-reactions', name: 'Auto Reactions', path: 'auto-reactions', icon: Zap },
       { id: 'custom-commands', name: 'Custom Commands', path: 'custom-commands', icon: Terminal },
       { id: 'temp-vc', name: 'Temp Voice Channels', path: 'temp-vc', icon: Mic },
+      { id: 'pinger', name: 'Pinger', path: 'pinger', icon: Bell },
     ]
   },
   {
