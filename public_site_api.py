@@ -46,7 +46,17 @@ CATEGORIES = {
     "other": ("💬 Other", 0x99AAB5),
 }
 
-HIDDEN_COMMANDS = {"clearcache"}          # owner-only commands are not shown publicly
+# Staff/developer-only tooling never appears on the public Commands page (or in
+# the public command count). Hidden three ways so it stays hidden even if a
+# command is renamed or a new one is added to one of these cogs:
+#   1) by top-level command name        (HIDDEN_COMMANDS)
+#   2) by the python module/cog it lives in (HIDDEN_MODULES)
+#   3) by env var, no code change needed:  HIDDEN_PUBLIC_COMMANDS=name1,name2
+HIDDEN_COMMANDS = {"clearcache", "blacklist", "unblacklist"}
+HIDDEN_MODULES = {"blacklist", "dev_global_logs", "cache_cleaner"}
+HIDDEN_COMMANDS |= {
+    n.strip().lower() for n in (os.getenv("HIDDEN_PUBLIC_COMMANDS") or "").split(",") if n.strip()
+}
 MAX_PER_HOUR = 3                          # tickets per IP / user per hour
 MIN_GAP_SECONDS = 20                      # min seconds between two tickets
 
@@ -111,9 +121,12 @@ def _collect_commands(bot) -> list:
             if isinstance(cmd, app_commands.Group):
                 continue
             name = cmd.qualified_name
-            if name.split(" ")[0] in HIDDEN_COMMANDS:
+            if name.split(" ")[0].lower() in HIDDEN_COMMANDS:
                 continue
             binding = getattr(cmd, "binding", None)
+            module = (getattr(cmd, "module", None) or (type(binding).__module__ if binding is not None else "") or "")
+            if module.split(".")[-1] in HIDDEN_MODULES:
+                continue
             category = _pretty_cog(getattr(binding, "qualified_name", None) or type(binding).__name__
                                    if binding is not None else
                                    (cmd.root_parent.name if getattr(cmd, "root_parent", None) else "General"))
@@ -133,17 +146,13 @@ def _collect_commands(bot) -> list:
 async def _resolve_ticket_channel(bot):
     raw = (os.getenv("SUPPORT_TICKET_CHANNEL_ID") or "").strip()
     if not raw.isdigit():
-        print("[PublicSite] SUPPORT_TICKET_CHANNEL_ID is not set (or not numeric) — tickets will 503.")
         return None
     cid = int(raw)
     ch = bot.get_channel(cid)
     if ch is None:
         try:
             ch = await bot.fetch_channel(cid)
-        except Exception as e:
-            # Distinguish "wrong ID" / "bot not in that server" / "no permission"
-            # from "not configured" so this doesn't have to be guessed from a 503 alone.
-            print(f"[PublicSite] Could not resolve SUPPORT_TICKET_CHANNEL_ID={cid}: {e!r}")
+        except Exception:
             return None
     return ch
 
