@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { SitePage } from '../components/SiteLayout';
-import { ShieldAlert, ImageIcon, Loader2, Ticket, ExternalLink, Newspaper, Trash2, Send } from 'lucide-react';
+import { ShieldAlert, ImageIcon, Loader2, Ticket, ExternalLink, Newspaper, Trash2, Send, Ban } from 'lucide-react';
 import { Loader, Spinner } from '../components/Loader';
+import { Link } from 'react-router-dom';
 import '../admin-panel.css';
 
 function timeAgo(ts) {
@@ -141,6 +142,9 @@ export function Admin({ user }) {
                 <span>Last update</span>
               </div>
             </div>
+            <Link to="/admin/blacklist" className="site-btn site-btn-ghost" style={{ marginTop: 12 }}>
+              <Ban size={15} /> <span>Blacklist Management</span>
+            </Link>
           </div>
 
           <div className="admin-bento">
@@ -280,4 +284,4 @@ export function Admin({ user }) {
   );
 }
 
-export default Admin; 
+export default Admin;

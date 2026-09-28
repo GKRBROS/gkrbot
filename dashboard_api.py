@@ -3743,6 +3743,14 @@ class DashboardAPI(commands.Cog):
             print(f"[Dashboard] FAILED to register Dev News routes: {e!r}")
             print("[Dashboard] Check that devnews_api.py is uploaded next to dashboard_api.py and the bot was restarted.")
 
+        try:
+            from blacklist_api import register_blacklist_routes
+            register_blacklist_routes(app, get_user_id)
+            print("[Dashboard] Blacklist routes registered (servers + members, bot staff only)")
+        except Exception as e:
+            print(f"[Dashboard] FAILED to register Blacklist routes: {e!r}")
+            print("[Dashboard] Check that blacklist.py and blacklist_api.py are uploaded next to dashboard_api.py and the bot was restarted.")
+
         # Add routes
         app.add_routes([
             web.get("/api/auth/discord", handle_login),
