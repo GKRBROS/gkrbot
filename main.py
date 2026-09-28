@@ -397,7 +397,6 @@ async def setup_hook():
         "stream_alerts",
         "tickets",
         "protection",
-        "blacklist",         # New: global server/member blacklist (dev-only commands)
         "imageinfo",
         "temp_vc",
         "server_template",
@@ -435,6 +434,9 @@ async def setup_hook():
         "radio",             # New: 24/7 Ultra-Low PC Usage Radio & Audio Streaming
         "cache_cleaner",     # New: Owner-only /clearcache (pycache, temp, .cache)
         "pinger",            # New: /pinger - repeating role ping in a channel
+        "blacklist",         # New: global server/member blacklist (dev-only commands) -- kept LAST so its
+                              # command-tree check chains onto (wraps) every other cog's checks, regardless
+                              # of load order elsewhere in this list.
     ]
     for ext in extensions:
         try:

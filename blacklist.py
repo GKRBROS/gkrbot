@@ -276,13 +276,19 @@ async def blacklist_gate(interaction: discord.Interaction) -> bool:
     return True
 
 
+GENERIC_ERROR_TEXT = "⚠️ This command couldn't be completed. Please try again later."
+
+
 async def _silent_ack(interaction: discord.Interaction) -> None:
-    """Acknowledge without showing the user anything, so Discord doesn't
-    surface its own 'This interaction failed' toast. Best-effort: if the
-    interaction was already responded to elsewhere, this just no-ops."""
+    """Shows a generic failure message -- the SAME wording a normal error
+    would show -- so a blacklisted server/user sees an ordinary-looking
+    failure with no mention of a blacklist. Best-effort: if the interaction
+    was already responded to elsewhere, this just no-ops."""
     try:
         if not interaction.response.is_done():
-            await interaction.response.defer()
+            await interaction.response.send_message(GENERIC_ERROR_TEXT, ephemeral=True)
+        else:
+            await interaction.followup.send(GENERIC_ERROR_TEXT, ephemeral=True)
     except (discord.InteractionResponded, discord.HTTPException, discord.NotFound):
         pass
 
@@ -305,13 +311,25 @@ class BlacklistCog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
-        # Global gate for prefix commands.
+        # Global gate for prefix commands. bot.add_check() is CUMULATIVE --
+        # every check added by every cog must pass, regardless of load order,
+        # so this part is already safe no matter when "blacklist" loads.
         self.bot.add_check(self._prefix_check)
-        # Global gate for slash + context-menu commands. This intentionally
-        # OVERWRITES bot.tree.interaction_check; if another cog in this
-        # project also sets one, only the last cog loaded wins, so keep
-        # "blacklist" near the top of main.py's extensions list.
-        self.bot.tree.interaction_check = self._tree_check
+
+        # Global gate for slash + context-menu commands. Unlike add_check(),
+        # CommandTree.interaction_check is a SINGLE attribute -- whichever cog
+        # sets it last normally wins, which could silently disable this check
+        # if another cog loads afterward and overwrites it. To make this safe
+        # regardless of extension load order, we CHAIN onto whatever check
+        # (if any) is already installed instead of replacing it outright.
+        previous_check = self.bot.tree.interaction_check
+
+        async def combined_check(interaction: discord.Interaction) -> bool:
+            if not await self._tree_check(interaction):
+                return False
+            return await previous_check(interaction)
+
+        self.bot.tree.interaction_check = combined_check
 
     async def cog_unload(self):
         try:
@@ -320,9 +338,16 @@ class BlacklistCog(commands.Cog):
             pass
 
     async def _prefix_check(self, ctx: commands.Context) -> bool:
+        blocked = False
         if ctx.guild and await is_server_blacklisted(ctx.guild.id):
-            return False
-        if await is_member_blacklisted(ctx.author.id):
+            blocked = True
+        elif await is_member_blacklisted(ctx.author.id):
+            blocked = True
+        if blocked:
+            try:
+                await ctx.send(GENERIC_ERROR_TEXT)
+            except discord.HTTPException:
+                pass
             return False
         return True
 

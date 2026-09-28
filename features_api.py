@@ -94,6 +94,19 @@ async def guild_access_middleware(request: web.Request, handler):
     if not sess:
         return _json_error("Unauthorized", 401)
 
+    # A blacklisted server or a blacklisted caller gets a plain 404, as if the
+    # server simply doesn't exist -- no "you're blacklisted" message, no 403
+    # that would confirm the server exists but is off-limits. Checked BEFORE
+    # the bot-staff bypass below, so even staff testing the flow see the same
+    # 404 a real blacklisted user would (staff can still use /unblacklist).
+    try:
+        from blacklist import is_server_blacklisted, is_member_blacklisted
+        guild_id = int(m.group(1))
+        if await is_server_blacklisted(guild_id) or await is_member_blacklisted(int(sess.get("user_id", 0))):
+            return _json_error("Not Found", 404)
+    except ImportError:
+        pass  # blacklist.py not installed -- nothing to enforce
+
     if _is_bot_staff(request.app["bot"], sess.get("user_id")):
         return await handler(request)
 
