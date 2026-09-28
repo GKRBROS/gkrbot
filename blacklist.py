@@ -63,7 +63,7 @@ from discord.ext import commands
 
 DB_PATH = Path(__file__).resolve().parent / "blacklist.sqlite3"
 DEV_GUILD_ID = os.getenv("BLACKLIST_DEV_GUILD_ID", "").strip()
-_DEV_GUILD = discord.Object(id=int(DEV_GUILD_ID)) if DEV_GUILD_ID.isdigit() else None
+_DEV_GUILD = int(DEV_GUILD_ID) if DEV_GUILD_ID.isdigit() else None
 
 MAX_REASON_LEN = 300
 
@@ -531,9 +531,9 @@ class BlacklistCog(commands.Cog):
 
 async def setup(bot: commands.Bot) -> None:
     cog = BlacklistCog(bot)
+    # NOTE: do NOT also call bot.tree.add_command() for the groups — Groups
+    # declared as Cog class attributes are registered automatically by add_cog.
     await bot.add_cog(cog)
-    bot.tree.add_command(cog.blacklist_group)
-    bot.tree.add_command(cog.unblacklist_group)
     if _DEV_GUILD:
         print(f"[Blacklist] Commands restricted to dev guild {DEV_GUILD_ID} — invisible everywhere else.")
     else:

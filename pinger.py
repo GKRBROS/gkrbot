@@ -344,3 +344,4 @@ async def setup(bot: commands.Bot) -> None:
     # raises CommandAlreadyRegistered.
     cog = PingerCog(bot)
     await bot.add_cog(cog)
+    print("📌 Pinger system loaded!")
