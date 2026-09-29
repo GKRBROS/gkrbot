@@ -130,7 +130,13 @@ def make_banner_handler(get_user_id):
         except Exception as e:
             return _err(f"Failed to set the banner: {e}", 500)
 
-        print(f"[AdminPanel] Bot banner updated by user {await get_user_id(request)}")
+        actor_id = await get_user_id(request)
+        print(f"[AdminPanel] Bot banner updated by user {actor_id}")
+        try:
+            from weblog import post_weblog
+            await post_weblog("Bot Banner Changed", f"<@{actor_id}>", f"New image: {url}", color=0x5865F2)
+        except Exception:
+            pass
         return web.json_response({"success": True})
 
     return handle_banner

@@ -293,6 +293,37 @@ async def _silent_ack(interaction: discord.Interaction) -> None:
         pass
 
 
+def _extract_event_ids(args) -> tuple:
+    """Best-effort (guild_id, user_id) from a discord.py event's positional
+    args, covering the common event shapes (message, member, voice state,
+    reaction, role, channel, raw_* events, ...). Returns (None, None) when it
+    can't tell -- which lets bot-lifecycle events (on_ready, on_connect, ...)
+    through untouched, since blocking those indiscriminately would be unsafe."""
+    guild_id = None
+    user_id = None
+    for a in args:
+        if guild_id is None:
+            g = getattr(a, "guild", None)
+            gid = getattr(g, "id", None) or getattr(a, "guild_id", None)
+            if isinstance(gid, int):
+                guild_id = gid
+        if user_id is None:
+            for attr in ("author", "user", "member"):
+                who = getattr(a, attr, None)
+                uid = getattr(who, "id", None)
+                if isinstance(uid, int):
+                    user_id = uid
+                    break
+            else:
+                uid = getattr(a, "id", None) if isinstance(a, (discord.Member, discord.User)) else None
+                uid = uid or getattr(a, "user_id", None)
+                if isinstance(uid, int):
+                    user_id = uid
+        if guild_id is not None and user_id is not None:
+            break
+    return guild_id, user_id
+
+
 def _clean_reason(reason: Optional[str]) -> str:
     if not reason:
         return ""
@@ -303,6 +334,32 @@ def _fmt_time(ts: Optional[int]) -> str:
     return f"<t:{ts}:f>" if ts else "unknown"
 
 
+async def force_disconnect_voice(bot: commands.Bot, guild_id: int) -> bool:
+    """Immediately stop any playback (radio, music, etc.) and disconnect the
+    bot from voice in this guild. Needed because blacklisting only stops
+    FUTURE commands/events -- a connection made and a stream started before
+    the blacklist existed keeps running on its own until something tells it
+    to stop. Called right when a server is blacklisted (see the /blacklist
+    server command and blacklist_api.py's add_server), not just relied on
+    passively. Safe to call even if nothing is connected."""
+    guild = bot.get_guild(guild_id)
+    if guild is None or guild.voice_client is None:
+        return False
+    vc = guild.voice_client
+    try:
+        if vc.is_playing() or vc.is_paused():
+            vc.stop()
+    except Exception:
+        pass
+    try:
+        await vc.disconnect(force=True)
+    except Exception as e:
+        print(f"[Blacklist] Failed to force-disconnect voice in guild {guild_id}: {e}")
+        return False
+    print(f"[Blacklist] Disconnected from voice in blacklisted guild {guild_id}")
+    return True
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Cog
 # ──────────────────────────────────────────────────────────────────────────
@@ -311,6 +368,38 @@ class BlacklistCog(commands.Cog):
         self.bot = bot
 
     async def cog_load(self):
+        # Global gate for every EVENT LISTENER in every cog (on_voice_state_update,
+        # on_member_join, on_reaction_add, sticky/auto-react/leveling on_message
+        # handlers, radio's reconnect logic, etc.) -- NOT just commands. Commands
+        # (interaction_check / add_check below) only cover slash/prefix commands
+        # themselves; without this, a blacklisted guild's other passive features
+        # (voice reconnect, auto-reactions, XP, welcome messages...) kept running
+        # because discord.py dispatches events to every listening cog regardless.
+        #
+        # discord.py calls Client._run_event(coro, event_name, *args, **kwargs)
+        # once PER LISTENER for every dispatched event -- this is the one place
+        # that sees every single cog's on_xxx handler individually, so it's the
+        # correct choke point (patching Client.dispatch() instead would also
+        # block the bot's OWN built-in command processing, going silent again).
+        original_run_event = self.bot._run_event
+        bot_ref = self.bot
+
+        async def patched_run_event(coro, event_name, *args, **kwargs):
+            if event_name != "interaction":
+                is_builtin_on_message = (
+                    event_name == "message"
+                    and getattr(coro, "__func__", None) is type(bot_ref).on_message
+                )
+                if not is_builtin_on_message:
+                    guild_id, user_id = _extract_event_ids(args)
+                    if (guild_id and await is_server_blacklisted(guild_id)) or (
+                        user_id and await is_member_blacklisted(user_id)
+                    ):
+                        return  # this ONE listener is skipped; other guilds/users are unaffected
+            await original_run_event(coro, event_name, *args, **kwargs)
+
+        self.bot._run_event = patched_run_event
+
         # Global gate for prefix commands. bot.add_check() is CUMULATIVE --
         # every check added by every cog must pass, regardless of load order,
         # so this part is already safe no matter when "blacklist" loads.
@@ -339,7 +428,11 @@ class BlacklistCog(commands.Cog):
 
     async def _prefix_check(self, ctx: commands.Context) -> bool:
         blocked = False
-        if ctx.guild and await is_server_blacklisted(ctx.guild.id):
+        # The guild's OWNER may still run commands in a blacklisted server (so
+        # they can e.g. check status or reach out) -- regular members ("players")
+        # cannot. A member blacklist always applies regardless, even to the owner.
+        is_owner_exempt = bool(ctx.guild and ctx.guild.owner_id == ctx.author.id)
+        if ctx.guild and not is_owner_exempt and await is_server_blacklisted(ctx.guild.id):
             blocked = True
         elif await is_member_blacklisted(ctx.author.id):
             blocked = True
@@ -353,7 +446,10 @@ class BlacklistCog(commands.Cog):
 
     async def _tree_check(self, interaction: discord.Interaction) -> bool:
         blocked = False
-        if interaction.guild_id and await is_server_blacklisted(interaction.guild_id):
+        is_owner_exempt = bool(
+            interaction.guild and interaction.user and interaction.guild.owner_id == interaction.user.id
+        )
+        if interaction.guild_id and not is_owner_exempt and await is_server_blacklisted(interaction.guild_id):
             blocked = True
         elif interaction.user and await is_member_blacklisted(interaction.user.id):
             blocked = True
@@ -409,8 +505,11 @@ class BlacklistCog(commands.Cog):
         gid = int(server_id)
         guild = self.bot.get_guild(gid)
         STORE.add_server(gid, guild.name if guild else "", _clean_reason(reason), interaction.user.id)
+        disconnected = await force_disconnect_voice(self.bot, gid)
         await interaction.response.send_message(
-            f"✅ Server `{gid}`{f' ({guild.name})' if guild else ''} is now blacklisted.", ephemeral=True
+            f"✅ Server `{gid}`{f' ({guild.name})' if guild else ''} is now blacklisted."
+            + (" Disconnected it from voice." if disconnected else ""),
+            ephemeral=True,
         )
 
     @unblacklist_group.command(name="server", description="Remove a server from the blacklist")
@@ -470,8 +569,9 @@ class BlacklistCog(commands.Cog):
         gid = int(server_id)
         guild = self.bot.get_guild(gid)
         # Blacklist FIRST (so even if leaving fails/is slow, the guild is
-        # already inert), then attempt to leave.
+        # already inert), then stop any live voice/audio, then attempt to leave.
         STORE.add_server(gid, guild.name if guild else "", _clean_reason(reason), interaction.user.id)
+        await force_disconnect_voice(self.bot, gid)
         left = False
         if guild:
             try:

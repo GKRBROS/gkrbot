@@ -46,7 +46,12 @@ def _row(r) -> dict:
 
 def register_blacklist_routes(app: web.Application, get_user_id) -> None:
     from admin_api import _is_admin
-    from blacklist import STORE, _log_action, is_bot_staff_id  # noqa: F401 (import validates module wiring early)
+    from blacklist import STORE, _log_action, is_bot_staff_id, force_disconnect_voice  # noqa: F401 (import validates module wiring early)
+    try:
+        from weblog import post_weblog
+    except Exception:
+        async def post_weblog(*a, **k):  # weblog.py not installed -- logging becomes a no-op
+            return False
 
     async def require_admin(request: web.Request):
         if not await _is_admin(request, get_user_id):
@@ -80,8 +85,15 @@ def register_blacklist_routes(app: web.Application, get_user_id) -> None:
         bot = request.app["bot"]
         gid = int(guild_id)
         guild = bot.get_guild(gid)
-        STORE.add_server(gid, guild.name if guild else "", _clean_reason((data or {}).get("reason")), admin_id)
-        return web.json_response({"success": True})
+        reason = _clean_reason((data or {}).get("reason"))
+        STORE.add_server(gid, guild.name if guild else "", reason, admin_id)
+        disconnected = await force_disconnect_voice(bot, gid)
+        await post_weblog(
+            "Server Blacklisted", f"<@{admin_id}>",
+            f"Server: {guild.name if guild else 'Unknown'} (`{gid}`)\nReason: {reason or 'none given'}",
+            color=0xED4245,
+        )
+        return web.json_response({"success": True, "disconnected_voice": disconnected})
 
     async def remove_server(request: web.Request):
         admin_id = await require_admin(request)
@@ -93,6 +105,7 @@ def register_blacklist_routes(app: web.Application, get_user_id) -> None:
         ok = STORE.remove_server(int(guild_id), admin_id)
         if not ok:
             return _err("That server isn't blacklisted.", 404)
+        await post_weblog("Server Unblacklisted", f"<@{admin_id}>", f"Server: `{guild_id}`", color=0x57F287)
         return web.json_response({"success": True})
 
     async def leave_server(request: web.Request):
@@ -109,7 +122,9 @@ def register_blacklist_routes(app: web.Application, get_user_id) -> None:
         gid = int(guild_id)
         bot = request.app["bot"]
         guild = bot.get_guild(gid)
-        STORE.add_server(gid, guild.name if guild else "", _clean_reason((data or {}).get("reason")), admin_id)
+        reason = _clean_reason((data or {}).get("reason"))
+        STORE.add_server(gid, guild.name if guild else "", reason, admin_id)
+        await force_disconnect_voice(bot, gid)
         left = False
         if guild:
             try:
@@ -117,6 +132,11 @@ def register_blacklist_routes(app: web.Application, get_user_id) -> None:
                 left = True
             except Exception as e:
                 print(f"[BlacklistAPI] Failed to leave guild {gid}: {e}")
+        await post_weblog(
+            "Server Blacklisted + Left", f"<@{admin_id}>",
+            f"Server: {guild.name if guild else 'Unknown'} (`{gid}`)\nReason: {reason or 'none given'}\nLeft: {'yes' if left else 'no'}",
+            color=0xED4245,
+        )
         return web.json_response({"success": True, "left": left})
 
     # ── members ──────────────────────────────────────────────────────
@@ -140,7 +160,13 @@ def register_blacklist_routes(app: web.Application, get_user_id) -> None:
         bot = request.app["bot"]
         uid = int(user_id)
         user = bot.get_user(uid)
-        STORE.add_member(uid, str(user) if user else "", _clean_reason((data or {}).get("reason")), admin_id)
+        reason = _clean_reason((data or {}).get("reason"))
+        STORE.add_member(uid, str(user) if user else "", reason, admin_id)
+        await post_weblog(
+            "Member Blacklisted", f"<@{admin_id}>",
+            f"User: {user if user else 'Unknown'} (`{uid}`)\nReason: {reason or 'none given'}",
+            color=0xED4245,
+        )
         return web.json_response({"success": True})
 
     async def remove_member(request: web.Request):
@@ -153,6 +179,7 @@ def register_blacklist_routes(app: web.Application, get_user_id) -> None:
         ok = STORE.remove_member(int(user_id), admin_id)
         if not ok:
             return _err("That user isn't blacklisted.", 404)
+        await post_weblog("Member Unblacklisted", f"<@{admin_id}>", f"User: `{user_id}`", color=0x57F287)
         return web.json_response({"success": True})
 
     app.add_routes([
