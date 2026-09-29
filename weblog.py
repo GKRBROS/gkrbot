@@ -366,16 +366,12 @@ class WeblogCog(commands.Cog):
         _bot_ref = bot
 
     async def cog_load(self) -> None:
-        if _DEV_GUILD:
-            self.bot.tree.add_command(self.weblog_group, guild=discord.Object(id=_DEV_GUILD))
-        # Register globally so /weblog setup can be run in any guild
-        self.bot.tree.add_command(self.weblog_group)
+        if self.bot.tree.get_command("weblog") is None:
+            self.bot.tree.add_command(self.weblog_group)  # global only — target guild is set via /weblog setup
         asyncio.create_task(self._startup_check())
 
     async def cog_unload(self) -> None:
         try:
-            if _DEV_GUILD:
-                self.bot.tree.remove_command("weblog", guild=discord.Object(id=_DEV_GUILD))
             self.bot.tree.remove_command("weblog")
         except Exception:
             pass
