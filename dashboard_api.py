@@ -169,6 +169,21 @@ async def handle_callback(request: web.Request):
     }
     _save_sessions()
 
+    try:
+        from weblog import post_weblog
+        u_name = user_data.get("username", "Unknown")
+        u_id = user_data.get("id", "")
+        asyncio.create_task(post_weblog(
+            "User Signed In",
+            actor_label=f"{u_name} ({u_id})",
+            details=f"User signed into dashboard via Discord OAuth",
+            color=0x57F287,
+            category="auth",
+            actor_id=u_id,
+        ))
+    except Exception as e:
+        print(f"[Dashboard API] Failed to log sign-in: {e}")
+
     return web.json_response({"token": session_id, "user": SESSIONS[session_id]})
 
 def _get_session(request: web.Request):
@@ -1081,6 +1096,21 @@ async def handle_welcome_post(request: web.Request):
     print(f"[Welcome API] saved guild={guild_id} enabled={config.enabled} "
           f"style={getattr(config, 'card_style', None)} card_only={getattr(config, 'card_only', None)}")
 
+    try:
+        from weblog import post_weblog
+        bot = request.app["bot"]
+        g = bot.get_guild(guild_id)
+        asyncio.create_task(post_weblog(
+            "Updated Welcome & Leave Settings",
+            actor_label=f"<@{user_id}>",
+            details=f"Saved welcome configuration (enabled={config.enabled}, leave={config.leave_enabled})",
+            category="welcome",
+            actor_id=user_id,
+            guild_id=guild_id,
+            guild_name=g.name if g else "",
+        ))
+    except Exception: pass
+
     if _auto_sync_requested(data, request):
         bot: commands.Bot = request.app["bot"]
         synced = _replicate_welcome(bot, int(guild_id))
@@ -1285,36 +1315,87 @@ async def handle_music_get(request: web.Request):
     bot = request.app["bot"]
     guild = bot.get_guild(guild_id)
     if not guild or not guild.voice_client:
-        return web.json_response({"is_playing": False})
+        return web.json_response({"is_playing": False, "connected": False})
         
     player = guild.voice_client
+    vc_name = player.channel.name if hasattr(player, 'channel') and player.channel else None
+    vc_id = str(player.channel.id) if hasattr(player, 'channel') and player.channel else None
+
     if not hasattr(player, 'current') or not player.current:
-        return web.json_response({"is_playing": False})
+        return web.json_response({
+            "is_playing": False,
+            "connected": True,
+            "voice_channel_id": vc_id,
+            "voice_channel_name": vc_name,
+        })
         
     track = player.current
     queue_list = []
     if hasattr(player, 'queue'):
         for q_track in list(player.queue):
             queue_list.append({
-                "title": q_track.title,
-                "author": q_track.author,
-                "length": q_track.length,
+                "title": getattr(q_track, "title", "Unknown"),
+                "author": getattr(q_track, "author", "Unknown"),
+                "length": getattr(q_track, "length", 0),
             })
             
     return web.json_response({
         "is_playing": True,
-        "paused": player.paused,
-        "volume": player.volume,
+        "connected": True,
+        "paused": getattr(player, "paused", False),
+        "volume": getattr(player, "volume", 100),
         "loop_mode": getattr(player, "loop_mode", None),
+        "voice_channel_id": vc_id,
+        "voice_channel_name": vc_name,
         "current": {
-            "title": track.title,
-            "author": track.author,
-            "length": track.length,
-            "position": player.position,
-            "thumbnail": track.artwork if hasattr(track, "artwork") else None
+            "title": getattr(track, "title", "Unknown"),
+            "author": getattr(track, "author", "Unknown"),
+            "length": getattr(track, "length", 0),
+            "position": getattr(player, "position", 0),
+            "thumbnail": getattr(track, "artwork", None) if hasattr(track, "artwork") else None
         },
         "queue": queue_list
     })
+
+async def handle_music_search(request: web.Request):
+    user_id = await get_user_id(request)
+    if not user_id: return web.json_response({"error": "Unauthorized"}, status=401)
+    
+    guild_id = int(request.match_info['guild_id'])
+    if not await check_guild_permissions(request, guild_id, user_id):
+        return web.json_response({"error": "Missing permissions"}, status=403)
+        
+    bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+    
+    q = request.query.get("q", "").strip()
+    if not q:
+        return web.json_response({"results": []})
+        
+    try:
+        import music as music_module
+        cog = bot.cogs.get("Music") or bot.cogs.get("MusicCog")
+        if not cog:
+            return web.json_response({"error": "Music cog not loaded"}, status=503)
+            
+        res = await cog._resolve(q, guild.me)
+        tracks = res.get("tracks", [])
+        if res.get("type") == "single" and res.get("track"):
+            tracks = [res.get("track")]
+            
+        results = []
+        for tr in tracks[:15]:
+            results.append({
+                "title": getattr(tr, "title", "Unknown"),
+                "author": getattr(tr, "author", "Unknown"),
+                "length": getattr(tr, "length", 0),
+                "uri": getattr(tr, "uri", ""),
+                "thumbnail": getattr(tr, "artwork", None) if hasattr(tr, "artwork") else None,
+            })
+        return web.json_response({"results": results})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 async def handle_music_control(request: web.Request):
     user_id = await get_user_id(request)
@@ -1329,11 +1410,103 @@ async def handle_music_control(request: web.Request):
     
     bot = request.app["bot"]
     guild = bot.get_guild(guild_id)
-    if not guild or not guild.voice_client:
+    if not guild:
+        return web.json_response({"error": "Guild not found"}, status=404)
+
+    # Blacklist check
+    try:
+        from blacklist import STORE as BLACKLIST_STORE
+        if guild_id in BLACKLIST_STORE.server_ids:
+            return web.json_response({"error": "This server is blacklisted from audio playback."}, status=403)
+    except Exception:
+        pass
+        
+    import music as music_module
+    cog = bot.cogs.get("Music") or bot.cogs.get("MusicCog")
+
+    # Connect to channel
+    if action == "connect":
+        vc_id = data.get("voice_channel_id")
+        if not vc_id:
+            return web.json_response({"error": "voice_channel_id is required"}, status=400)
+        vc_channel = guild.get_channel(int(vc_id))
+        if not vc_channel or not isinstance(vc_channel, discord.VoiceChannel):
+            return web.json_response({"error": "Voice channel not found"}, status=404)
+        try:
+            await music_module.get_or_create_music_vc(bot, guild, vc_channel, self_deaf=True)
+            try:
+                from weblog import post_weblog
+                asyncio.create_task(post_weblog(
+                    "Music: Connected to Channel",
+                    actor_label=f"<@{user_id}>",
+                    details=f"Connected music player to {vc_channel.name}",
+                    category="music",
+                    actor_id=user_id,
+                    guild_id=guild_id,
+                    guild_name=guild.name,
+                ))
+            except Exception: pass
+            return web.json_response({"success": True, "channel": vc_channel.name})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    # Play or add to queue
+    elif action == "play":
+        query = data.get("query")
+        if not query:
+            return web.json_response({"error": "Track query or URL is required"}, status=400)
+            
+        vc_id = data.get("voice_channel_id")
+        player = music_module.get_player(guild)
+        if not player or not getattr(player, 'connected', False):
+            if not vc_id:
+                return web.json_response({"error": "Bot is not connected to a voice channel. Please select a voice channel."}, status=400)
+            vc_channel = guild.get_channel(int(vc_id))
+            if not vc_channel or not isinstance(vc_channel, discord.VoiceChannel):
+                return web.json_response({"error": "Voice channel not found"}, status=404)
+            player = await music_module.get_or_create_music_vc(bot, guild, vc_channel, self_deaf=True)
+
+        if not cog:
+            return web.json_response({"error": "Music cog not loaded"}, status=503)
+
+        res = await cog._resolve(query, guild.me)
+        if res.get("type") == "error":
+            return web.json_response({"error": res.get("message", "No tracks found")}, status=404)
+            
+        tracks = res.get("tracks", [])
+        if res.get("type") == "single" and res.get("track"):
+            tracks = [res.get("track")]
+        if not tracks:
+            return web.json_response({"error": "No tracks found"}, status=404)
+
+        if not player.playing and not player.paused:
+            first_track = tracks[0]
+            for tr in tracks[1:]:
+                await player.queue.put_wait(tr)
+            await player.set_volume(100)
+            await player.play(first_track)
+        else:
+            for tr in tracks:
+                await player.queue.put_wait(tr)
+
+        try:
+            from weblog import post_weblog
+            asyncio.create_task(post_weblog(
+                "Music: Queued Track",
+                actor_label=f"<@{user_id}>",
+                details=f"Queued track(s) matching '{query}'",
+                category="music",
+                actor_id=user_id,
+                guild_id=guild_id,
+                guild_name=guild.name,
+            ))
+        except Exception: pass
+        return web.json_response({"success": True, "count": len(tracks)})
+
+    player = guild.voice_client
+    if not player:
         return web.json_response({"error": "Not playing"}, status=400)
         
-    player = guild.voice_client
-    
     if action == "pause":
         await player.pause(True)
     elif action == "resume":
@@ -1349,7 +1522,19 @@ async def handle_music_control(request: web.Request):
         player.loop_mode = next_mode
     elif action == "volume" and data.get("volume") is not None:
         await player.set_volume(max(0, min(100, int(data.get("volume")))))
-        
+
+    try:
+        from weblog import post_weblog
+        asyncio.create_task(post_weblog(
+            f"Music: {action}",
+            actor_label=f"<@{user_id}>",
+            details=f"Executed music action: {action}",
+            category="music",
+            actor_id=user_id,
+            guild_id=guild_id,
+            guild_name=guild.name,
+        ))
+    except Exception: pass
 
     return web.json_response({"success": True})
 
@@ -1426,6 +1611,22 @@ async def handle_security_post(request: web.Request):
             1 if data.get("image_scan_enabled", True) else 0
         ))
         conn.commit()
+
+    try:
+        from weblog import post_weblog
+        u_id = sess.get("user_id")
+        bot = request.app["bot"]
+        g = bot.get_guild(guild_id)
+        asyncio.create_task(post_weblog(
+            "Updated Security & Anti-Nuke",
+            actor_label=f"<@{u_id}>" if u_id else "Staff",
+            details="Saved anti-spam, mention limits, and security configuration",
+            category="security",
+            actor_id=u_id,
+            guild_id=guild_id,
+            guild_name=g.name if g else "",
+        ))
+    except Exception: pass
 
     if _auto_sync_requested(data, request):
         bot: commands.Bot = request.app["bot"]
@@ -2441,10 +2642,19 @@ async def handle_radio_control(request: web.Request):
     sess = _get_session(request)
     if not sess:
         return web.json_response({"error": "Unauthorized"}, status=401)
+    user_id = sess.get("user_id")
     guild_id = request.match_info["guild_id"]
     data = await request.json()
     action = data.get("action", "")
     bot: commands.Bot = request.app["bot"]
+
+    # Blacklist check
+    try:
+        from blacklist import STORE as BLACKLIST_STORE
+        if int(guild_id) in BLACKLIST_STORE.server_ids:
+            return web.json_response({"error": "This server is blacklisted from radio streaming."}, status=403)
+    except Exception:
+        pass
 
     try:
         import radio as radio_module
@@ -2474,12 +2684,63 @@ async def handle_radio_control(request: web.Request):
         elif action == "set_station":
             station_key = data.get("station_key", "")
             await cog.api_set_station(guild, station_key)
+        elif action == "play" or action == "connect":
+            vc_id = data.get("voice_channel_id")
+            if not vc_id:
+                return web.json_response({"error": "Voice channel is required"}, status=400)
+            voice_channel = guild.get_channel(int(vc_id))
+            if not voice_channel or not isinstance(voice_channel, discord.VoiceChannel):
+                return web.json_response({"error": "Voice channel not found"}, status=404)
+            station_key = data.get("station_key")
+            await cog.api_play(guild, voice_channel, station_key)
+        elif action == "set_channel":
+            vc_id = data.get("voice_channel_id")
+            if not vc_id:
+                return web.json_response({"error": "Voice channel is required"}, status=400)
+            voice_channel = guild.get_channel(int(vc_id))
+            if not voice_channel or not isinstance(voice_channel, discord.VoiceChannel):
+                return web.json_response({"error": "Voice channel not found"}, status=404)
+            await cog.api_set_channel(guild, voice_channel)
         else:
             return web.json_response({"error": f"Unknown action: {action}"}, status=400)
+
+        try:
+            from weblog import post_weblog
+            asyncio.create_task(post_weblog(
+                f"Radio: {action}",
+                actor_label=f"<@{user_id}>" if user_id else "Web User",
+                details=f"Executed radio action: {action}",
+                category="radio",
+                actor_id=user_id,
+                guild_id=guild_id,
+                guild_name=guild.name,
+            ))
+        except Exception: pass
+
     except Exception as e:
         return web.json_response({"error": str(e)}, status=500)
 
     return web.json_response({"success": True})
+
+
+async def handle_weblog_get(request: web.Request):
+    """GET /api/admin/weblog or GET /api/guilds/{guild_id}/weblog — return audit events."""
+    sess = _get_session(request)
+    if not sess:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    
+    guild_id = request.match_info.get("guild_id")
+    category = request.query.get("category")
+    search = request.query.get("search")
+    limit_raw = request.query.get("limit", "150")
+    limit = int(limit_raw) if limit_raw.isdigit() else 150
+    
+    try:
+        from weblog import get_weblog_events
+        events = get_weblog_events(limit=limit, category=category, guild_id=guild_id, search=search)
+        return web.json_response({"events": events})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
 
 
 def _radio_stations_list():
@@ -3814,10 +4075,15 @@ class DashboardAPI(commands.Cog):
             web.post("/api/guilds/{guild_id}/sync", handle_guild_sync),
             # Music
             web.get("/api/guilds/{guild_id}/music", handle_music_get),
+            web.get("/api/guilds/{guild_id}/music/search", handle_music_search),
             web.post("/api/guilds/{guild_id}/music/control", handle_music_control),
             # Radio
             web.get("/api/guilds/{guild_id}/radio", handle_radio_get),
             web.post("/api/guilds/{guild_id}/radio/control", handle_radio_control),
+            # Audit Weblog
+            web.get("/api/admin/weblog", handle_weblog_get),
+            web.get("/api/weblog", handle_weblog_get),
+            web.get("/api/guilds/{guild_id}/weblog", handle_weblog_get),
 
             # Registration & Applications
             web.get("/api/guilds/{guild_id}/registration", handle_registration_list_get),

@@ -29,6 +29,23 @@ _DEV_GUILD = int(DEV_GUILD_ID) if DEV_GUILD_ID.isdigit() else None
 CATEGORY_FOLDER_NAME = "🔧 Weblog"
 DEFAULT_CATEGORY = "general"
 
+# Known log categories, created upfront by /weblog setup. New categories
+# used only via post_weblog(category=...) still auto-create on first use.
+KNOWN_CATEGORIES = [
+    "auth",
+    "welcome",
+    "tickets",
+    "music",
+    "radio",
+    "security",
+    "custom_commands",
+    "blacklist",
+    "devnews",
+    "banner",
+    "admin",
+    "general",
+]
+
 _SMALL_CAPS = str.maketrans(
     "abcdefghijklmnopqrstuvwxyz",
     "ᴀʙᴄᴅᴇꜰɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡxʏᴢ",
@@ -58,12 +75,50 @@ def _init_db():
             "CREATE TABLE IF NOT EXISTS weblog_channels (category TEXT PRIMARY KEY, channel_id INTEGER NOT NULL)"
         )
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS weblog_meta (id INTEGER PRIMARY KEY CHECK (id = 1), category_channel_id INTEGER)"
+            "CREATE TABLE IF NOT EXISTS weblog_meta (id INTEGER PRIMARY KEY CHECK (id = 1), category_channel_id INTEGER, guild_id INTEGER)"
+        )
+        try:
+            conn.execute("ALTER TABLE weblog_meta ADD COLUMN guild_id INTEGER")
+        except Exception:
+            pass
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS weblog_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                actor_id TEXT,
+                actor_name TEXT,
+                category TEXT NOT NULL,
+                details TEXT,
+                guild_id TEXT,
+                guild_name TEXT,
+                color INTEGER
+            )"""
         )
         conn.commit()
 
 
 _init_db()
+
+
+def _get_target_guild_id() -> Optional[int]:
+    if _DEV_GUILD:
+        return _DEV_GUILD
+    with _connect() as conn:
+        row = conn.execute("SELECT guild_id FROM weblog_meta WHERE id = 1").fetchone()
+        if row and row["guild_id"]:
+            return int(row["guild_id"])
+    return None
+
+
+def _save_target_guild_id(guild_id: int) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO weblog_meta (id, guild_id) VALUES (1, ?) "
+            "ON CONFLICT(id) DO UPDATE SET guild_id = excluded.guild_id",
+            (guild_id,),
+        )
+        conn.commit()
 
 
 def _get_channel_id(category: str) -> Optional[int]:
@@ -95,6 +150,7 @@ def _save_category_channel_id(channel_id: int) -> None:
             "ON CONFLICT(id) DO UPDATE SET category_channel_id = excluded.category_channel_id",
             (channel_id,),
         )
+        conn.commit()
         conn.commit()
 
 
@@ -212,30 +268,52 @@ async def post_weblog(
     details: str = "",
     color: int = 0x5865F2,
     category: str = DEFAULT_CATEGORY,
+    actor_id: Optional[str | int] = None,
+    guild_id: Optional[str | int] = None,
+    guild_name: Optional[str] = None,
 ) -> bool:
-    """Post one audit-log entry for a website-triggered action.
+    """Post one audit-log entry for a website-triggered action and persist it to SQLite.
 
-    action       e.g. "Server Blacklisted", "Dev News Published"
+    action       e.g. "Server Blacklisted", "Dev News Published", "User Signed In"
     actor_label  who did it, e.g. "User 123456789012345678" or an admin's name
     details      one or two lines of specifics (target, reason, etc.)
-    category     which log channel this belongs to, e.g. "blacklist",
-                 "devnews", "banner" — auto-creates a small-caps channel
-                 named after this the first time it's used
-
-    Returns False (and does nothing else) if the dev guild / bot ref isn't
-    available, or the channel can't be found or created -- this must never
-    raise and break the website action it's logging.
+    category     which log category this belongs to: auth, welcome, tickets, radio, music, etc.
     """
-    if _bot_ref is None or _DEV_GUILD is None:
-        return False
+    import time
+    # 1. Always record in SQLite weblog_events so it appears on the web dashboard
+    try:
+        with _connect() as conn:
+            conn.execute(
+                """INSERT INTO weblog_events (timestamp, action, actor_id, actor_name, category, details, guild_id, guild_name, color)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    int(time.time()),
+                    action,
+                    str(actor_id) if actor_id else None,
+                    str(actor_label) if actor_label else "Unknown",
+                    category or DEFAULT_CATEGORY,
+                    details or "",
+                    str(guild_id) if guild_id else None,
+                    guild_name or None,
+                    color,
+                ),
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[Weblog] Failed to persist event to SQLite: {e}")
 
-    guild = _bot_ref.get_guild(_DEV_GUILD)
+    # 2. Also send Discord embed if target guild channel is available
+    target_guild_id = _get_target_guild_id()
+    if _bot_ref is None or target_guild_id is None:
+        return True
+
+    guild = _bot_ref.get_guild(target_guild_id)
     if guild is None:
-        return False
+        return True
 
     channel = await _ensure_channel_for_category(guild, category)
     if channel is None:
-        return False
+        return True
 
     embed = discord.Embed(
         title=small_caps(f"🌐 {action}"),
@@ -244,6 +322,8 @@ async def post_weblog(
         timestamp=discord.utils.utcnow(),
     )
     embed.add_field(name=small_caps("performed by"), value=actor_label or "Unknown", inline=False)
+    if guild_name or guild_id:
+        embed.add_field(name=small_caps("server"), value=f"{guild_name or 'Server'} (`{guild_id}`)", inline=True)
     embed.set_footer(text=small_caps("website audit log"))
     try:
         await channel.send(embed=embed)
@@ -251,6 +331,32 @@ async def post_weblog(
     except Exception as e:
         print(f"[Weblog] Failed to post entry: {e}")
         return False
+
+
+def get_weblog_events(
+    limit: int = 150,
+    category: Optional[str] = None,
+    guild_id: Optional[str] = None,
+    search: Optional[str] = None,
+) -> list[dict]:
+    """Retrieve audit log events from SQLite with filtering."""
+    with _connect() as conn:
+        query = "SELECT * FROM weblog_events WHERE 1=1"
+        params = []
+        if category and category != "all":
+            query += " AND category = ?"
+            params.append(category)
+        if guild_id:
+            query += " AND (guild_id = ? OR guild_id IS NULL)"
+            params.append(str(guild_id))
+        if search:
+            query += " AND (action LIKE ? OR actor_name LIKE ? OR details LIKE ? OR guild_name LIKE ? OR actor_id LIKE ?)"
+            term = f"%{search}%"
+            params.extend([term, term, term, term, term])
+        query += " ORDER BY timestamp DESC, id DESC LIMIT ?"
+        params.append(max(1, min(500, limit)))
+        rows = conn.execute(query, params).fetchall()
+        return [dict(r) for r in rows]
 
 
 class WeblogCog(commands.Cog):
@@ -262,58 +368,89 @@ class WeblogCog(commands.Cog):
     async def cog_load(self) -> None:
         if _DEV_GUILD:
             self.bot.tree.add_command(self.weblog_group, guild=discord.Object(id=_DEV_GUILD))
+        # Register globally so /weblog setup can be run in any guild
+        self.bot.tree.add_command(self.weblog_group)
         asyncio.create_task(self._startup_check())
 
     async def cog_unload(self) -> None:
-        if _DEV_GUILD:
-            self.bot.tree.remove_command("weblog", guild=discord.Object(id=_DEV_GUILD))
+        try:
+            if _DEV_GUILD:
+                self.bot.tree.remove_command("weblog", guild=discord.Object(id=_DEV_GUILD))
+            self.bot.tree.remove_command("weblog")
+        except Exception:
+            pass
 
     async def _startup_check(self):
         await self.bot.wait_until_ready()
+        target_guild_id = _get_target_guild_id()
 
-        if _DEV_GUILD is None:
-            print("[Weblog] NOT working: BLACKLIST_DEV_GUILD_ID env var missing or not numeric.")
+        if target_guild_id is None:
+            print("[Weblog] Loaded — waiting for /weblog setup to be run in a Discord server.")
             return
 
-        guild = self.bot.get_guild(_DEV_GUILD)
+        guild = self.bot.get_guild(target_guild_id)
         if guild is None:
-            print(f"[Weblog] NOT working: bot is not in dev guild {_DEV_GUILD}.")
+            print(f"[Weblog] Target guild {target_guild_id} not found in bot cache.")
             return
 
         if not guild.me.guild_permissions.manage_channels:
-            print(f"[Weblog] NOT working: missing Manage Channels permission in '{guild.name}'.")
+            print(f"[Weblog] Warning: missing Manage Channels permission in '{guild.name}'.")
             return
 
-        print(f"[Weblog] loaded, working — dev guild '{guild.name}' ({guild.id}), channels auto-provision on first use.")
+        print(f"[Weblog] Active and transmitting to Discord server '{guild.name}' ({guild.id}).")
 
-    # Guild-scoped (dev guild only) — same pattern as dev_global_logs.py's dev_group.
-    weblog_group = app_commands.Group(name="weblog", description="[Dev guild only] Weblog system status")
+    weblog_group = app_commands.Group(name="weblog", description="Website audit log configuration")
 
-    @weblog_group.command(name="setup", description="Check / trigger the weblog auto-provisioning")
+    @weblog_group.command(name="setup", description="Auto-provision Discord audit log channels for all website actions")
     async def weblog_setup(self, interaction: discord.Interaction):
-        if interaction.guild_id != _DEV_GUILD:
-            return await interaction.response.send_message("This command can only be used in the dev guild.", ephemeral=True)
-
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
+        if not guild:
+            return await interaction.followup.send("❌ This command must be used in a Discord server.", ephemeral=True)
 
         if not guild.me.guild_permissions.manage_channels:
             return await interaction.followup.send(f"❌ I'm missing **Manage Channels** in {guild.name}.", ephemeral=True)
 
+        _save_target_guild_id(guild.id)
         parent = await _ensure_category_channel(guild)
         if parent is None:
             return await interaction.followup.send("❌ Could not create/find the log category folder.", ephemeral=True)
 
-        with _connect() as conn:
-            rows = conn.execute("SELECT category, channel_id FROM weblog_channels").fetchall()
+        created, existing = [], []
+        for cat in KNOWN_CATEGORIES:
+            before = _get_channel_id(cat)
+            ch = await _ensure_channel_for_category(guild, cat)
+            if ch is None:
+                continue
+            (existing if before else created).append(ch)
 
-        lines = [f"✅ Working — folder **{parent.name}**."]
-        if rows:
-            lines.append("Existing log channels:")
-            lines += [f"• `{r['category']}` → <#{r['channel_id']}>" for r in rows]
-        else:
-            lines.append("No category channels created yet — they auto-create on first `post_weblog()` call.")
+        lines = [
+            f"✅ **Website Audit Weblog Setup Complete!**",
+            f"All website actions (sign-ins, welcome, tickets, music, radio, security, etc.) will now be posted live to **{guild.name}** under **{parent.name}**.",
+        ]
+        if created:
+            lines.append("\n**Created channels:**\n" + "\n".join(f"• <#{c.id}> (`{c.name}`)" for c in created))
+        if existing:
+            lines.append("\n**Connected channels:**\n" + "\n".join(f"• <#{c.id}>" for c in existing))
         await interaction.followup.send("\n".join(lines), ephemeral=True)
+
+    @weblog_group.command(name="test", description="Send a test audit log embed to verify Discord delivery")
+    async def weblog_test(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        ok = await post_weblog(
+            "Test Audit Log",
+            actor_label=f"{interaction.user.name} ({interaction.user.id})",
+            details="Testing Discord audit channel delivery from /weblog test command.",
+            color=0x57F287,
+            category="general",
+            actor_id=str(interaction.user.id),
+            guild_id=str(interaction.guild_id),
+            guild_name=interaction.guild.name if interaction.guild else "",
+        )
+        if ok:
+            await interaction.followup.send("✅ Test audit log successfully posted to Discord!", ephemeral=True)
+        else:
+            await interaction.followup.send("⚠️ Could not post to Discord. Run `/weblog setup` first in this server.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -51,14 +51,19 @@ async def get_or_create_music_vc(bot: commands.Bot, guild: discord.Guild, channe
     """
     Get (or create) a wavelink.Player connected to `channel`, handing off
     cleanly from Radio first if Radio currently owns the connection.
-
-    FEATURE: previously, if Radio was playing, `get_player(guild)` returned
-    Radio's plain discord.VoiceClient and this code tried to use it as a
-    wavelink.Player directly (crash), or in other spots just always opened a
-    brand new connection without checking what was already there. Now we
-    explicitly ask Radio to suspend itself (saving its station so it can
-    resume later) via voice_handoff.yield_voice_to() before connecting.
     """
+    try:
+        from blacklist import STORE as BLACKLIST_STORE
+        if guild.id in BLACKLIST_STORE.server_ids:
+            if guild.voice_client:
+                try:
+                    await guild.voice_client.disconnect(force=True)
+                except Exception:
+                    pass
+            raise PermissionError(f"Guild {guild.id} is blacklisted.")
+    except ImportError:
+        pass
+
     vc = get_player(guild)
     if vc is None:
         # If something non-wavelink (i.e. Radio) is connected, ask it to step

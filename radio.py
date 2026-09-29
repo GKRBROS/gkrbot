@@ -40,6 +40,16 @@ from gkr_ui import (
 )
 from voice_handoff import is_connected, is_playing, is_paused, yield_voice_to, restore_voice_from
 
+try:
+    from blacklist import STORE as BLACKLIST_STORE, is_server_blacklisted
+except ImportError:
+    class _DummyStore:
+        server_ids = set()
+        member_ids = set()
+    BLACKLIST_STORE = _DummyStore()
+    async def is_server_blacklisted(guild_id):
+        return False
+
 logger = logging.getLogger("gkr_radio")
 DB_PATH = os.path.join(os.path.dirname(__file__), "radio.sqlite3")
 
@@ -75,6 +85,15 @@ async def _get_or_create_plain_vc(bot: commands.Bot, guild: discord.Guild, chann
     voice_client currently belongs to Music, ask Music to suspend itself
     (saving its queue/position for later) before we take the channel.
     """
+    if guild.id in BLACKLIST_STORE.server_ids or await is_server_blacklisted(guild.id):
+        logger.warning(f"[Radio] Aborting connection: Guild {guild.name} ({guild.id}) is blacklisted.")
+        if guild.voice_client:
+            try:
+                await guild.voice_client.disconnect(force=True)
+            except Exception:
+                pass
+        raise PermissionError(f"Guild {guild.id} is blacklisted.")
+
     vc = guild.voice_client
     if vc is not None and not isinstance(vc, discord.VoiceClient):
         await yield_voice_to(bot, guild, "radio")
@@ -546,6 +565,16 @@ class RadioCog(commands.Cog, name="Radio System"):
         volume: Optional[int] = None,
     ) -> bool:
         """Starts streaming the given station on the voice client."""
+        if guild.id in BLACKLIST_STORE.server_ids:
+            logger.warning(f"[Radio] Aborting start_stream: Guild {guild.name} ({guild.id}) is blacklisted.")
+            if vc:
+                try:
+                    await vc.disconnect(force=True)
+                except Exception:
+                    pass
+            set_radio_state(guild.id, is_active=0, mode_247=0)
+            return False
+
         # BUG FIX: several call sites (radio_play, radio_custom, the station
         # dropdown, the pause/resume "reconnect" branch, /radio resume) used to
         # call this without a volume argument, which defaulted to 100 and
@@ -741,6 +770,19 @@ class RadioCog(commands.Cog, name="Radio System"):
         for s in active_sessions:
             guild_id_str = s.get("guild_id")
             if not guild_id_str:
+                continue
+
+            guild_id_int = int(guild_id_str)
+            # Never reconnect to blacklisted servers! Clean up and deactivate immediately
+            if guild_id_int in BLACKLIST_STORE.server_ids:
+                logger.warning(f"[Radio] 24/7 loop: Guild {guild_id_int} is blacklisted. Disconnecting and deactivating.")
+                guild = self.bot.get_guild(guild_id_int)
+                if guild and guild.voice_client:
+                    try:
+                        await guild.voice_client.disconnect(force=True)
+                    except Exception:
+                        pass
+                set_radio_state(guild_id_int, is_active=0, mode_247=0)
                 continue
 
             # Don't fight over the voice channel while paused — this covers
@@ -1165,6 +1207,31 @@ class RadioCog(commands.Cog, name="Radio System"):
                     vc = await _get_or_create_plain_vc(self.bot, guild, voice_channel, timeout=20, reconnect=True, self_deaf=True)
         if vc and is_connected(vc):
             await self.start_stream(guild, vc, station_key, station["name"], station["url"])
+
+    async def api_play(self, guild: discord.Guild, voice_channel: discord.VoiceChannel, station_key: Optional[str] = None):
+        """Connect to a voice channel and start streaming (called from dashboard API)."""
+        if guild.id in BLACKLIST_STORE.server_ids:
+            raise PermissionError(f"Guild {guild.id} is blacklisted.")
+        
+        sk = station_key or DEFAULT_STATION_KEY
+        station = STATIONS.get(sk, STATIONS[DEFAULT_STATION_KEY])
+        vc = await _get_or_create_plain_vc(self.bot, guild, voice_channel, timeout=20, reconnect=True, self_deaf=True)
+        await self.start_stream(guild, vc, sk, station["name"], station["url"])
+        return {"success": True, "station": station["name"], "channel": voice_channel.name}
+
+    async def api_set_channel(self, guild: discord.Guild, voice_channel: discord.VoiceChannel):
+        """Change the radio's voice channel (called from dashboard API)."""
+        if guild.id in BLACKLIST_STORE.server_ids:
+            raise PermissionError(f"Guild {guild.id} is blacklisted.")
+        
+        state = get_radio_state(guild.id) or {}
+        sk = state.get("station_key", DEFAULT_STATION_KEY)
+        station = STATIONS.get(sk, STATIONS[DEFAULT_STATION_KEY])
+        vc = await _get_or_create_plain_vc(self.bot, guild, voice_channel, timeout=20, reconnect=True, self_deaf=True)
+        set_radio_state(guild.id, voice_channel_id=str(voice_channel.id))
+        if not is_playing(vc) and state.get("is_active"):
+            await self.start_stream(guild, vc, sk, station["name"], station["url"])
+        return {"success": True, "channel": voice_channel.name}
 
 
 # ---------------------------------------------------------------------------

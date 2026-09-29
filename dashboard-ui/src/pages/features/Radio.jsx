@@ -35,6 +35,8 @@ function groupByCategory(stations = []) {
 function Radio() {
   const { guildId } = useParams();
   const [state, setState] = useState(null);
+  const [voiceChannels, setVoiceChannels] = useState([]);
+  const [selectedChannelId, setSelectedChannelId] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionPending, setActionPending] = useState(false);
@@ -48,6 +50,9 @@ function Radio() {
       setState(res.data);
       setError('');
       if (!isDragging.current) setLocalVolume(res.data.volume ?? 100);
+      if (res.data.voice_channel_id) {
+        setSelectedChannelId(res.data.voice_channel_id);
+      }
     } catch (err) {
       if (err.response?.status !== 404) setError('Failed to load radio state.');
     }
@@ -58,6 +63,18 @@ function Radio() {
     fetchState();
     const interval = setInterval(fetchState, 4000);
     return () => clearInterval(interval);
+  }, [guildId]);
+
+  useEffect(() => {
+    api.get(`/guilds/${guildId}/voice-channels`)
+      .then(res => {
+        const vcs = res.data.channels || res.data || [];
+        setVoiceChannels(vcs);
+        if (vcs.length > 0 && !selectedChannelId) {
+          setSelectedChannelId(vcs[0].id);
+        }
+      })
+      .catch(() => {});
   }, [guildId]);
 
   const control = async (action, extra = {}) => {
@@ -254,18 +271,55 @@ function Radio() {
               />
             </div>
 
-            {/* Connected Channel Info */}
-            {isActive && state?.voice_channel_name && (
-              <div className="p-3.5 rounded-xl bg-primary/5 border border-primary/20 flex items-center gap-3">
-                <Headphones size={20} className="text-primary shrink-0" />
-                <div className="overflow-hidden">
-                  <div className="text-xs text-muted">Transmitting in</div>
-                  <div className="text-sm font-bold text-main truncate">
-                    {state.voice_channel_name}
-                  </div>
+            {/* Voice Channel Selector */}
+            <div className="p-4 rounded-xl bg-card-sub border border-border flex flex-col gap-3">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold text-main flex items-center gap-2">
+                  <Headphones size={16} className="text-primary" />
+                  <span>Radio Voice Channel</span>
                 </div>
+                {isActive && state?.voice_channel_name && (
+                  <Badge variant="success" size="sm" dot>Connected</Badge>
+                )}
               </div>
-            )}
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedChannelId}
+                  onChange={(e) => setSelectedChannelId(e.target.value)}
+                  className="flex-1 bg-card border border-border rounded-xl px-3 py-2 text-sm text-main focus:outline-none focus:border-primary"
+                  disabled={actionPending}
+                >
+                  <option value="">Select voice channel...</option>
+                  {voiceChannels.map((vc) => (
+                    <option key={vc.id} value={vc.id}>
+                      🔊 {vc.name}
+                    </option>
+                  ))}
+                </select>
+                <Button
+                  size="sm"
+                  variant="primary"
+                  disabled={!selectedChannelId || actionPending}
+                  onClick={() => {
+                    if (isActive) {
+                      control('set_channel', { voice_channel_id: selectedChannelId });
+                    } else {
+                      control('play', {
+                        voice_channel_id: selectedChannelId,
+                        station_key: currentStationKey || 'lofi_plaza'
+                      });
+                    }
+                  }}
+                >
+                  {isActive ? 'Move' : 'Connect & Play'}
+                </Button>
+              </div>
+              <div className="text-xs text-muted">
+                {isActive
+                  ? `Broadcasting in: ${state?.voice_channel_name || 'voice channel'}`
+                  : 'Select a voice channel to broadcast radio live to your members'}
+              </div>
+            </div>
           </Card>
         </div>
 
@@ -290,12 +344,21 @@ function Radio() {
                           key={station.key}
                           role="button"
                           tabIndex={0}
-                          onClick={() =>
-                            !actionPending && control('set_station', { station_key: station.key })
-                          }
+                          onClick={() => {
+                            if (actionPending) return;
+                            if (!isActive && selectedChannelId) {
+                              control('play', { voice_channel_id: selectedChannelId, station_key: station.key });
+                            } else {
+                              control('set_station', { station_key: station.key });
+                            }
+                          }}
                           onKeyDown={(e) => {
                             if (e.key === 'Enter' || e.key === ' ') {
-                              control('set_station', { station_key: station.key });
+                              if (!isActive && selectedChannelId) {
+                                control('play', { voice_channel_id: selectedChannelId, station_key: station.key });
+                              } else {
+                                control('set_station', { station_key: station.key });
+                              }
                             }
                           }}
                           className={`p-3.5 rounded-xl border flex items-center gap-3 cursor-pointer transition-all duration-150 ${

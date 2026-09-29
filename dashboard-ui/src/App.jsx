@@ -14,6 +14,7 @@ import Docs from './pages/Docs';
 import Status from './pages/Status';
 import Admin from './pages/Admin';
 import BlacklistManagement from './pages/BlacklistManagement';
+import Weblog from './pages/Weblog';
 import DashboardLayout from './pages/DashboardLayout';
 import Overview from './pages/features/Overview';
 import StreamAlerts from './pages/features/StreamAlerts';
@@ -113,6 +114,7 @@ function App() {
       <Route path="/status" element={<Status user={user} />} />
       <Route path="/admin" element={<Admin user={user} />} />
       <Route path="/admin/blacklist" element={<BlacklistManagement user={user} />} />
+      <Route path="/admin/weblog" element={<Weblog user={user} />} />
       {/* "admin" typed/linked as if it were a guild id under /dashboard -- send it to the real Admin route */}
       <Route path="/dashboard/admin" element={<Navigate to="/admin" replace />} />
       <Route path="/dashboard/admin/*" element={<Navigate to="/admin" replace />} />

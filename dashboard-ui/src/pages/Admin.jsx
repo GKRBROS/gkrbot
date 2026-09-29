@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../api';
 import { SitePage } from '../components/SiteLayout';
-import { ShieldAlert, ImageIcon, Loader2, Ticket, ExternalLink, Newspaper, Trash2, Send, Ban } from 'lucide-react';
+import { ShieldAlert, ImageIcon, Loader2, Ticket, ExternalLink, Newspaper, Trash2, Send, Ban, FileText } from 'lucide-react';
 import { Loader, Spinner } from '../components/Loader';
 import { Link } from 'react-router-dom';
 import '../admin-panel.css';
@@ -142,9 +142,14 @@ export function Admin({ user }) {
                 <span>Last update</span>
               </div>
             </div>
-            <Link to="/admin/blacklist" className="site-btn site-btn-ghost" style={{ marginTop: 12 }}>
-              <Ban size={15} /> <span>Blacklist Management</span>
-            </Link>
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <Link to="/admin/blacklist" className="site-btn site-btn-ghost">
+                <Ban size={15} /> <span>Blacklist Management</span>
+              </Link>
+              <Link to="/admin/weblog" className="site-btn site-btn-ghost">
+                <FileText size={15} /> <span>Action Weblog</span>
+              </Link>
+            </div>
           </div>
 
           <div className="admin-bento">
