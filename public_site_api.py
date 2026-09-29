@@ -52,8 +52,8 @@ CATEGORIES = {
 #   1) by top-level command name        (HIDDEN_COMMANDS)
 #   2) by the python module/cog it lives in (HIDDEN_MODULES)
 #   3) by env var, no code change needed:  HIDDEN_PUBLIC_COMMANDS=name1,name2
-HIDDEN_COMMANDS = {"clearcache", "blacklist", "unblacklist"}
-HIDDEN_MODULES = {"blacklist", "dev_global_logs", "cache_cleaner"}
+HIDDEN_COMMANDS = {"clearcache", "blacklist", "unblacklist", "weblog"}
+HIDDEN_MODULES = {"blacklist", "dev_global_logs", "cache_cleaner", "weblog"}
 HIDDEN_COMMANDS |= {
     n.strip().lower() for n in (os.getenv("HIDDEN_PUBLIC_COMMANDS") or "").split(",") if n.strip()
 }
