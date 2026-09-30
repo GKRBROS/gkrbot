@@ -91,6 +91,30 @@ def make_tickets_handler(get_user_id):
     return handle_tickets
 
 
+def make_weblog_handler(get_user_id):
+    async def handle_weblog(request: web.Request):
+        if not await _is_admin(request, get_user_id):
+            return _err("Forbidden", 403)
+        try:
+            from weblog import get_weblog_events
+        except ImportError:
+            return web.json_response({"events": []})
+        params = request.rel_url.query
+        category = params.get("category") or None
+        search = params.get("search") or None
+        guild_id = params.get("guild_id") or None
+        try:
+            limit = max(1, min(500, int(params.get("limit", 200))))
+        except (ValueError, TypeError):
+            limit = 200
+        try:
+            events = get_weblog_events(limit=limit, category=category, guild_id=guild_id, search=search)
+        except Exception as e:
+            return _err(f"Failed to fetch weblog events: {e}", 500)
+        return web.json_response({"events": events})
+    return handle_weblog
+
+
 def make_banner_handler(get_user_id):
     async def handle_banner(request: web.Request):
         if not await _is_admin(request, get_user_id):
@@ -146,5 +170,6 @@ def register_admin_routes(app: web.Application, get_user_id) -> None:
     app.add_routes([
         web.get("/api/admin/whoami", make_whoami_handler(get_user_id)),
         web.get("/api/admin/tickets", make_tickets_handler(get_user_id)),
+        web.get("/api/admin/weblog", make_weblog_handler(get_user_id)),
         web.post("/api/admin/bot-banner", make_banner_handler(get_user_id)),
     ])
