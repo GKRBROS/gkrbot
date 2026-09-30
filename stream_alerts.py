@@ -1087,6 +1087,12 @@ class StreamAlertsCog(commands.Cog):
         }
         
         for alert in matching:
+            try:
+                from blacklist import STORE as BLACKLIST_STORE
+                if alert.guild_id in BLACKLIST_STORE.server_ids:
+                    continue
+            except Exception:
+                pass
             if alert.notify_videos:
                 if alert.last_video_id != video.id:
                     self.db.update_last_video(alert.id, video.id)
@@ -1107,6 +1113,11 @@ class StreamAlertsCog(commands.Cog):
         print("[StreamAlerts] 🔄 Running startup live-state sync (no alerts will fire)...")
         await asyncio.sleep(5)  # small delay to let the session fully start
         alerts = self.db.get_all_alerts()
+        try:
+            from blacklist import STORE as BLACKLIST_STORE
+            alerts = [a for a in alerts if a.guild_id not in BLACKLIST_STORE.server_ids]
+        except Exception:
+            pass
         live_alerts = [a for a in alerts if a.notify_live]
         if not live_alerts:
             print("[StreamAlerts] ✅ No alerts to sync on startup.")
@@ -1175,6 +1186,8 @@ class StreamAlertsCog(commands.Cog):
         """Check live status for all alerts — YouTube batched into 1 API call."""
         try:
             alerts = self.db.get_all_alerts()
+            from blacklist import STORE as BLACKLIST_STORE
+            alerts = [a for a in alerts if a.guild_id not in BLACKLIST_STORE.server_ids]
         except Exception as exc:
             print(f"[StreamAlerts] DB error: {exc}")
             return
@@ -1248,6 +1261,8 @@ class StreamAlertsCog(commands.Cog):
         """Check YouTube for new videos — batched into 1 API call."""
         try:
             alerts = self.db.get_all_alerts()
+            from blacklist import STORE as BLACKLIST_STORE
+            alerts = [a for a in alerts if a.guild_id not in BLACKLIST_STORE.server_ids]
         except Exception as exc:
             print(f"[StreamAlerts] DB error: {exc}")
             return
@@ -1325,6 +1340,12 @@ class StreamAlertsCog(commands.Cog):
             self.db.update_last_video(alert.id, vid_id)
 
     async def _send_live_alert(self, alert: AlertConfig, info: dict) -> None:
+        try:
+            from blacklist import STORE as BLACKLIST_STORE, is_server_blacklisted
+            if alert.guild_id in BLACKLIST_STORE.server_ids or await is_server_blacklisted(alert.guild_id):
+                return
+        except Exception:
+            pass
         guild = self.bot.get_guild(alert.guild_id)
         if not guild:
             return
@@ -1414,6 +1435,12 @@ class StreamAlertsCog(commands.Cog):
                 return
 
     async def _send_video_alert(self, alert: AlertConfig, info: dict) -> None:
+        try:
+            from blacklist import STORE as BLACKLIST_STORE, is_server_blacklisted
+            if alert.guild_id in BLACKLIST_STORE.server_ids or await is_server_blacklisted(alert.guild_id):
+                return
+        except Exception:
+            pass
         guild = self.bot.get_guild(alert.guild_id)
         if not guild:
             return

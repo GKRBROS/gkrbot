@@ -336,23 +336,33 @@ def _fmt_time(ts: Optional[int]) -> str:
 
 async def force_disconnect_voice(bot: commands.Bot, guild_id: int) -> bool:
     """Immediately stop any playback (radio, music, etc.) and disconnect the
-    bot from voice in this guild. Needed because blacklisting only stops
-    FUTURE commands/events -- a connection made and a stream started before
-    the blacklist existed keeps running on its own until something tells it
-    to stop. Called right when a server is blacklisted (see the /blacklist
-    server command and blacklist_api.py's add_server), not just relied on
-    passively. Safe to call even if nothing is connected."""
-    guild = bot.get_guild(guild_id)
-    if guild is None or guild.voice_client is None:
-        return False
-    vc = guild.voice_client
+    bot from voice in this guild. Also deactivates radio 24/7 mode so it
+    never reconnects."""
     try:
-        if vc.is_playing() or vc.is_paused():
-            vc.stop()
+        import radio
+        radio.set_radio_state(guild_id, is_active=0, mode_247=0)
+    except Exception:
+        pass
+
+    found_vc = None
+    guild = bot.get_guild(guild_id)
+    if guild and guild.voice_client:
+        found_vc = guild.voice_client
+    else:
+        for vc in getattr(bot, "voice_clients", []):
+            if vc.guild and vc.guild.id == guild_id:
+                found_vc = vc
+                break
+
+    if found_vc is None:
+        return False
+    try:
+        if found_vc.is_playing() or found_vc.is_paused():
+            found_vc.stop()
     except Exception:
         pass
     try:
-        await vc.disconnect(force=True)
+        await found_vc.disconnect(force=True)
     except Exception as e:
         print(f"[Blacklist] Failed to force-disconnect voice in guild {guild_id}: {e}")
         return False
@@ -370,17 +380,7 @@ class BlacklistCog(commands.Cog):
     async def cog_load(self):
         # Global gate for every EVENT LISTENER in every cog (on_voice_state_update,
         # on_member_join, on_reaction_add, sticky/auto-react/leveling on_message
-        # handlers, radio's reconnect logic, etc.) -- NOT just commands. Commands
-        # (interaction_check / add_check below) only cover slash/prefix commands
-        # themselves; without this, a blacklisted guild's other passive features
-        # (voice reconnect, auto-reactions, XP, welcome messages...) kept running
-        # because discord.py dispatches events to every listening cog regardless.
-        #
-        # discord.py calls Client._run_event(coro, event_name, *args, **kwargs)
-        # once PER LISTENER for every dispatched event -- this is the one place
-        # that sees every single cog's on_xxx handler individually, so it's the
-        # correct choke point (patching Client.dispatch() instead would also
-        # block the bot's OWN built-in command processing, going silent again).
+        # handlers, radio's reconnect logic, etc.) -- NOT just commands.
         original_run_event = self.bot._run_event
         bot_ref = self.bot
 
@@ -400,17 +400,8 @@ class BlacklistCog(commands.Cog):
 
         self.bot._run_event = patched_run_event
 
-        # Global gate for prefix commands. bot.add_check() is CUMULATIVE --
-        # every check added by every cog must pass, regardless of load order,
-        # so this part is already safe no matter when "blacklist" loads.
         self.bot.add_check(self._prefix_check)
 
-        # Global gate for slash + context-menu commands. Unlike add_check(),
-        # CommandTree.interaction_check is a SINGLE attribute -- whichever cog
-        # sets it last normally wins, which could silently disable this check
-        # if another cog loads afterward and overwrites it. To make this safe
-        # regardless of extension load order, we CHAIN onto whatever check
-        # (if any) is already installed instead of replacing it outright.
         previous_check = self.bot.tree.interaction_check
 
         async def combined_check(interaction: discord.Interaction) -> bool:
@@ -419,6 +410,17 @@ class BlacklistCog(commands.Cog):
             return await previous_check(interaction)
 
         self.bot.tree.interaction_check = combined_check
+
+        # Immediately terminate any voice streams in blacklisted servers
+        for gid in list(STORE.server_ids):
+            asyncio.create_task(force_disconnect_voice(self.bot, gid))
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        for vc in list(getattr(self.bot, "voice_clients", [])):
+            if vc.guild and vc.guild.id in STORE.server_ids:
+                print(f"[Blacklist] on_ready: Terminating voice livestream in blacklisted guild {vc.guild.id}")
+                await force_disconnect_voice(self.bot, vc.guild.id)
 
     async def cog_unload(self):
         try:
