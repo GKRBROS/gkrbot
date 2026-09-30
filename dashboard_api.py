@@ -193,6 +193,43 @@ def _get_session(request: web.Request):
     token = auth_header.split(" ")[1]
     return SESSIONS.get(token)
 
+
+async def _log_dashboard_action(
+    request: web.Request,
+    guild_id=None,
+    action: str = "",
+    details: str = "",
+    category: str = "general",
+    color: int = 0x5865F2,
+):
+    """Convenience helper to record website dashboard actions in SQLite and Discord weblog channels."""
+    try:
+        from weblog import post_weblog
+        sess = _get_session(request) or {}
+        user_id = sess.get("user_id")
+        user_name = sess.get("username") or (f"User {user_id}" if user_id else "Staff")
+        actor_label = f"<@{user_id}>" if user_id else user_name
+        bot = request.app.get("bot")
+        guild_name = ""
+        g_id = int(guild_id) if guild_id else None
+        if bot and g_id:
+            guild = bot.get_guild(g_id)
+            if guild:
+                guild_name = guild.name
+        await post_weblog(
+            action=action,
+            actor_label=actor_label,
+            details=details,
+            color=color,
+            category=category,
+            actor_id=user_id,
+            guild_id=g_id,
+            guild_name=guild_name,
+        )
+    except Exception as e:
+        print(f"[Weblog] Error logging dashboard action '{action}': {e}")
+
+
 async def handle_me(request: web.Request):
     """Returns the current user and their mutual guilds where they have admin access."""
     session_data = _get_session(request)
@@ -863,6 +900,15 @@ async def handle_tickets_post(request: web.Request):
         synced = _replicate_ticket_category_upsert(bot, guild_id, name, cat_fields)
         print(f"[AutoSync] Ticket category replicated to {synced} other server(s)")
 
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Created Ticket Category",
+        f"Added ticket category '{name}' (`{cat_id}`)",
+        category="tickets",
+        color=0x57F287,
+    )
+
     return web.json_response({"success": True, "id": cat_id})
 
 async def handle_tickets_category_put(request: web.Request):
@@ -905,6 +951,15 @@ async def handle_tickets_category_put(request: web.Request):
         synced = _replicate_ticket_category_upsert(bot, guild_id, new_name, all_fields)
         print(f"[AutoSync] Ticket category update replicated to {synced} other server(s)")
 
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Updated Ticket Category",
+        f"Updated ticket category '{old_cat.name}' (`{category_id}`)",
+        category="tickets",
+        color=0x5865F2,
+    )
+
     return web.json_response({"success": True})
 
 async def handle_tickets_delete(request: web.Request):
@@ -923,6 +978,15 @@ async def handle_tickets_delete(request: web.Request):
         if _auto_sync_requested(None, request):
             synced = _replicate_ticket_category_delete(bot, guild_id, old_cat.name if old_cat else "")
             print(f"[AutoSync] Ticket category delete replicated to {synced} other server(s)")
+
+        await _log_dashboard_action(
+            request,
+            guild_id,
+            "Deleted Ticket Category",
+            f"Removed ticket category '{old_cat.name if old_cat else category_id}'",
+            category="tickets",
+            color=0xED4245,
+        )
         return web.json_response({"success": True})
     return web.json_response({"error": "Category not found"}, status=404)
 
@@ -953,6 +1017,15 @@ async def handle_tickets_log_channel(request: web.Request):
     if _auto_sync_requested(data, request):
         synced = _replicate_tickets_log_channel(bot, guild_id, int(channel_id) if channel_id else None)
         print(f"[AutoSync] Ticket log channel replicated to {synced} other server(s)")
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Updated Ticket Log Channel",
+        f"Ticket logs channel set to <#{channel_id}>" if channel_id else "Disabled ticket log channel",
+        category="tickets",
+        color=0x5865F2,
+    )
 
     return web.json_response({"success": True})
 
@@ -1100,7 +1173,7 @@ async def handle_welcome_post(request: web.Request):
         from weblog import post_weblog
         bot = request.app["bot"]
         g = bot.get_guild(guild_id)
-        asyncio.create_task(post_weblog(
+        await post_weblog(
             "Updated Welcome & Leave Settings",
             actor_label=f"<@{user_id}>",
             details=f"Saved welcome configuration (enabled={config.enabled}, leave={config.leave_enabled})",
@@ -1108,7 +1181,7 @@ async def handle_welcome_post(request: web.Request):
             actor_id=user_id,
             guild_id=guild_id,
             guild_name=g.name if g else "",
-        ))
+        )
     except Exception: pass
 
     if _auto_sync_requested(data, request):
@@ -1436,7 +1509,7 @@ async def handle_music_control(request: web.Request):
             await music_module.get_or_create_music_vc(bot, guild, vc_channel, self_deaf=True)
             try:
                 from weblog import post_weblog
-                asyncio.create_task(post_weblog(
+                await post_weblog(
                     "Music: Connected to Channel",
                     actor_label=f"<@{user_id}>",
                     details=f"Connected music player to {vc_channel.name}",
@@ -1444,7 +1517,7 @@ async def handle_music_control(request: web.Request):
                     actor_id=user_id,
                     guild_id=guild_id,
                     guild_name=guild.name,
-                ))
+                )
             except Exception: pass
             return web.json_response({"success": True, "channel": vc_channel.name})
         except Exception as e:
@@ -1491,7 +1564,7 @@ async def handle_music_control(request: web.Request):
 
         try:
             from weblog import post_weblog
-            asyncio.create_task(post_weblog(
+            await post_weblog(
                 "Music: Queued Track",
                 actor_label=f"<@{user_id}>",
                 details=f"Queued track(s) matching '{query}'",
@@ -1499,7 +1572,7 @@ async def handle_music_control(request: web.Request):
                 actor_id=user_id,
                 guild_id=guild_id,
                 guild_name=guild.name,
-            ))
+            )
         except Exception: pass
         return web.json_response({"success": True, "count": len(tracks)})
 
@@ -1525,7 +1598,7 @@ async def handle_music_control(request: web.Request):
 
     try:
         from weblog import post_weblog
-        asyncio.create_task(post_weblog(
+        await post_weblog(
             f"Music: {action}",
             actor_label=f"<@{user_id}>",
             details=f"Executed music action: {action}",
@@ -1533,7 +1606,7 @@ async def handle_music_control(request: web.Request):
             actor_id=user_id,
             guild_id=guild_id,
             guild_name=guild.name,
-        ))
+        )
     except Exception: pass
 
     return web.json_response({"success": True})
@@ -1617,7 +1690,7 @@ async def handle_security_post(request: web.Request):
         u_id = sess.get("user_id")
         bot = request.app["bot"]
         g = bot.get_guild(guild_id)
-        asyncio.create_task(post_weblog(
+        await post_weblog(
             "Updated Security & Anti-Nuke",
             actor_label=f"<@{u_id}>" if u_id else "Staff",
             details="Saved anti-spam, mention limits, and security configuration",
@@ -1625,7 +1698,7 @@ async def handle_security_post(request: web.Request):
             actor_id=u_id,
             guild_id=guild_id,
             guild_name=g.name if g else "",
-        ))
+        )
     except Exception: pass
 
     if _auto_sync_requested(data, request):
@@ -1665,11 +1738,21 @@ async def handle_sticky_post(request: web.Request):
         synced = _replicate_sticky_set(bot, guild_id, int(channel_id), content)
         print(f"[AutoSync] Sticky message replicated to {synced} other server(s)")
 
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Created Sticky Message",
+        f"Configured sticky message in channel <#{channel_id}>",
+        category="sticky",
+        color=0x57F287,
+    )
+
     return web.json_response({"success": True})
 
 async def handle_sticky_delete(request: web.Request):
     sess = _get_session(request)
     if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
     channel_id = int(request.match_info["channel_id"])
     import sticky_messages
     db = sticky_messages.StickyDB()
@@ -1679,6 +1762,15 @@ async def handle_sticky_delete(request: web.Request):
         bot: commands.Bot = request.app["bot"]
         synced = _replicate_sticky_remove(bot, guild_id, channel_id)
         print(f"[AutoSync] Sticky removal replicated to {synced} other server(s)")
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Deleted Sticky Message",
+        f"Removed sticky message from channel <#{channel_id}>",
+        category="sticky",
+        color=0xED4245,
+    )
 
     return web.json_response({"success": True})
 
@@ -1715,6 +1807,15 @@ async def handle_autoreact_post(request: web.Request):
         synced = _replicate_autoreact_add(bot, guild_id, int(channel_id), emoji)
         print(f"[AutoSync] Auto reaction replicated to {synced} other server(s)")
 
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Added Auto Reaction",
+        f"Channel <#{channel_id}>: {emoji}",
+        category="autoreact",
+        color=0x57F287,
+    )
+
     return web.json_response({"success": True})
 
 async def handle_autoreact_delete(request: web.Request):
@@ -1736,6 +1837,15 @@ async def handle_autoreact_delete(request: web.Request):
             print(f"[AutoSync] Auto reaction removal replicated to {synced} other server(s)")
         except (ValueError, TypeError):
             pass
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Removed Auto Reaction",
+        f"Removed auto reaction rule #{rx_id}",
+        category="autoreact",
+        color=0xED4245,
+    )
 
     return web.json_response({"success": True})
 
@@ -1770,6 +1880,15 @@ async def handle_moderation_staff_add(request: web.Request):
         synced = _replicate_staff_role_add(bot, guild_id, int(role_id))
         print(f"[AutoSync] Staff role replicated to {synced} other server(s)")
 
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Added Staff Role",
+        f"Granted staff permissions to role <@&{role_id}>",
+        category="moderation",
+        color=0x57F287,
+    )
+
     return web.json_response({"success": True})
 
 async def handle_moderation_staff_del(request: web.Request):
@@ -1786,6 +1905,15 @@ async def handle_moderation_staff_del(request: web.Request):
         bot: commands.Bot = request.app["bot"]
         synced = _replicate_staff_role_remove(bot, guild_id, role_id)
         print(f"[AutoSync] Staff role removal replicated to {synced} other server(s)")
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Removed Staff Role",
+        f"Revoked staff permissions from role <@&{role_id}>",
+        category="moderation",
+        color=0xED4245,
+    )
 
     return web.json_response({"success": True})
 
@@ -1842,6 +1970,16 @@ async def handle_custom_commands_post(request: web.Request):
     ok = db.create(guild_id, name, response, created_by=0)
     if not ok:
         return web.json_response({"error": f"A command named !{name} already exists"}, status=400)
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Created Custom Command",
+        f"Added command `!{name}`",
+        category="custom_commands",
+        color=0x57F287,
+    )
+
     return web.json_response({"success": True})
 
 async def handle_custom_commands_put(request: web.Request):
@@ -1860,6 +1998,16 @@ async def handle_custom_commands_put(request: web.Request):
     ok = db.edit(guild_id, name, response)
     if not ok:
         return web.json_response({"error": "Command not found"}, status=404)
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Updated Custom Command",
+        f"Updated response for `!{name}`",
+        category="custom_commands",
+        color=0x5865F2,
+    )
+
     return web.json_response({"success": True})
 
 async def handle_custom_commands_delete(request: web.Request):
@@ -1872,6 +2020,16 @@ async def handle_custom_commands_delete(request: web.Request):
     ok = db.delete(guild_id, name)
     if not ok:
         return web.json_response({"error": "Command not found"}, status=404)
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Deleted Custom Command",
+        f"Deleted command `!{name}`",
+        category="custom_commands",
+        color=0xED4245,
+    )
+
     return web.json_response({"success": True})
 
 # --- Economy Endpoints ---
@@ -1937,6 +2095,16 @@ async def handle_economy_shop_post(request: web.Request):
     db = economy.EconomyDatabase()
     db.initialize()
     item_id = db.add_shop_item(guild_id, name, description, price, int(role_id) if role_id else None)
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Created Shop Item",
+        f"Added shop item '{name}' for {price} coins",
+        category="economy",
+        color=0x57F287,
+    )
+
     return web.json_response({"success": True, "id": item_id})
 
 async def handle_economy_shop_delete(request: web.Request):
@@ -1949,6 +2117,16 @@ async def handle_economy_shop_delete(request: web.Request):
     ok = db.remove_shop_item(guild_id, item_id)
     if not ok:
         return web.json_response({"error": "Item not found"}, status=404)
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Deleted Shop Item",
+        f"Removed shop item #{item_id}",
+        category="economy",
+        color=0xED4245,
+    )
+
     return web.json_response({"success": True})
 
 async def handle_economy_settings_post(request: web.Request):
@@ -1972,6 +2150,16 @@ async def handle_economy_settings_post(request: web.Request):
             1 if data.get("crime_enabled", True) else 0,
         ))
         conn.commit()
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Updated Economy Settings",
+        f"Robbery: {data.get('rob_enabled', True)}, Crime: {data.get('crime_enabled', True)}",
+        category="economy",
+        color=0x5865F2,
+    )
+
     return web.json_response({"success": True})
 
 # --- Temp VC Endpoints ---
@@ -2010,11 +2198,31 @@ async def handle_tempvc_post(request: web.Request):
     category_id = data.get("category_id") or None
     bot: commands.Bot = request.app["bot"]
     guild = bot.get_guild(guild_id)
+    if not guild:
+        try:
+            guild = await bot.fetch_guild(guild_id)
+        except Exception:
+            guild = None
     ch = guild.get_channel(int(channel_id)) if guild else None
+    if not ch and guild:
+        try:
+            ch = await guild.fetch_channel(int(channel_id))
+        except Exception:
+            ch = None
     if not ch:
         return web.json_response({"error": "Voice channel not found on this server"}, status=404)
     import temp_vc
     temp_vc.add_hub(guild_id, ch.id, int(category_id) if category_id else None)
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Created Temp VC Hub",
+        f"Added voice hub channel #{ch.name} (`{ch.id}`)",
+        category="tempvc",
+        color=0x57F287,
+    )
+
     return web.json_response({"success": True})
 
 async def handle_tempvc_delete(request: web.Request):
@@ -2022,8 +2230,22 @@ async def handle_tempvc_delete(request: web.Request):
     if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
     guild_id = int(request.match_info["guild_id"])
     channel_id = int(request.match_info["channel_id"])
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    ch = guild.get_channel(channel_id) if guild else None
+    ch_name = f"#{ch.name}" if ch else f"Channel {channel_id}"
     import temp_vc
     temp_vc.remove_hub(guild_id, channel_id)
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Deleted Temp VC Hub",
+        f"Removed voice hub channel {ch_name} (`{channel_id}`)",
+        category="tempvc",
+        color=0xED4245,
+    )
+
     return web.json_response({"success": True})
 
 # --- Multi-Server Sync Engine ---
@@ -2707,7 +2929,7 @@ async def handle_radio_control(request: web.Request):
 
         try:
             from weblog import post_weblog
-            asyncio.create_task(post_weblog(
+            await post_weblog(
                 f"Radio: {action}",
                 actor_label=f"<@{user_id}>" if user_id else "Web User",
                 details=f"Executed radio action: {action}",
@@ -2715,7 +2937,7 @@ async def handle_radio_control(request: web.Request):
                 actor_id=user_id,
                 guild_id=guild_id,
                 guild_name=guild.name,
-            ))
+            )
         except Exception: pass
 
     except Exception as e:
@@ -3976,6 +4198,13 @@ class DashboardAPI(commands.Cog):
         _load_sessions()
         app = web.Application(middlewares=[cors_middleware])
         app["bot"] = self.bot
+
+        try:
+            import weblog
+            if weblog._bot_ref is None:
+                weblog._bot_ref = self.bot
+        except Exception:
+            pass
 
         # Public marketing-site + support-ticket routes, and the owner-only admin panel.
         # Wrapped so a missing file or bad import can NEVER silently swallow these

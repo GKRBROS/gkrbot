@@ -23,7 +23,7 @@ from discord import app_commands
 from discord.ext import commands
 
 DB_PATH = Path(__file__).resolve().parent / "weblog.sqlite3"
-DEV_GUILD_ID = (os.getenv("BLACKLIST_DEV_GUILD_ID") or os.getenv("DISCORD_GUILD_ID", "")).strip()
+DEV_GUILD_ID = (os.getenv("DEV_GUILD_ID") or os.getenv("BLACKLIST_DEV_GUILD_ID") or os.getenv("DISCORD_GUILD_ID", "")).strip()
 _DEV_GUILD = int(DEV_GUILD_ID) if DEV_GUILD_ID.isdigit() else None
 
 CATEGORY_FOLDER_NAME = "🔧 Weblog"
@@ -38,6 +38,14 @@ KNOWN_CATEGORIES = [
     "music",
     "radio",
     "security",
+    "tempvc",
+    "giveaways",
+    "polls",
+    "sticky",
+    "autoreact",
+    "roles",
+    "economy",
+    "moderation",
     "custom_commands",
     "blacklist",
     "devnews",
@@ -309,9 +317,16 @@ async def post_weblog(
 
     guild = _bot_ref.get_guild(target_guild_id)
     if guild is None:
+        try:
+            guild = await _bot_ref.fetch_guild(target_guild_id)
+        except Exception:
+            guild = None
+    if guild is None:
         return True
 
     channel = await _ensure_channel_for_category(guild, category)
+    if channel is None and category != DEFAULT_CATEGORY:
+        channel = await _ensure_channel_for_category(guild, DEFAULT_CATEGORY)
     if channel is None:
         return True
 
@@ -369,7 +384,10 @@ class WeblogCog(commands.Cog):
         asyncio.create_task(self._startup_check())
 
     async def cog_unload(self) -> None:
-        pass
+        try:
+            self.bot.tree.remove_command("weblog", guild=discord.Object(id=_DEV_GUILD) if _DEV_GUILD else None)
+        except Exception:
+            pass
 
     async def _startup_check(self):
         await self.bot.wait_until_ready()
@@ -397,18 +415,28 @@ class WeblogCog(commands.Cog):
     )
 
     async def _require_owner_or_dev(self, interaction: discord.Interaction) -> bool:
-        if _DEV_GUILD and interaction.guild_id != _DEV_GUILD:
-            await interaction.response.send_message("❌ This command can only be used in the developer guild.", ephemeral=True)
-            return False
+        # Check owner / staff authorization
+        is_owner = False
         try:
             from blacklist import is_bot_staff
-            if not await is_bot_staff(interaction, self.bot):
-                await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
-                return False
+            is_owner = await is_bot_staff(interaction, self.bot)
         except Exception:
-            if not await self.bot.is_owner(interaction.user):
-                await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
-                return False
+            try:
+                is_owner = await self.bot.is_owner(interaction.user)
+            except Exception:
+                is_owner = False
+
+        if not is_owner:
+            await interaction.response.send_message("❌ This command is restricted to the bot owner.", ephemeral=True)
+            return False
+
+        # Restrict to dev guild or configured target guild
+        target_gid = _get_target_guild_id()
+        allowed_guild = _DEV_GUILD or target_gid
+        if allowed_guild and interaction.guild_id != allowed_guild:
+            await interaction.response.send_message("❌ This command can only be used in the developer / owner logs guild.", ephemeral=True)
+            return False
+
         return True
 
     @weblog_group.command(name="setup", description="Auto-provision Discord audit log channels for all website actions")
@@ -470,4 +498,10 @@ class WeblogCog(commands.Cog):
 
 
 async def setup(bot: commands.Bot) -> None:
+    try:
+        bot.tree.remove_command("weblog", guild=discord.Object(id=_DEV_GUILD) if _DEV_GUILD else None)
+    except Exception:
+        pass
+    if bot.get_cog("WeblogCog"):
+        await bot.remove_cog("WeblogCog")
     await bot.add_cog(WeblogCog(bot))
