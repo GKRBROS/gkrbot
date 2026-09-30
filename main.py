@@ -1,4 +1,12 @@
 import sys
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import subprocess
 import traceback
 import os
@@ -442,8 +450,11 @@ async def setup_hook():
     for ext in extensions:
         try:
             await bot.load_extension(ext)
+            print(f"✅ Loaded extension '{ext}'")
         except Exception as e:
+            import traceback
             print(f"❌ Failed to load extension '{ext}': {e}")
+            traceback.print_exc()
 
     # Global sync inside setup hook
     try:

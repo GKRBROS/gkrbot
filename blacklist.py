@@ -49,6 +49,7 @@ COVERAGE / KNOWN LIMITS
 
 Add "blacklist" to the `extensions` list in main.py — early is best.
 """
+import asyncio
 import os
 import re
 import sqlite3
