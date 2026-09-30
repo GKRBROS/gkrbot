@@ -51,6 +51,7 @@ KNOWN_CATEGORIES = [
     "devnews",
     "banner",
     "admin",
+    "error",
     "general",
 ]
 

@@ -1,10 +1,20 @@
 import { createContext, useCallback, useContext, useRef, useState } from 'react';
+import api from '../api';
 
 const ToastContext = createContext(null);
 
 let _id = 0;
+// Module-level ref so non-hook code (e.g. useDiscordLogin) can call showToast()
+let _toastFn = null;
+export function showToast(message, type = 'error', duration = 5000) {
+  if (_toastFn) {
+    _toastFn(message, type, duration);
+  } else if (type === 'error') {
+    _logErrorToBackend(String(message));
+  }
+}
 
-/** toast(message, type?) — call from anywhere via useToast() */
+/** toast(message, type?, duration?) — call from React components via useToast() */
 export function useToast() {
   return useContext(ToastContext);
 }
@@ -65,6 +75,16 @@ function ToastItem({ id, message, type = 'error', onRemove }) {
   );
 }
 
+/** Send error details to backend weblog (fire-and-forget). */
+function _logErrorToBackend(message) {
+  try {
+    const match = typeof window !== 'undefined' ? window.location.pathname.match(/\/dashboard\/(\d+)/) : null;
+    const guild_id = match ? match[1] : null;
+    const source = typeof window !== 'undefined' ? window.location.pathname : 'Web Dashboard';
+    api.post('/log-error', { message, guild_id, source }).catch(() => {});
+  } catch (_) {}
+}
+
 export function ToastProvider({ children }) {
   const [toasts, setToasts] = useState([]);
   const timers = useRef({});
@@ -79,8 +99,15 @@ export function ToastProvider({ children }) {
     const id = ++_id;
     setToasts(t => [...t, { id, message, type }]);
     timers.current[id] = setTimeout(() => remove(id), duration);
+    // Auto-log errors to weblog + Discord
+    if (type === 'error') {
+      _logErrorToBackend(String(message));
+    }
     return id;
   }, [remove]);
+
+  // Expose to non-hook callers
+  _toastFn = toast;
 
   return (
     <ToastContext.Provider value={toast}>

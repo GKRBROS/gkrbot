@@ -3017,6 +3017,50 @@ async def handle_weblog_get(request: web.Request):
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def handle_log_error(request: web.Request):
+    """POST /api/log-error - log UI error/toast into weblog (Discord & Admin/Weblog DB)."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    message = (data.get("message") or "").strip()
+    if not message:
+        return web.json_response({"ok": True})
+
+    guild_id = data.get("guild_id")
+    category = data.get("category") or "error"
+    source = data.get("source") or "Web Dashboard"
+
+    try:
+        from weblog import post_weblog
+        sess = _get_session(request) or {}
+        user_id = sess.get("user_id")
+        user_name = sess.get("username") or (f"User {user_id}" if user_id else "Guest")
+        actor_label = f"<@{user_id}>" if user_id else user_name
+        bot = request.app.get("bot")
+        guild_name = ""
+        g_id = int(guild_id) if guild_id else None
+        if bot and g_id:
+            guild = bot.get_guild(g_id)
+            if guild:
+                guild_name = guild.name
+
+        await post_weblog(
+            action=f"Error Toast [{source}]",
+            actor_label=actor_label,
+            details=message,
+            color=0xED4245,
+            category=category,
+            actor_id=user_id,
+            guild_id=g_id,
+            guild_name=guild_name,
+        )
+    except Exception as e:
+        print(f"[Weblog] Error logging UI error: {e}")
+
+    return web.json_response({"ok": True})
+
+
 def _radio_stations_list():
     """Return the stations dict from radio.py as a list for the UI."""
     try:
@@ -4365,6 +4409,7 @@ class DashboardAPI(commands.Cog):
             web.get("/api/admin/weblog", handle_weblog_get),
             web.get("/api/weblog", handle_weblog_get),
             web.get("/api/guilds/{guild_id}/weblog", handle_weblog_get),
+            web.post("/api/log-error", handle_log_error),
 
             # Registration & Applications
             web.get("/api/guilds/{guild_id}/registration", handle_registration_list_get),

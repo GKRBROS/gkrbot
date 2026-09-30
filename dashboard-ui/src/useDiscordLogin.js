@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import api from './api';
+import { showToast } from './components/ToastContext';
 
 // Shared "sign in with Discord" trigger, used by both the marketing site's
 // nav/CTA buttons and the (now-unused-by-default) Landing page. Mirrors the
@@ -27,7 +28,7 @@ export function useDiscordLogin() {
     } catch (err) {
       console.error('Login error:', err);
       const msg = err.response?.data?.error || err.message || 'Failed to initialize login. Is the bot server online?';
-      alert(msg);
+      showToast(msg, 'error');
       setLoading(false);
     }
   }, []);

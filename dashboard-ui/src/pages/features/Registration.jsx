@@ -5,6 +5,7 @@ import api from '../../api';
 import { Select, MultiSelect } from '../../components/Select';
 import PageHeader from '../../components/PageHeader';
 import Button from '../../components/Button';
+import { useToast } from '../../components/ToastContext';
 
 const FIELD_TYPES = [
   { value: 'short_text', label: 'Short Text (Single Line)' },
@@ -22,6 +23,7 @@ const FIELD_TYPES = [
 
 function Registration() {
   const { guildId } = useParams();
+  const toast = useToast();
   const [activeTab, setActiveTab] = useState('forms'); // 'forms' | 'submissions' | 'logs'
   const [forms, setForms] = useState([]);
   const [channels, setChannels] = useState([]);
@@ -199,7 +201,7 @@ function Registration() {
   // Handle Publish Panel
   const handlePublishPanel = async () => {
     if (!publishChannelId) {
-      alert('Please select a channel.');
+      toast('Please select a channel.', 'warning');
       return;
     }
     setPublishing(true);
