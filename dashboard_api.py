@@ -173,14 +173,14 @@ async def handle_callback(request: web.Request):
         from weblog import post_weblog
         u_name = user_data.get("username", "Unknown")
         u_id = user_data.get("id", "")
-        asyncio.create_task(post_weblog(
+        await post_weblog(
             "User Signed In",
             actor_label=f"{u_name} ({u_id})",
-            details=f"User signed into dashboard via Discord OAuth",
+            details="User signed into dashboard via Discord OAuth",
             color=0x57F287,
             category="auth",
             actor_id=u_id,
-        ))
+        )
     except Exception as e:
         print(f"[Dashboard API] Failed to log sign-in: {e}")
 
@@ -2020,6 +2020,7 @@ async def handle_tempvc_post(request: web.Request):
 async def handle_tempvc_delete(request: web.Request):
     sess = _get_session(request)
     if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
     channel_id = int(request.match_info["channel_id"])
     import temp_vc
     temp_vc.remove_hub(guild_id, channel_id)
