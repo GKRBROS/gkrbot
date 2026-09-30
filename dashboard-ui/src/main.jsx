@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App.jsx';
 import { BotProvider } from './BotContext.jsx';
+import { ToastProvider } from './components/ToastContext.jsx';
 import './index.css';
 import './theme-flow.css';
 import './live-bg.css';
@@ -13,7 +14,6 @@ import AnimatedBackground from './AnimatedBackground.jsx';
 
 initMotion();
 
-// Tab icon (also set it in index.html; this keeps it correct if index.html still has the Vite default)
 function setHeadLink(rel, href, type) {
   let el = document.head.querySelector(`link[rel="${rel}"]`);
   if (!el) {
@@ -33,7 +33,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
     <BrowserRouter>
       <AnimatedBackground />
       <BotProvider>
-        <App />
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       </BotProvider>
     </BrowserRouter>
   </React.StrictMode>,

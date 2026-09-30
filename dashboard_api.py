@@ -1425,7 +1425,12 @@ async def handle_music_get(request: web.Request):
             "author": getattr(track, "author", "Unknown"),
             "length": getattr(track, "length", 0),
             "position": getattr(player, "position", 0),
-            "thumbnail": getattr(track, "artwork", None) if hasattr(track, "artwork") else None
+            "thumbnail": (
+                getattr(track, 'artwork_url', None)
+                or getattr(track, 'artwork', None)
+                or getattr(track, 'thumbnail', None)
+                or (f"https://i.ytimg.com/vi/{track.identifier}/hqdefault.jpg" if getattr(track, 'identifier', None) and len(getattr(track, 'identifier', '')) == 11 else None)
+            )
         },
         "queue": queue_list
     })
@@ -1464,10 +1469,28 @@ async def handle_music_search(request: web.Request):
                 "author": getattr(tr, "author", "Unknown"),
                 "length": getattr(tr, "length", 0),
                 "uri": getattr(tr, "uri", ""),
-                "thumbnail": getattr(tr, "artwork", None) if hasattr(tr, "artwork") else None,
+                "thumbnail": (
+                    getattr(tr, 'artwork_url', None)
+                    or getattr(tr, 'artwork', None)
+                    or getattr(tr, 'thumbnail', None)
+                    or (f"https://i.ytimg.com/vi/{tr.identifier}/hqdefault.jpg" if getattr(tr, 'identifier', None) and len(getattr(tr, 'identifier', '')) == 11 else None)
+                ),
             })
         return web.json_response({"results": results})
     except Exception as e:
+        try:
+            from weblog import post_weblog
+            await post_weblog(
+                "Music Search Error",
+                actor_label=f"<@{user_id}>" if user_id else "Web User",
+                details=str(e),
+                color=0xef4444,
+                category="error",
+                actor_id=user_id,
+                guild_id=guild_id,
+            )
+        except Exception:
+            pass
         return web.json_response({"error": str(e)}, status=500)
 
 async def handle_music_control(request: web.Request):
@@ -2888,8 +2911,22 @@ async def handle_radio_control(request: web.Request):
     if not guild:
         return web.json_response({"error": "Guild not found"}, status=404)
 
-    cog: "radio_module.RadioCog" = bot.cogs.get("RadioCog")  # type: ignore
+    cog: "radio_module.RadioCog" = bot.cogs.get("Radio System")  # type: ignore
     if not cog:
+        try:
+            from weblog import post_weblog
+            await post_weblog(
+                "Radio: Cog Not Loaded",
+                actor_label=f"<@{user_id}>" if user_id else "Web User",
+                details=f"Radio cog was not found in bot.cogs (action: {action})",
+                color=0xef4444,
+                category="error",
+                actor_id=user_id,
+                guild_id=guild_id,
+                guild_name=guild.name if guild else None,
+            )
+        except Exception:
+            pass
         return web.json_response({"error": "Radio cog not loaded"}, status=503)
 
     try:
@@ -2941,6 +2978,20 @@ async def handle_radio_control(request: web.Request):
         except Exception: pass
 
     except Exception as e:
+        try:
+            from weblog import post_weblog
+            await post_weblog(
+                f"Radio Error: {action}",
+                actor_label=f"<@{user_id}>" if user_id else "Web User",
+                details=str(e),
+                color=0xef4444,
+                category="error",
+                actor_id=user_id,
+                guild_id=guild_id,
+                guild_name=guild.name if guild else None,
+            )
+        except Exception:
+            pass
         return web.json_response({"error": str(e)}, status=500)
 
     return web.json_response({"success": True})

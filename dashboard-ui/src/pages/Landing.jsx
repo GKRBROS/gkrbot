@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import api from '../api';
 import { useBotName } from '../BotContext';
+import { useToast } from '../components/ToastContext';
 import {
   Tv,
   Ticket,
@@ -31,6 +32,7 @@ const FEATURES = [
 
 export function Landing() {
   const botName = useBotName();
+  const toast = useToast();
   const [loading, setLoading] = useState(false);
   const cardRef = useRef(null);
 
@@ -84,7 +86,7 @@ export function Landing() {
     } catch (err) {
       console.error('Login error:', err);
       const msg = err.response?.data?.error || err.message || 'Failed to initialize login. Is the bot server online?';
-      alert(msg);
+      toast(msg, 'error');
       setLoading(false);
     }
   };

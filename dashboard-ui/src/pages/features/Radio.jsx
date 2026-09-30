@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
+import { useToast } from '../../components/ToastContext';
 import {
   Radio as RadioIcon,
   Play,
@@ -34,6 +35,7 @@ function groupByCategory(stations = []) {
 
 function Radio() {
   const { guildId } = useParams();
+  const toast = useToast();
   const [state, setState] = useState(null);
   const [voiceChannels, setVoiceChannels] = useState([]);
   const [selectedChannelId, setSelectedChannelId] = useState('');
@@ -83,7 +85,7 @@ function Radio() {
       await api.post(`/guilds/${guildId}/radio/control`, { action, ...extra });
       await fetchState();
     } catch (err) {
-      alert(err.response?.data?.error || 'Action failed');
+      toast(err.response?.data?.error || 'Action failed', 'error');
     }
     setActionPending(false);
   };

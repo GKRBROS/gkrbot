@@ -107,12 +107,49 @@ async def _get_or_create_plain_vc(bot: commands.Bot, guild: discord.Guild, chann
                 pass
             vc = None
 
-    if vc is None or not is_connected(vc):
-        return await channel.connect(**connect_kwargs)
+    if vc is not None and isinstance(vc, discord.VoiceClient):
+        if is_connected(vc):
+            if vc.channel and vc.channel.id != channel.id:
+                await vc.move_to(channel)
+            return vc
 
-    if vc.channel.id != channel.id:
-        await vc.move_to(channel)
-    return vc
+        # If vc is attached to guild._voice_client but not connected yet (e.g. gateway reconnecting
+        # on bot restart), give it a brief moment to complete the handshake
+        for _ in range(5):
+            await asyncio.sleep(0.5)
+            if is_connected(vc):
+                if vc.channel and vc.channel.id != channel.id:
+                    await vc.move_to(channel)
+                return vc
+
+        # Stale/disconnected VoiceClient still occupying guild._voice_client slot —
+        # disconnect cleanly before attempting a fresh channel.connect()
+        try:
+            await vc.disconnect(force=True)
+        except Exception:
+            pass
+        await asyncio.sleep(0.5)
+
+    try:
+        return await channel.connect(**connect_kwargs)
+    except discord.ClientException as e:
+        if "Already connected" in str(e):
+            vc = guild.voice_client
+            if vc is not None and isinstance(vc, discord.VoiceClient):
+                if vc.channel and vc.channel.id != channel.id:
+                    try:
+                        await vc.move_to(channel)
+                    except Exception:
+                        pass
+                return vc
+            if guild.voice_client:
+                try:
+                    await guild.voice_client.disconnect(force=True)
+                except Exception:
+                    pass
+                await asyncio.sleep(0.5)
+            return await channel.connect(**connect_kwargs)
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -596,6 +633,18 @@ class RadioCog(commands.Cog, name="Radio System"):
                         logger.error(f"[Radio] Stream playback error in {guild.name}: {error}")
 
                 vc.play(source, after=after_playback)
+
+                # Check for idle standby right away if channel has 0 human listeners
+                bot_channel = vc.channel
+                if bot_channel:
+                    humans = [m for m in bot_channel.members if not m.bot]
+                    if not humans:
+                        vc.pause()
+                        self._idle_paused.add(guild.id)
+                        logger.info(f"[Radio] Zero human listeners in {bot_channel.name} ({guild.name}) — entered low-power idle standby.")
+                    else:
+                        self._idle_paused.discard(guild.id)
+
                 set_radio_state(
                     guild.id,
                     voice_channel_id=str(vc.channel.id),
@@ -813,13 +862,23 @@ class RadioCog(commands.Cog, name="Radio System"):
                 try:
                     logger.info(f"[Radio] 24/7 Auto-reconnecting to {voice_channel.name} in {guild.name}...")
                     vc = await _get_or_create_plain_vc(self.bot, guild, voice_channel, timeout=20, reconnect=True, self_deaf=True)
+                    await asyncio.sleep(0.5)
                 except Exception as e:
                     logger.warning(f"[Radio] Could not reconnect to {voice_channel.name}: {e}")
                     continue
+            elif vc.channel and vc.channel.id != voice_channel.id:
+                try:
+                    await vc.move_to(voice_channel)
+                except Exception as e:
+                    logger.warning(f"[Radio] Could not move to {voice_channel.name}: {e}")
 
             # Check if playback stopped unexpectedly while marked active and not paused
-            is_paused = bool(s.get("is_paused", 0))
-            if vc and not is_playing(vc) and not is_paused:
+            is_paused_db = bool(s.get("is_paused", 0))
+            is_idle = guild.id in self._idle_paused
+            is_vc_paused = is_paused(vc) if vc else False
+            is_paused_total = is_paused_db or is_idle or is_vc_paused
+
+            if vc and is_connected(vc) and not is_playing(vc) and not is_paused_total:
                 station_key = s.get("station_key", DEFAULT_STATION_KEY)
                 station_name = s.get("station_name", "Live Radio")
                 stream_url = s.get("stream_url", STATIONS[DEFAULT_STATION_KEY]["url"])

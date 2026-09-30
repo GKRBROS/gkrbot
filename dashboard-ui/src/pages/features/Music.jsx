@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
+import { useToast } from '../../components/ToastContext';
 import { useParams } from 'react-router-dom';
 import {
   Music2,
@@ -26,6 +27,7 @@ import Skeleton from '../../components/Skeleton';
 
 function Music() {
   const { guildId } = useParams();
+  const toast = useToast();
   const [playerInfo, setPlayerInfo] = useState(null);
   const [voiceChannels, setVoiceChannels] = useState([]);
   const [selectedChannelId, setSelectedChannelId] = useState('');
@@ -82,7 +84,7 @@ function Music() {
       await api.post(`/guilds/${guildId}/music/control`, { action, ...extra });
       await fetchMusic();
     } catch (err) {
-      alert(err.response?.data?.error || 'Action failed');
+      toast(err.response?.data?.error || 'Action failed', 'error');
     } finally {
       setActionPending(false);
     }
@@ -108,7 +110,7 @@ function Music() {
 
   const handlePlayOrQueue = async (trackUriOrQuery) => {
     if (!selectedChannelId && (!playerInfo || !playerInfo.connected)) {
-      alert('Please select a voice channel first.');
+      toast('Please select a voice channel first.', 'warning');
       return;
     }
     setActionPending(true);
@@ -124,7 +126,7 @@ function Music() {
       setSearchQuery('');
       await fetchMusic();
     } catch (err) {
-      alert(err.response?.data?.error || 'Failed to play track.');
+      toast(err.response?.data?.error || 'Failed to play track.', 'error');
     } finally {
       setActionPending(false);
     }
