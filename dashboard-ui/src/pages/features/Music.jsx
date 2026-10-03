@@ -16,7 +16,8 @@ import {
   Search,
   Plus,
   Loader2,
-  AlertCircle
+  AlertCircle,
+  PhoneOff
 } from 'lucide-react';
 import api from '../../api';
 import PageHeader from '../../components/PageHeader';
@@ -224,6 +225,17 @@ function Music() {
               >
                 {playerInfo?.connected ? 'Move' : 'Connect'}
               </Button>
+              {playerInfo?.connected && (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  disabled={actionPending}
+                  icon={PhoneOff}
+                  onClick={() => controlAction('disconnect')}
+                >
+                  Disconnect
+                </Button>
+              )}
             </div>
 
             {/* Status info */}

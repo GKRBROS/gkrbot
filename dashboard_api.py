@@ -1453,31 +1453,37 @@ async def handle_music_search(request: web.Request):
 
     try:
         import music as music_module
-        cog = bot.cogs.get("Music") or bot.cogs.get("MusicCog")
-        if not cog:
-            return web.json_response({"error": "Music cog not loaded"}, status=503)
+        import wavelink
 
-        # Force search-style query so we always get a result list, not a single auto-pick.
-        # Only wrap in ytsearch: if it's a plain text query (not a URL or already prefixed).
-        prefixes = ("http://", "https://", "ytsearch:", "ytmsearch:", "spsearch:", "scsearch:")
-        search_q = q if q.lower().startswith(prefixes) else f"ytsearch:{q}"
-
-        res = await cog._resolve(search_q, guild.me)
-
-        # Gather all tracks regardless of resolve type
-        tracks = []
-        if res.get("type") == "single" and res.get("track"):
-            tracks = [res["track"]]
-        elif res.get("type") in ("ambiguous", "playlist"):
-            tracks = res.get("tracks", [])
+        # Direct search to avoid single-track collapse
+        if q.startswith(("http://", "https://")):
+            raw_results = await wavelink.Playable.search(q)
+            if isinstance(raw_results, wavelink.Playlist):
+                tracks = list(raw_results.tracks)
+            elif raw_results:
+                tracks = list(raw_results)
+            else:
+                tracks = []
+        else:
+            # Query multiple tracks from search sources
+            clean_q = q.removeprefix("ytsearch:").removeprefix("ytmsearch:").removeprefix("spsearch:").strip()
+            raw_results = await wavelink.Playable.search(clean_q, source="ytmsearch")
+            tracks = list(raw_results) if raw_results else []
+            if not tracks or len(tracks) < 3:
+                yt_results = await wavelink.Playable.search(clean_q, source="ytsearch")
+                if yt_results:
+                    seen_uris = {getattr(t, "uri", "") for t in tracks}
+                    for t in yt_results:
+                        if getattr(t, "uri", "") not in seen_uris:
+                            tracks.append(t)
 
         results = []
-        for tr in tracks[:15]:
+        for tr in tracks[:20]:
             results.append({
                 "title": getattr(tr, "title", "Unknown"),
                 "author": getattr(tr, "author", "Unknown"),
                 "length": getattr(tr, "length", 0),
-                "uri": getattr(tr, "uri", ""),
+                "uri": getattr(tr, "uri", "") or getattr(tr, "identifier", ""),
                 "thumbnail": (
                     getattr(tr, 'artwork_url', None)
                     or getattr(tr, 'artwork', None)
@@ -1529,8 +1535,28 @@ async def handle_music_control(request: web.Request):
     import music as music_module
     cog = bot.cogs.get("Music") or bot.cogs.get("MusicCog")
 
+    # Disconnect from channel
+    if action in ("disconnect", "leave"):
+        player = music_module.get_player(guild) or guild.voice_client
+        if player and getattr(player, 'connected', False):
+            await player.disconnect()
+            try:
+                from weblog import post_weblog
+                await post_weblog(
+                    "Music: Disconnected from Channel",
+                    actor_label=f"<@{user_id}>",
+                    details="Disconnected music player from voice",
+                    category="music",
+                    actor_id=user_id,
+                    guild_id=guild_id,
+                    guild_name=guild.name,
+                )
+            except Exception: pass
+            return web.json_response({"success": True})
+        return web.json_response({"error": "Bot is not connected to a voice channel"}, status=400)
+
     # Connect to channel
-    if action == "connect":
+    elif action == "connect":
         vc_id = data.get("voice_channel_id")
         if not vc_id:
             return web.json_response({"error": "voice_channel_id is required"}, status=400)
