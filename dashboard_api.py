@@ -1465,17 +1465,20 @@ async def handle_music_search(request: web.Request):
             else:
                 tracks = []
         else:
-            # Query multiple tracks from search sources
             clean_q = q.removeprefix("ytsearch:").removeprefix("ytmsearch:").removeprefix("spsearch:").strip()
-            raw_results = await wavelink.Playable.search(clean_q, source="ytmsearch")
-            tracks = list(raw_results) if raw_results else []
-            if not tracks or len(tracks) < 3:
-                yt_results = await wavelink.Playable.search(clean_q, source="ytsearch")
-                if yt_results:
-                    seen_uris = {getattr(t, "uri", "") for t in tracks}
-                    for t in yt_results:
-                        if getattr(t, "uri", "") not in seen_uris:
-                            tracks.append(t)
+            cog = bot.cogs.get("Music") or bot.cogs.get("MusicCog")
+            
+            # Use ytsearch for broad candidate pool matching console search
+            raw_results = await wavelink.Playable.search(clean_q, source="ytsearch")
+            if not raw_results:
+                raw_results = await wavelink.Playable.search(clean_q, source="ytmsearch")
+            
+            raw_list = list(raw_results) if raw_results else []
+            if cog and hasattr(cog, "_rank_tracks") and raw_list:
+                ranked = cog._rank_tracks(clean_q, raw_list)
+                tracks = ranked.get("all_tracks") or ranked.get("tracks") or ([ranked["track"]] if ranked.get("track") else raw_list)
+            else:
+                tracks = raw_list
 
         results = []
         for tr in tracks[:20]:
@@ -1537,9 +1540,48 @@ async def handle_music_control(request: web.Request):
 
     # Disconnect from channel
     if action in ("disconnect", "leave"):
-        player = music_module.get_player(guild) or guild.voice_client
-        if player and getattr(player, 'connected', False):
-            await player.disconnect()
+        player = (guild.voice_client if guild.voice_client else None) or music_module.get_player(guild)
+        if player:
+            try:
+                if hasattr(player, "queue") and player.queue:
+                    player.queue.clear()
+            except Exception:
+                pass
+            try:
+                gp = cog.get_gp(guild.id) if (cog and hasattr(cog, "get_gp")) else None
+                if gp:
+                    gp.mode_247 = False
+            except Exception:
+                pass
+            try:
+                if hasattr(player, "channel") and player.channel:
+                    if hasattr(music_module, "set_voice_channel_status"):
+                        await music_module.set_voice_channel_status(bot, player.channel.id, "")
+            except Exception:
+                pass
+
+            disconnected = False
+            try:
+                await player.disconnect(force=True)
+                disconnected = True
+            except TypeError:
+                try:
+                    await player.disconnect()
+                    disconnected = True
+                except Exception:
+                    pass
+            except Exception as e:
+                print(f"[Dashboard] player disconnect error: {e}")
+
+            if not disconnected and guild.voice_client:
+                try:
+                    await guild.voice_client.disconnect(force=True)
+                except Exception:
+                    try:
+                        await guild.voice_client.disconnect()
+                    except Exception:
+                        pass
+
             try:
                 from weblog import post_weblog
                 await post_weblog(

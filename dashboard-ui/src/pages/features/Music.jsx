@@ -83,6 +83,12 @@ function Music() {
     setActionPending(true);
     try {
       await api.post(`/guilds/${guildId}/music/control`, { action, ...extra });
+      if (action === 'disconnect') {
+        toast('Disconnected from voice channel', 'success');
+        setPlayerInfo(prev => prev ? { ...prev, connected: false, is_playing: false, voice_channel_name: null } : null);
+      } else if (action === 'connect') {
+        toast('Connected to voice channel', 'success');
+      }
       await fetchMusic();
     } catch (err) {
       toast(err.response?.data?.error || 'Action failed', 'error');
@@ -285,12 +291,12 @@ function Music() {
               background: 'var(--bg-surface)',
               border: '1px solid var(--border)',
               borderRadius: 'var(--radius-md)',
-              maxHeight: '280px',
+              maxHeight: '420px',
               overflowY: 'auto',
               display: 'flex',
               flexDirection: 'column',
-              gap: '4px',
-              padding: '8px'
+              gap: '6px',
+              padding: '10px'
             }}>
               <div style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', padding: '4px 8px' }}>
                 Search Results ({searchResults.length})

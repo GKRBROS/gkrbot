@@ -1386,11 +1386,12 @@ class MusicCog(commands.Cog):
             for tr in tracks:
                 if not getattr(tr, "is_stream", False):
                     print(f"[Rank] ⚠️ All candidates rejected, emergency fallback to: '{tr.title}'")
-                    return {"type": "single", "track": tr}
+                    return {"type": "single", "track": tr, "all_tracks": [tr]}
             return {"type": "error", "message": "No playable results found"}
 
         # Sort by final score descending
         scored.sort(key=lambda x: x[0], reverse=True)
+        all_ranked_tracks = [t for _, _, t, _ in scored]
 
         # ── Structured Logging ────────────────────────────────────────────────
         print(f"\n━━━━━━━━ SEARCH RANKING ━━━━━━━━")
@@ -1423,32 +1424,32 @@ class MusicCog(commands.Cog):
                 # High confidence — top result wins even if others score similarly
                 print(f"[Rank] ✅ HIGH confidence ({best_final:.3f}), auto-playing: \"{best_track.title}\"")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-                return {"type": "single", "track": best_track}
+                return {"type": "single", "track": best_track, "all_tracks": all_ranked_tracks}
 
             elif best_final >= 0.45 and gap >= 0.06:
                 # Moderate confidence with a clear gap over second place
                 print(f"[Rank] ✅ MODERATE confidence ({best_final:.3f}, gap={gap:.3f}), auto-playing: \"{best_track.title}\"")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-                return {"type": "single", "track": best_track}
+                return {"type": "single", "track": best_track, "all_tracks": all_ranked_tracks}
 
             elif best_final < 0.30:
                 # Low confidence — let user choose
                 print(f"[Rank] ❓ LOW confidence ({best_final:.3f}), showing menu")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
                 candidates = [t for _, _, t, _ in scored[:5]]
-                return {"type": "ambiguous", "tracks": candidates}
+                return {"type": "ambiguous", "tracks": candidates, "all_tracks": all_ranked_tracks}
 
             else:
                 # Mid-range score with close competitors — show menu
                 print(f"[Rank] ❓ AMBIGUOUS ({best_final:.3f}, gap={gap:.3f}), showing menu")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
                 candidates = [t for _, _, t, _ in scored[:5]]
-                return {"type": "ambiguous", "tracks": candidates}
+                return {"type": "ambiguous", "tracks": candidates, "all_tracks": all_ranked_tracks}
         else:
             print(f"[Rank] ✅ Only 1 candidate, auto-playing: \"{best_track.title}\"")
             print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
 
-        return {"type": "single", "track": best_track}
+        return {"type": "single", "track": best_track, "all_tracks": all_ranked_tracks}
 
 
     async def _resolve_legacy(self, query: str, requester: discord.Member, gp=None) -> dict:
