@@ -228,58 +228,68 @@ function StreamAlerts() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleAddAlert} style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div style={{ minWidth: '150px', flex: '0.8' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
-                Streaming Platform
-              </label>
-              <Select
-                value={addPlatform}
-                onChange={setAddPlatform}
-                options={[
-                  { value: 'youtube', label: 'YouTube' },
-                  { value: 'twitch', label: 'Twitch' },
-                  { value: 'kick', label: 'Kick' },
-                ]}
-              />
-            </div>
+          <form onSubmit={handleAddAlert}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+              gap: '14px',
+              alignItems: 'end',
+            }}>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                  Streaming Platform
+                </label>
+                <Select
+                  value={addPlatform}
+                  onChange={setAddPlatform}
+                  options={[
+                    { value: 'youtube', label: 'YouTube' },
+                    { value: 'twitch', label: 'Twitch' },
+                    { value: 'kick', label: 'Kick' },
+                  ]}
+                />
+              </div>
 
-            <div style={{ minWidth: '220px', flex: '1.2' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
-                Channel Handle or Username
-              </label>
-              <input
-                type="text"
-                className="form-input"
-                placeholder="e.g. @MrBeast or shroud"
-                value={addUsername}
-                onChange={e => setAddUsername(e.target.value)}
-                required
-              />
-            </div>
+              <div style={{ gridColumn: 'span 1' }}>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                  Channel Handle or Username
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. @MrBeast or shroud"
+                  value={addUsername}
+                  onChange={e => setAddUsername(e.target.value)}
+                  required
+                />
+              </div>
 
-            <div style={{ minWidth: '220px', flex: '1.2' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
-                Notification Channel
-              </label>
-              <Select
-                value={addChannel}
-                onChange={setAddChannel}
-                options={channelOptions}
-                placeholder="Select Discord channel..."
-                searchable
-              />
-            </div>
+              <div>
+                <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                  Notification Channel
+                </label>
+                <Select
+                  value={addChannel}
+                  onChange={setAddChannel}
+                  options={channelOptions}
+                  placeholder="Select Discord channel..."
+                  searchable
+                />
+              </div>
 
-            <Button
-              type="submit"
-              variant="primary"
-              icon={Plus}
-              loading={submitting}
-              disabled={!addUsername.trim() || !addChannel}
-            >
-              Add Alert
-            </Button>
+              <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  icon={Plus}
+                  loading={submitting}
+                  disabled={!addUsername.trim() || !addChannel}
+                  style={{ width: '100%', justifyContent: 'center' }}
+                >
+                  Add Alert
+                </Button>
+              </div>
+            </div>
           </form>
         </CardContent>
       </Card>

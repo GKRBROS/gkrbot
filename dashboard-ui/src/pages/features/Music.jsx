@@ -341,10 +341,7 @@ function Music() {
                 width: '100%',
                 aspectRatio: '16/9',
                 borderRadius: 'var(--radius-md)',
-                backgroundImage: `url(${current.thumbnail || ''})`,
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-                background: current.thumbnail ? undefined : 'var(--bg-surface)',
+                background: 'var(--bg-surface)',
                 border: '1px solid var(--border)',
                 position: 'relative',
                 overflow: 'hidden',
@@ -352,7 +349,16 @@ function Music() {
                 alignItems: 'center',
                 justifyContent: 'center',
               }}>
-                {!current.thumbnail && <Music2 size={48} color="var(--text-muted)" />}
+                {current.thumbnail ? (
+                  <img
+                    src={current.thumbnail}
+                    alt={current.title}
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={e => { e.currentTarget.style.display = 'none'; }}
+                  />
+                ) : (
+                  <Music2 size={48} color="var(--text-muted)" />
+                )}
                 {paused && (
                   <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <Pause size={48} color="white" />

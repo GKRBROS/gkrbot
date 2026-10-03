@@ -1450,18 +1450,27 @@ async def handle_music_search(request: web.Request):
     q = request.query.get("q", "").strip()
     if not q:
         return web.json_response({"results": []})
-        
+
     try:
         import music as music_module
         cog = bot.cogs.get("Music") or bot.cogs.get("MusicCog")
         if not cog:
             return web.json_response({"error": "Music cog not loaded"}, status=503)
-            
-        res = await cog._resolve(q, guild.me)
-        tracks = res.get("tracks", [])
+
+        # Force search-style query so we always get a result list, not a single auto-pick.
+        # Only wrap in ytsearch: if it's a plain text query (not a URL or already prefixed).
+        prefixes = ("http://", "https://", "ytsearch:", "ytmsearch:", "spsearch:", "scsearch:")
+        search_q = q if q.lower().startswith(prefixes) else f"ytsearch:{q}"
+
+        res = await cog._resolve(search_q, guild.me)
+
+        # Gather all tracks regardless of resolve type
+        tracks = []
         if res.get("type") == "single" and res.get("track"):
-            tracks = [res.get("track")]
-            
+            tracks = [res["track"]]
+        elif res.get("type") in ("ambiguous", "playlist"):
+            tracks = res.get("tracks", [])
+
         results = []
         for tr in tracks[:15]:
             results.append({
