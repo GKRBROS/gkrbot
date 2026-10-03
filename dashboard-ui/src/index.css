@@ -1446,6 +1446,23 @@ h6 {
   min-width: 0;
   margin: 0 auto;
   padding: 32px 32px 120px;
+  box-sizing: border-box;
+}
+
+/* ── Page Transition ───────────────────────────────────────── */
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.page-enter {
+  animation: pageEnter 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 /* ── Sticky Unsaved Banner ─────────────────────────────────── */

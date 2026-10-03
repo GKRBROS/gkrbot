@@ -101,9 +101,6 @@ export function Loader({ label, fullscreen = true }) {
                   <div className="w-6 h-6 rounded-full border-2 border-black bg-white flex items-center justify-center">
                     <div className="w-1.5 h-1.5 rounded-full bg-black" />
                   </div>
-                  <span className="text-[9px] font-mono font-black border-2 border-black bg-white px-1.5 py-0.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]">
-                    {card.tag}
-                  </span>
                 </div>
 
                 <div className="flex flex-col items-center justify-center my-auto gap-2.5">

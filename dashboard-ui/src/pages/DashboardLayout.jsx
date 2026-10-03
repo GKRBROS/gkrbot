@@ -431,7 +431,9 @@ export function DashboardLayout({ user }) {
 
         {/* Dynamic Page Container */}
         <main className="content-container">
-          <Outlet />
+          <div key={location.pathname} className="page-enter">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

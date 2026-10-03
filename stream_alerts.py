@@ -1015,6 +1015,9 @@ class StreamAlertsCog(commands.Cog):
         # youtube_live_confirm[alert_id] = count of consecutive polls that showed live
         # We require YOUTUBE_LIVE_CONFIRM_COUNT consecutive live polls before firing the alert
         self._yt_live_confirm: dict[int, int] = {}
+        # Guard: video_check_loop skips until startup sync has finished so it
+        # doesn't fire duplicate "new video" alerts immediately after a restart.
+        self._startup_sync_done: bool = False
 
     async def cog_load(self) -> None:
         self._session = aiohttp.ClientSession()
@@ -1106,9 +1109,9 @@ class StreamAlertsCog(commands.Cog):
         asyncio.create_task(self._sync_live_states_on_startup())
 
     async def _sync_live_states_on_startup(self) -> None:
-        """Check all tracked streams silently and update last_live in DB.
+        """Check all tracked streams silently and update last_live + last_video_id in DB.
         No alerts are sent — this only calibrates the state so the next poll
-        knows which streams were ALREADY live before the bot came online.
+        knows which streams were ALREADY live and which videos were already seen.
         """
         print("[StreamAlerts] 🔄 Running startup live-state sync (no alerts will fire)...")
         await asyncio.sleep(5)  # small delay to let the session fully start
@@ -1118,25 +1121,44 @@ class StreamAlertsCog(commands.Cog):
             alerts = [a for a in alerts if a.guild_id not in BLACKLIST_STORE.server_ids]
         except Exception:
             pass
-        live_alerts = [a for a in alerts if a.notify_live]
-        if not live_alerts:
-            print("[StreamAlerts] ✅ No alerts to sync on startup.")
-            return
 
-        # ── YouTube batch sync ────────────────────────────────────────────────
-        yt_alerts = [a for a in live_alerts if a.platform == "youtube" and a.creator_id]
-        yt_channel_ids = list({a.creator_id for a in yt_alerts})
+        live_alerts = [a for a in alerts if a.notify_live]
+        video_alerts = [a for a in alerts if a.platform == "youtube" and a.notify_videos and a.creator_id]
+
+        # ── YouTube batch sync (live + video baseline) ────────────────────────
+        all_yt_cids = list({a.creator_id for a in (live_alerts + video_alerts) if a.platform == "youtube" and a.creator_id})
         yt_results: dict = {}
-        if yt_channel_ids:
+        if all_yt_cids:
             try:
-                live_direct = await check_youtube_live_direct(self.session, yt_channel_ids)
-                rss_batch = await get_youtube_batch(self.session, yt_channel_ids)
-                for cid in yt_channel_ids:
+                live_direct = await check_youtube_live_direct(self.session, all_yt_cids)
+                rss_batch = await get_youtube_batch(self.session, all_yt_cids)
+                for cid in all_yt_cids:
                     yt_results[cid] = live_direct.get(cid) or rss_batch.get(cid)
             except Exception as exc:
                 print(f"[StreamAlerts] Startup YT sync error: {exc}")
 
-        # ── Process each alert silently ───────────────────────────────────────
+        # ── Seed last_video_id for video alerts that have never been set ───────
+        # This prevents the first video_check_loop run from spamming every
+        # existing video as "new" after a fresh install or DB reset.
+        for alert in video_alerts:
+            try:
+                data = yt_results.get(alert.creator_id)
+                if not data:
+                    continue
+                vid_id = data.get("video_id", "")
+                if vid_id and not alert.last_video_id:
+                    self.db.update_last_video(alert.id, vid_id)
+                    print(f"[StreamAlerts] Startup video seed: {alert.creator_username} → last_video_id={vid_id}")
+                elif vid_id and vid_id != alert.last_video_id:
+                    # Also update if the stored ID is stale (bot was offline, newer video exists)
+                    # This prevents re-notifying a video that already existed before the restart
+                    # but is "newer" than what was last recorded.
+                    self.db.update_last_video(alert.id, vid_id)
+                    print(f"[StreamAlerts] Startup video update: {alert.creator_username} → last_video_id={vid_id} (was: {alert.last_video_id or 'unset'})")
+            except Exception as exc:
+                print(f"[StreamAlerts] Startup video seed error for {alert.creator_username}: {exc}")
+
+        # ── Process each live alert silently ──────────────────────────────────
         for alert in live_alerts:
             try:
                 if alert.platform == "youtube":
@@ -1163,7 +1185,8 @@ class StreamAlertsCog(commands.Cog):
             except Exception as exc:
                 print(f"[StreamAlerts] Startup sync error for {alert.creator_username}: {exc}")
 
-        print("[StreamAlerts] ✅ Startup live-state sync complete.")
+        self._startup_sync_done = True
+        print("[StreamAlerts] ✅ Startup live-state sync complete. Video loop now active.")
 
     async def cog_unload(self) -> None:
         self.stream_check_loop.cancel()
@@ -1259,6 +1282,9 @@ class StreamAlertsCog(commands.Cog):
     @tasks.loop(minutes=VIDEO_POLL_MINUTES)
     async def video_check_loop(self):
         """Check YouTube for new videos — batched into 1 API call."""
+        # Skip the very first invocation until startup sync has seeded last_video_id
+        if not self._startup_sync_done:
+            return
         try:
             alerts = self.db.get_all_alerts()
             from blacklist import STORE as BLACKLIST_STORE
