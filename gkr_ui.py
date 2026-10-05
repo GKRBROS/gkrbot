@@ -25,6 +25,7 @@ from bot_config import BOT_NAME
 
 class GKRColors:
     BRAND       = 0x5865F2   # Discord Blurple  — primary actions, navigation
+    INFO        = 0x5865F2   # Informational embed color (alias to BRAND)
     SUCCESS     = 0x57F287   # Discord Emerald  — confirmations, positive feedback
     WARNING     = 0xFEE75C   # Discord Amber    — cautions, warnings, active timeouts
     DANGER      = 0xED4245   # Discord Ruby     — errors, destructive actions, bans

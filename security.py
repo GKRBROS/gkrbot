@@ -706,7 +706,7 @@ class SecurityCog(commands.Cog):
             if isinstance(message.author, discord.Member) and not message.author.guild_permissions.mention_everyone:
                 try:
                     await message.delete()
-                except discord.Forbidden:
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                     pass
                 
                 reason = "Automod: Unauthorized @everyone/@here mass ping attempt"
