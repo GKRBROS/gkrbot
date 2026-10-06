@@ -1022,16 +1022,45 @@ class MusicCog(commands.Cog):
 
         # Loop logic
         if gp.loop_mode == "single" and payload.track:
-            await player.play(payload.track)
-            return
+            try:
+                await player.play(payload.track)
+                return
+            except Exception as exc:
+                print(f"[Music] Direct loop replay failed ({exc}), attempting re-resolve...")
+                try:
+                    res = await self._resolve(payload.track.uri or payload.track.title, payload.player.guild.me)
+                    if res.get("type") == "single" and res.get("track"):
+                        await player.play(res["track"])
+                        return
+                except Exception as ex2:
+                    print(f"[Music] Re-resolve loop replay failed: {ex2}")
+                    if gp.text_channel:
+                        try:
+                            await gp.text_channel.send(
+                                f"⚠️ **Could not loop '{track_title}'**: Lavalink error ({exc}). Continuing queue.",
+                                delete_after=10
+                            )
+                        except Exception:
+                            pass
+                    gp.loop_mode = None
+
         if gp.loop_mode == "queue" and payload.track:
-            await player.queue.put_wait(payload.track)
+            try:
+                await player.queue.put_wait(payload.track)
+            except Exception:
+                pass
 
         # Play next — pop directly from queue (no get_wait latency)
         if player.queue.is_empty:
             if player.channel:
-                await set_voice_channel_status(self.bot, player.channel.id, "")
-            await gp.update_panel(self.bot, None)
+                try:
+                    await set_voice_channel_status(self.bot, player.channel.id, "")
+                except Exception:
+                    pass
+            try:
+                await gp.update_panel(self.bot, None)
+            except Exception:
+                pass
             if not gp.mode_247:
                 await asyncio.sleep(30)
                 if player.queue.is_empty and not player.playing:
@@ -1052,9 +1081,12 @@ class MusicCog(commands.Cog):
                 next_track = player.queue.get()
                 await player.play(next_track)
             except Exception:
-                # Fallback to get_wait if get() is not available
-                next_track = await player.queue.get_wait()
-                await player.play(next_track)
+                try:
+                    # Fallback to get_wait if get() is not available
+                    next_track = await player.queue.get_wait()
+                    await player.play(next_track)
+                except Exception as e:
+                    print(f"[Music] Failed to play next track from queue: {e}")
 
     @commands.Cog.listener()
     async def on_voice_state_update(self, member: discord.Member, before, after):
