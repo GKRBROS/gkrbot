@@ -1573,7 +1573,7 @@ class MusicCog(commands.Cog):
             return {"type": "error", "message": "Could not resolve URL"}
 
         # ── Explicit prefix bypass ─────────────────────────────────────────────
-        explicit_prefixes = ("ytsearch:", "ytmsearch:", "spsearch:", "scsearch:", "dzsearch:", "amsearch:")
+        explicit_prefixes = ("ytsearch:", "ytmsearch:", "spsearch:", "dzsearch:", "amsearch:")
         if any(query.startswith(p) for p in explicit_prefixes):
             try:
                 res = await wavelink.Playable.search(query)
@@ -1634,7 +1634,6 @@ class MusicCog(commands.Cog):
                 ("ytmsearch", f"ytmsearch:{clean_q}"),
                 ("ytsearch", f"ytsearch:{clean_q}"),
                 ("spsearch", f"spsearch:{clean_q}"),
-                ("scsearch", f"scsearch:{clean_q}"),
             ]
 
         best_result = None
@@ -1780,7 +1779,6 @@ class MusicCog(commands.Cog):
             ("ytmsearch", clean_query),
             ("ytsearch", clean_query),
             ("spsearch", clean_query),
-            ("scsearch", clean_query),
         ]
         if spotify_query:
             searches.extend([
@@ -2112,7 +2110,6 @@ class MusicCog(commands.Cog):
             "spsearch:Viral Hits 2026",
             "ytmsearch:trending songs 2025",
             "ytmsearch:top hits playlist",
-            "scsearch:trending music"
         ]
         query = random.choice(queries)
         tracks = await self._resolve(query, interaction.user)
