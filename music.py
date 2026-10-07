@@ -1527,8 +1527,8 @@ class MusicCog(commands.Cog):
                 official_score = min(1.0, official_score + 0.15)
 
             # ── 7. Search Index Soft Priority (0.0–1.0) ───────────────────────
-            # Soft fallback without crushing later ranks if they are famous hits
-            popularity_score = max(0.0, 1.0 - (rank_idx * 0.03))
+            # Rank-based popularity — tighter decay to not crush later high-quality hits
+            popularity_score = max(0.0, 1.0 - (rank_idx * 0.08))
 
             # ── 8. Duration Score (0.0–1.0) ───────────────────────────────────
             if 100_000 <= length_ms <= 360_000:
@@ -1544,13 +1544,15 @@ class MusicCog(commands.Cog):
             shorts_penalty = 0.5 if MusicCog._is_shorts(uri, raw_title) else 0.0
 
             # ── FINAL SCORE ────────────────────────────────────────────────────
+            # Weights mirror commit e468fd3: relevance is the dominant factor (0.60 total)
             final = (
-                relevance_score   * 0.30
-                + popularity_score * 0.08
-                + artist_score      * 0.15
-                + canonical_score   * 0.10
-                + official_score    * 0.08
-                + duration_score    * 0.05
+                relevance_score   * 0.35   # primary title relevance
+                + relevance_score * 0.25   # title component doubled (dominant)
+                + artist_score    * 0.15
+                + canonical_score * 0.10
+                + official_score  * 0.07
+                + popularity_score * 0.04
+                + duration_score  * 0.04
                 + exact_title_bonus
                 + spotify_bonus
                 - shorts_penalty
@@ -1565,6 +1567,7 @@ class MusicCog(commands.Cog):
                 "artist": round(artist_score, 3),
                 "canonical": round(canonical_score, 3),
                 "official": round(official_score, 3),
+                "popularity": round(popularity_score, 3),
                 "exact": round(exact_title_bonus, 3),
                 "spot_bonus": round(spotify_bonus, 3),
                 "final": round(final, 3),
@@ -1589,7 +1592,7 @@ class MusicCog(commands.Cog):
             print(f"\n  #{i+1} [{ri}] {tr.title[:60]} — {tr.author or 'N/A'}")
             print(f"       relevance={dbg['relevance']} artist={dbg['artist']} "
                   f"canonical={dbg['canonical']} official={dbg['official']} "
-                  f"popularity={dbg['popularity']} FINAL={dbg['final']}")
+                  f"spot_bonus={dbg['spot_bonus']} FINAL={dbg['final']}")
         # Decision log printed below after confidence check
 
 
@@ -2061,18 +2064,13 @@ class MusicCog(commands.Cog):
                 except Exception as exc:
                     print(f"[Music] Spotify lookup notice: {exc}")
 
-            sources_to_try = [
-                (search_text, wavelink.TrackSource.YouTubeMusic),
-            ]
+            sources_to_try = []
             if spotify_top and spotify_top.get("popularity", 0) >= 30 and spotify_top.get("artists"):
                 enriched_query = f"{spotify_top['title']} {spotify_top['artists'][0]}"
-                if enriched_query.lower() != search_text.lower():
-                    sources_to_try.append((enriched_query, wavelink.TrackSource.YouTubeMusic))
+                sources_to_try.append((enriched_query, wavelink.TrackSource.YouTubeMusic))
 
-            sources_to_try.extend([
-                (search_text, wavelink.TrackSource.YouTube),
-                (search_text, wavelink.TrackSource.SoundCloud),
-            ])
+            sources_to_try.append((search_text, wavelink.TrackSource.YouTubeMusic))
+            sources_to_try.append((search_text, wavelink.TrackSource.YouTube))
 
         started = time.time()
         results = []
