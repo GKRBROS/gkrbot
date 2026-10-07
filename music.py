@@ -1386,15 +1386,14 @@ class MusicCog(commands.Cog):
         return len(matched) / len(q_words)
 
     @staticmethod
-    def _rank_tracks(query: str, tracks: List[wavelink.Playable]) -> dict:
+    def _rank_tracks(query: str, tracks: List[wavelink.Playable], spotify_top: Optional[dict] = None) -> dict:
         """
         Score candidates and return single best result or ambiguous list.
-        Scoring formula:
-          FINAL = relevance*0.35 + title*0.25 + artist*0.15 + canonical*0.10
-                + official*0.07 + popularity*0.04 + duration*0.04
-                - non_music_hard_reject
-                - shorts_penalty
-                - alternate_version_penalty * 0.60
+        Scoring incorporates:
+          - Title relevance & exact canonical title match bonus
+          - Global streaming popularity from Spotify chart data
+          - Artist matching & topic channel / label verification
+          - Rejection of unrequested features, instrumentals, or derivative covers
         """
         if not tracks:
             return {"type": "error", "message": "No tracks found"}
@@ -1434,11 +1433,9 @@ class MusicCog(commands.Cog):
                 print(f"[Rank] 🚫 Hard-rejected (vocal-less variant): '{raw_title}'")
                 continue
             if MusicCog._is_shorts(uri, raw_title) and not any(v in ("short", "shorts") for v in version_tags):
-                # Shorts only allowed if duration > 60s (some legit music is < 90s)
                 if length_ms < 60_000:
                     print(f"[Rank] 🚫 Hard-rejected (Shorts): '{raw_title}'")
                     continue
-            # Reject extremely long tracks (> 20 min) unless explicitly a mix/compilation
             if length_ms > 1_200_000 and not any(w in norm_query for w in ("mix", "compilation", "playlist", "mashup", "hour")):
                 continue
 
@@ -1467,11 +1464,19 @@ class MusicCog(commands.Cog):
             if best_sub_sim > 0.6:
                 relevance_score = max(relevance_score, best_sub_sim * 0.7 + token_rel * 0.3)
 
-            # Exact core title word in candidate title (big boost)
             if norm_title_intent and norm_title_intent in norm_t.split():
                 relevance_score = min(1.0, max(relevance_score + 0.3, 0.90))
 
-            # ── 2. Artist Match (0.0–1.0) ─────────────────────────────────────
+            # ── 2. Exact Title Matching Bonus ────────────────────────────────
+            # Pure title "STAY" should beat "Stay (feat. Gabzy)"
+            exact_title_bonus = 0.0
+            if norm_title_intent and norm_t == norm_title_intent:
+                exact_title_bonus = 0.15
+            elif norm_title_intent and any(feat in norm_t for feat in ("feat", "ft", "featuring", "with")):
+                if not any(feat in norm_query for feat in ("feat", "ft", "featuring", "with")):
+                    exact_title_bonus = -0.06
+
+            # ── 3. Artist Match (0.0–1.0) ─────────────────────────────────────
             artist_score = 0.0
             if norm_artist_intent:
                 artist_sim = difflib.SequenceMatcher(None, norm_artist_intent, norm_a).ratio()
@@ -1480,24 +1485,40 @@ class MusicCog(commands.Cog):
                 if norm_artist_intent in norm_a:
                     artist_score = min(1.0, artist_score + 0.3)
             else:
-                # No artist in query — use token overlap of full query vs title
                 artist_score = MusicCog._token_relevance(norm_query, norm_t, norm_a) * 0.5
 
-            # ── 3. Canonical Version Score (0.0–1.0) ──────────────────────────
-            # Penalize alternate versions unless user explicitly asked for them
+            # ── 4. Global Hit / Spotify Popularity Bonus ──────────────────────
+            spotify_bonus = 0.0
+            if spotify_top:
+                spot_title = MusicCog._normalize_query(spotify_top.get("title", ""))
+                spot_artists = [MusicCog._normalize_query(a) for a in spotify_top.get("artists", [])]
+                spot_pop = float(spotify_top.get("popularity", 0)) / 100.0
+
+                title_sim_spot = difflib.SequenceMatcher(None, spot_title, norm_t).ratio()
+                title_matched = (spot_title == norm_t) or (spot_title in norm_t) or (norm_t in spot_title) or (title_sim_spot >= 0.8)
+
+                artist_matched = any(
+                    sa and (sa in norm_a or norm_a in sa or sa in norm_t or norm_t in sa or difflib.SequenceMatcher(None, sa, norm_a).ratio() >= 0.7)
+                    for sa in spot_artists
+                )
+
+                if title_matched and artist_matched:
+                    # Direct match with globally most-played song on charts
+                    spotify_bonus = spot_pop * 0.35
+                elif title_matched and not norm_artist_intent:
+                    spotify_bonus = spot_pop * 0.10
+
+            # ── 5. Canonical Version Score (0.0–1.0) ──────────────────────────
             alt_penalty = MusicCog._alternate_version_penalty(raw_title, raw_author, version_tags)
             canonical_score = max(0.0, 1.0 - alt_penalty)
 
-            # If user DID ask for a version, boost tracks that match it
             if version_tags:
                 combined_lc = (raw_title + " " + raw_author).lower()
                 version_match = sum(1 for v in version_tags if v in combined_lc)
                 canonical_score = min(1.0, version_match / len(version_tags))
 
-            # ── 4. Official Score (0.0–1.0) ───────────────────────────────────
+            # ── 6. Official Score (0.0–1.0) ───────────────────────────────────
             official_score = MusicCog._official_score(raw_title, raw_author)
-
-            # Prefer actual music/lyric/audio releases over generic uploads.
             release_text = f"{raw_title} {raw_author}".lower()
             if any(sig in release_text for sig in (
                 "official audio", "official lyric", "lyric video",
@@ -1505,21 +1526,18 @@ class MusicCog(commands.Cog):
             )):
                 official_score = min(1.0, official_score + 0.15)
 
-            # ── 5. Search Engine Rank Priority (0.0–1.0) ──────────────────────
-            # Top search hits from YouTube/Spotify (rank 0, 1, 2) represent the true popular matches.
-            rank_priority = 1.0 if rank_idx == 0 else 0.85 if rank_idx == 1 else 0.70 if rank_idx == 2 else max(0.0, 1.0 - (rank_idx * 0.07))
-            popularity_score = rank_priority
+            # ── 7. Search Index Soft Priority (0.0–1.0) ───────────────────────
+            # Soft fallback without crushing later ranks if they are famous hits
+            popularity_score = max(0.0, 1.0 - (rank_idx * 0.03))
 
-            # ── 6. Duration Score (0.0–1.0) ───────────────────────────────────
-            # Standard songs: 2:00–6:00 min. Bonus for that range.
+            # ── 8. Duration Score (0.0–1.0) ───────────────────────────────────
             if 100_000 <= length_ms <= 360_000:
                 duration_score = 1.0
             elif 60_000 <= length_ms < 100_000:
-                duration_score = 0.5   # could be legit short song
+                duration_score = 0.5
             elif length_ms < 60_000:
-                duration_score = 0.1   # ringtone / snippet
+                duration_score = 0.1
             else:
-                # > 6 min: could be album version, slightly lower
                 duration_score = max(0.0, 1.0 - (length_ms - 360_000) / 2_000_000)
 
             # ── Shorts Penalty ─────────────────────────────────────────────────
@@ -1527,19 +1545,19 @@ class MusicCog(commands.Cog):
 
             # ── FINAL SCORE ────────────────────────────────────────────────────
             final = (
-                relevance_score  * 0.35
-                + popularity_score * 0.22  # High weight for top YouTube search rank [0]
-                + artist_score     * 0.15
-                + canonical_score  * 0.10
-                + official_score   * 0.10
-                + duration_score   * 0.08
+                relevance_score   * 0.30
+                + popularity_score * 0.08
+                + artist_score      * 0.15
+                + canonical_score   * 0.10
+                + official_score    * 0.08
+                + duration_score    * 0.05
+                + exact_title_bonus
+                + spotify_bonus
                 - shorts_penalty
-                - (alt_penalty * 0.60)  # strong penalty for unwanted alternate versions
+                - (alt_penalty * 0.60)
             )
 
-            # Critical guard: if relevance is near zero, this result is wrong.
-            # Don't let official/popularity scores rescue an irrelevant result.
-            if relevance_score < 0.10 and not norm_artist_intent:
+            if relevance_score < 0.10 and not norm_artist_intent and not spotify_bonus:
                 final = min(final, 0.05)
 
             scored.append((final, rank_idx, track, {
@@ -1547,8 +1565,8 @@ class MusicCog(commands.Cog):
                 "artist": round(artist_score, 3),
                 "canonical": round(canonical_score, 3),
                 "official": round(official_score, 3),
-                "popularity": round(popularity_score, 3),
-                "duration": round(duration_score, 3),
+                "exact": round(exact_title_bonus, 3),
+                "spot_bonus": round(spotify_bonus, 3),
                 "final": round(final, 3),
             }))
 
@@ -2009,9 +2027,11 @@ class MusicCog(commands.Cog):
         explicit_prefix = cleaned.lower().startswith(prefixes)
 
         search_text = cleaned
+        spotify_top = None
+
         if explicit_prefix:
             provider, search_text = cleaned.split(":", 1)
-            sources_to_try = [provider]
+            sources_to_try = [(search_text, provider)]
         else:
             filler = re.compile(
                 r"\b(full song|full video song|official song|official music video|official audio|"
@@ -2019,39 +2039,63 @@ class MusicCog(commands.Cog):
                 re.IGNORECASE,
             )
             search_text = re.sub(r"\s+", " ", filler.sub("", cleaned)).strip() or cleaned
+
+            if sp:
+                try:
+                    loop = asyncio.get_running_loop()
+                    sp_res = await asyncio.wait_for(
+                        loop.run_in_executor(None, lambda: sp.search(q=search_text, type="track", limit=5)),
+                        timeout=2.0,
+                    )
+                    items = (sp_res or {}).get("tracks", {}).get("items", [])
+                    if items:
+                        items.sort(key=lambda x: x.get("popularity", 0), reverse=True)
+                        top_item = items[0]
+                        artist_names = [a.get("name", "") for a in top_item.get("artists", []) if a.get("name")]
+                        spotify_top = {
+                            "title": top_item.get("name", ""),
+                            "artists": artist_names,
+                            "popularity": top_item.get("popularity", 0),
+                        }
+                        print(f"[Music] 🌟 Spotify top hit: '{top_item.get('name')}' by {', '.join(artist_names)} (popularity={top_item.get('popularity')}/100)")
+                except Exception as exc:
+                    print(f"[Music] Spotify lookup notice: {exc}")
+
             sources_to_try = [
-                wavelink.TrackSource.YouTubeMusic,
-                wavelink.TrackSource.YouTube,
-                wavelink.TrackSource.SoundCloud,
+                (search_text, wavelink.TrackSource.YouTubeMusic),
             ]
+            if spotify_top and spotify_top.get("popularity", 0) >= 30 and spotify_top.get("artists"):
+                enriched_query = f"{spotify_top['title']} {spotify_top['artists'][0]}"
+                if enriched_query.lower() != search_text.lower():
+                    sources_to_try.append((enriched_query, wavelink.TrackSource.YouTubeMusic))
+
+            sources_to_try.extend([
+                (search_text, wavelink.TrackSource.YouTube),
+                (search_text, wavelink.TrackSource.SoundCloud),
+            ])
 
         started = time.time()
         results = []
         ranked = {"type": "error", "message": "No suitable music result found."}
 
-        for src in sources_to_try:
+        for term, src in sources_to_try:
             try:
-                if explicit_prefix:
-                    raw = await asyncio.wait_for(
-                        wavelink.Playable.search(search_text, source=src), timeout=35
-                    )
-                else:
-                    raw = await asyncio.wait_for(
-                        wavelink.Playable.search(search_text, source=src), timeout=35
-                    )
+                raw = await asyncio.wait_for(
+                    wavelink.Playable.search(term, source=src), timeout=35
+                )
 
                 if not raw:
                     continue
 
                 candidate_results = list(raw)
                 finished = time.time()
-                print(f"[Music] {src}: {len(candidate_results)} results ({finished - started:.2f}s)")
+                print(f"[Music] {src} ('{term}'): {len(candidate_results)} results ({finished - started:.2f}s)")
 
                 if gp:
                     gp.metrics["load_start"] = started
                     gp.metrics["load_end"] = finished
 
-                candidate_ranked = self._rank_tracks(search_text, candidate_results)
+                candidate_ranked = self._rank_tracks(search_text, candidate_results, spotify_top=spotify_top)
 
                 if candidate_ranked.get("type") in ("single", "ambiguous"):
                     results = candidate_results
@@ -2073,7 +2117,7 @@ class MusicCog(commands.Cog):
                     )
                     if raw:
                         candidate_results = list(raw)
-                        candidate_ranked = self._rank_tracks(search_text, candidate_results)
+                        candidate_ranked = self._rank_tracks(search_text, candidate_results, spotify_top=spotify_top)
                         if candidate_ranked.get("type") in ("single", "ambiguous"):
                             results = candidate_results
                             ranked = candidate_ranked
