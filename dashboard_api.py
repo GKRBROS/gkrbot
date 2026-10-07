@@ -1468,10 +1468,10 @@ async def handle_music_search(request: web.Request):
             clean_q = q.removeprefix("ytsearch:").removeprefix("ytmsearch:").removeprefix("spsearch:").strip()
             cog = bot.cogs.get("Music") or bot.cogs.get("MusicCog")
             
-            # Use ytsearch for broad candidate pool matching console search
-            raw_results = await wavelink.Playable.search(clean_q, source="ytsearch")
+            # Search ytmsearch (YouTube Music) first, fallback to ytsearch
+            raw_results = await wavelink.Playable.search(clean_q, source="ytmsearch")
             if not raw_results:
-                raw_results = await wavelink.Playable.search(clean_q, source="ytmsearch")
+                raw_results = await wavelink.Playable.search(clean_q, source="ytsearch")
             
             raw_list = list(raw_results) if raw_results else []
             if cog and hasattr(cog, "_rank_tracks") and raw_list:

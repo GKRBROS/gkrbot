@@ -195,22 +195,21 @@ def build_progress_bar(position: int, duration: int, length: int = 15) -> str:
 # attachment links are not meant to be hotlinked long-term. That link's `ex`
 # timestamp decodes to 2026-08-20, so it had been rendering as a broken image
 # in every "Now Playing" panel since then. Fixed by loading a local file
-# (re-uploaded fresh with every message, so it never expires) with a graceful
-# fallback to no image if the asset isn't present.
-MUSIC_VISUALIZER_GIF_PATH = os.path.join(os.path.dirname(__file__), "assets", "music_visualizer.gif")
+VISUALIZER_CANDIDATE_PATHS = [
+    os.path.join(os.path.dirname(__file__), "turntable_cropped.gif"),
+    os.path.join(os.path.dirname(__file__), "combined_music_visualizer.gif"),
+    os.path.join(os.path.dirname(__file__), "turntable_original.gif"),
+    os.path.join(os.path.dirname(__file__), "assets", "music_visualizer.gif"),
+]
 MUSIC_VISUALIZER_GIF_FILENAME = "music_visualizer.gif"
-# Optional: point this at a stable, permanently-hosted URL (imgur, your own
-# CDN, GitHub raw, etc — NOT a discord.com/discordapp.net attachment link) if
-# you'd rather not ship the gif as a local file.
 MUSIC_VISUALIZER_GIF_URL = os.getenv("MUSIC_VISUALIZER_GIF_URL", "")
 
 
 def get_visualizer_file() -> Optional[discord.File]:
-    """Returns a fresh discord.File for the visualizer gif if the local asset
-    exists. A discord.File can only be used in ONE send/edit call, so callers
-    must fetch a new one each time rather than caching/reusing the object."""
-    if os.path.isfile(MUSIC_VISUALIZER_GIF_PATH):
-        return discord.File(MUSIC_VISUALIZER_GIF_PATH, filename=MUSIC_VISUALIZER_GIF_FILENAME)
+    """Returns a fresh discord.File for the visualizer gif from the best available local asset."""
+    for p in VISUALIZER_CANDIDATE_PATHS:
+        if os.path.isfile(p):
+            return discord.File(p, filename=MUSIC_VISUALIZER_GIF_FILENAME)
     return None
 
 async def set_voice_channel_status(bot: commands.Bot, channel_id: int, status: str):
@@ -1257,9 +1256,11 @@ class MusicCog(commands.Cog):
         """
         combined = (title + " " + author).lower()
         alternate_signals = {
-            "instrumental", "whistle", "flute", "violin", "guitar", "piano",
-            "saxophone", "sitar", "veena", "bgm", "background music",
-            "ost", "karaoke", "cover", "remix", "slowed", "reverb",
+            "instrumental", "instrumental version", "whistle", "flute", "violin",
+            "guitar", "piano", "saxophone", "sitar", "veena", "bgm",
+            "background music", "background score", "karaoke", "minus one",
+            "no vocals", "without vocals", "vocal removed", "acapella",
+            "ost", "cover", "remix", "slowed", "reverb",
             "sped up", "speed up", "nightcore", "daycore", "bass boosted",
             "bass boost", "lofi", "lo-fi", "8d", "16d", "acoustic", "unplugged",
             "live version", "mashup", "medley", "ai cover", "trending music",
@@ -1317,6 +1318,20 @@ class MusicCog(commands.Cog):
                 continue
             if MusicCog._is_non_music(raw_title, raw_author):
                 print(f"[Rank] 🚫 Hard-rejected (non-music): '{raw_title}'")
+                continue
+
+            # Reject vocal-less/alternate versions unless explicitly requested.
+            raw_combined = f"{raw_title} {raw_author}".lower()
+            vocal_less_signals = (
+                "instrumental", "karaoke", "background music",
+                "background score", "no vocals", "without vocals",
+                "vocal removed", "minus one", "karaoke version",
+            )
+            if (any(sig in raw_combined for sig in vocal_less_signals)
+                    and not any(v in version_tags for v in
+                                ("instrumental", "karaoke", "bgm",
+                                 "background music", "playback"))):
+                print(f"[Rank] 🚫 Hard-rejected (vocal-less variant): '{raw_title}'")
                 continue
             if MusicCog._is_shorts(uri, raw_title) and not any(v in ("short", "shorts") for v in version_tags):
                 # Shorts only allowed if duration > 60s (some legit music is < 90s)
@@ -1381,6 +1396,14 @@ class MusicCog(commands.Cog):
 
             # ── 4. Official Score (0.0–1.0) ───────────────────────────────────
             official_score = MusicCog._official_score(raw_title, raw_author)
+
+            # Prefer actual music/lyric/audio releases over generic uploads.
+            release_text = f"{raw_title} {raw_author}".lower()
+            if any(sig in release_text for sig in (
+                "official audio", "official lyric", "lyric video",
+                "lyrics", "lyrical", "audio",
+            )):
+                official_score = min(1.0, official_score + 0.15)
 
             # ── 5. Search Engine Rank Priority (0.0–1.0) ──────────────────────
             # Top search hits from YouTube/Spotify (rank 0, 1, 2) represent the true popular matches.
@@ -1902,27 +1925,43 @@ class MusicCog(commands.Cog):
 
         started = time.time()
         results = []
-        providers_to_try = [provider] if explicit_prefix else ["ytmsearch", "ytsearch", "spsearch", "scsearch"]
+        ranked = {"type": "error", "message": "No suitable music result found."}
+
+        # Keep YouTube Music as the primary source for normal song searches.
+        # Raw YouTube is only a fallback when the previous provider has no
+        # usable result.
+        providers_to_try = [provider] if explicit_prefix else [
+            "ytmsearch", "ytsearch", "spsearch", "scsearch"
+        ]
 
         for prov in providers_to_try:
             try:
                 raw = await wavelink.Playable.search(search_text, source=prov)
-                if raw:
-                    results = list(raw)
-                    finished = time.time()
-                    print(f"[Music] {prov}: {len(results)} results ({finished - started:.2f}s)")
-                    if gp:
-                        gp.metrics["load_start"] = started
-                        gp.metrics["load_end"] = finished
+                if not raw:
+                    continue
+
+                candidate_results = list(raw)
+                finished = time.time()
+                print(f"[Music] {prov}: {len(candidate_results)} results ({finished - started:.2f}s)")
+
+                if gp:
+                    gp.metrics["load_start"] = started
+                    gp.metrics["load_end"] = finished
+
+                candidate_ranked = self._rank_tracks(search_text, candidate_results)
+
+                # Use the first provider that actually produced a valid music
+                # candidate. This prevents a raw ytsearch result from silently
+                # replacing a good YouTube Music release.
+                if candidate_ranked.get("type") in ("single", "ambiguous"):
+                    results = candidate_results
+                    ranked = candidate_ranked
                     break
+
             except Exception as exc:
                 print(f"[Music] {prov} failed: {exc}")
                 continue
 
-        if not results:
-            return {"type": "error", "message": f"No playable music was found for `{search_text}`. Try adding the artist name."}
-
-        ranked = self._rank_tracks(search_text, list(results))
         if ranked.get("type") == "single":
             return {"type": "single", "track": tag(ranked["track"])}
         if ranked.get("type") == "ambiguous":
@@ -2013,6 +2052,14 @@ class MusicCog(commands.Cog):
             print(f"URI: {first_track.uri}")
             print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
             
+            # Start every new song with completely clean audio.
+            # This prevents any stale Lavalink filter state from carrying over.
+            try:
+                await vc.set_filters(wavelink.Filters())
+                gp.current_filter = "Normal"
+            except Exception as filter_exc:
+                print(f"[Music] Filter reset warning: {filter_exc}")
+
             await vc.set_volume(100)
             await vc.play(first_track)
             import asyncio
@@ -2082,6 +2129,12 @@ class MusicCog(commands.Cog):
             embed = embed_success("Resumed", f"Resumed and added **{track.title}** to queue.")
             await interaction.followup.send(embed=embed)
         elif not vc.playing:
+            try:
+                await vc.set_filters(wavelink.Filters())
+                gp.current_filter = "Normal"
+            except Exception as filter_exc:
+                print(f"[Music] Random-play filter reset warning: {filter_exc}")
+
             # Play directly — no queue round-trip for instant start
             await vc.play(track, volume=100)
             embed = embed_success("🎲 Random Song", f"Now playing **{track.title}**")
