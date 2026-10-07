@@ -51,6 +51,8 @@ DEV_LOG_CHANNELS = [
     ("command_logs", "dev-command-logs",      "All slash commands used across all servers"),
     ("invite_logs",  "dev-invite-logs",       "All invite events across all servers"),
     ("server_events","dev-server-events",     "Channel, role, and server-level changes across all servers"),
+    ("bot_guild_logs","dev-bot-guild-events", "Bot joined or removed from servers with inviter, owner, and member counts"),
+    ("website_logs", "dev-website-logs",      "Dashboard and website user activities, logins, and setting changes"),
 ]
 
 
@@ -1304,6 +1306,67 @@ class DevLogsCog(commands.Cog):
             footer_text=_guild_footer(after)
         )
         await self._forward("server_events", embed)
+
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        if guild.id == DEV_GUILD_ID:
+            return
+
+        inviter = None
+        try:
+            await asyncio.sleep(1.0)
+            if guild.me and guild.me.guild_permissions.view_audit_log:
+                async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.bot_add):
+                    if entry.target and entry.target.id == self.bot.user.id:
+                        inviter = entry.user
+                        break
+        except Exception:
+            pass
+
+        owner_str = f"{guild.owner.mention} (`{guild.owner}`)" if guild.owner else "*Unknown Owner*"
+        inviter_str = f"{inviter.mention} (`{inviter}`)" if inviter else "*Unknown / Direct Integration*"
+
+        embed = create_audit_embed(
+            title="🎉 Bot Added to Server",
+            subject=f"**{guild.name}**",
+            subject_header="🏷️  Server",
+            action_desc=f"{self.bot.user.name} joined **{guild.name}**.",
+            actor=inviter,
+            actor_label="Invited By",
+            details=[
+                f"Server ID: `{guild.id}`",
+                f"Owner: {owner_str}",
+                f"Members: `{guild.member_count:,}`",
+                f"Created: {fmt_rel(guild.created_at)}",
+                f"Invited By: {inviter_str}",
+            ],
+            color=C.SUCCESS,
+            thumbnail_url=guild.icon.url if guild.icon else None,
+            footer_text=_guild_footer(guild)
+        )
+        await self._forward("bot_guild_logs", embed)
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        if guild.id == DEV_GUILD_ID:
+            return
+
+        owner_str = f"{guild.owner.mention} (`{guild.owner}`)" if guild.owner else "*Unknown Owner*"
+        embed = create_audit_embed(
+            title="👋 Bot Removed from Server",
+            subject=f"**{guild.name}**",
+            subject_header="🏷️  Server",
+            action_desc=f"{self.bot.user.name} was removed from or left **{guild.name}**.",
+            details=[
+                f"Server ID: `{guild.id}`",
+                f"Owner: {owner_str}",
+                f"Members: `{getattr(guild, 'member_count', 0):,}`",
+            ],
+            color=C.DANGER,
+            thumbnail_url=guild.icon.url if guild.icon else None,
+            footer_text=_guild_footer(guild)
+        )
+        await self._forward("bot_guild_logs", embed)
 
 
 async def setup(bot: commands.Bot) -> None:

@@ -459,7 +459,7 @@ class ServerLogger:
                     if entry.target.id == after.id:
                         mod = entry.user
                         break
-            except discord.Forbidden:
+            except (discord.Forbidden, discord.HTTPException, Exception):
                 pass
 
             if added and removed:
@@ -520,7 +520,7 @@ class ServerLogger:
                         if entry.reason:
                             reason = entry.reason
                         break
-            except discord.Forbidden:
+            except (discord.Forbidden, discord.HTTPException, Exception):
                 pass
 
             embed = create_audit_embed(
@@ -546,7 +546,7 @@ class ServerLogger:
                 if entry.target.id == role.id:
                     mod = entry.user
                     break
-        except discord.Forbidden:
+        except (discord.Forbidden, discord.HTTPException, Exception):
             pass
 
         details = []
@@ -579,7 +579,7 @@ class ServerLogger:
                 if entry.target.id == role.id:
                     mod = entry.user
                     break
-        except discord.Forbidden:
+        except (discord.Forbidden, discord.HTTPException, Exception):
             pass
 
         embed = create_audit_embed(
@@ -618,7 +618,7 @@ class ServerLogger:
                 if entry.target.id == after.id:
                     mod = entry.user
                     break
-        except discord.Forbidden:
+        except (discord.Forbidden, discord.HTTPException, Exception):
             pass
 
         embed = create_audit_embed(

@@ -341,12 +341,28 @@ async def post_weblog(
     if guild_name or guild_id:
         embed.add_field(name=small_caps("server"), value=f"{guild_name or 'Server'} (`{guild_id}`)", inline=True)
     embed.set_footer(text=small_caps("website audit log"))
+
+    posted = False
     try:
         await channel.send(embed=embed)
-        return True
+        posted = True
     except Exception as e:
-        print(f"[Weblog] Failed to post entry: {e}")
-        return False
+        print(f"[Weblog] Failed to post entry to category channel: {e}")
+
+    # Also forward to global dev-website-logs if configured via /dev setup_logs
+    try:
+        from dev_global_logs import DevLogsDB
+        dev_db = DevLogsDB()
+        dev_web_ch_id = dev_db.get_channel("website_logs")
+        if dev_web_ch_id and _bot_ref:
+            dev_web_ch = _bot_ref.get_channel(dev_web_ch_id)
+            if dev_web_ch and dev_web_ch.id != channel.id:
+                await dev_web_ch.send(embed=embed)
+                posted = True
+    except Exception as ex:
+        pass
+
+    return posted
 
 
 def get_weblog_events(

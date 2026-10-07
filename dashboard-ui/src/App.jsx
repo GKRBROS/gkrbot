@@ -43,9 +43,44 @@ import Leaderboard from './pages/features/Leaderboard';
 import Community from './pages/features/Community';
 import Pinger from './pages/features/Pinger';
 
+import { useToast } from './components/ToastContext';
+
 function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const toast = useToast();
+  const navigate = useNavigate();
+
+  // Inactivity timeout: auto-logout after 30 minutes of no user interaction
+  useEffect(() => {
+    if (!user) return;
+
+    const INACTIVITY_LIMIT_MS = 10 * 60 * 1000; // 30 minutes
+    let timeoutId;
+
+    const handleInactive = () => {
+      localStorage.removeItem('bot_dashboard_token');
+      setUser(null);
+      if (toast) {
+        toast('Your session has expired due to inactivity. Please sign in again.', 'warning', 8000);
+      }
+      navigate('/');
+    };
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(handleInactive, INACTIVITY_LIMIT_MS);
+    };
+
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
+    events.forEach(event => window.addEventListener(event, resetTimer, { passive: true }));
+    resetTimer();
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      events.forEach(event => window.removeEventListener(event, resetTimer));
+    };
+  }, [user, navigate, toast]);
   // The deck loader fires exactly twice by design:
   //  1) HERE, once, on the very first load/refresh of the site -- any route.
   //     `loading` only starts true and is only ever set back to false; it
