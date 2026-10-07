@@ -1873,7 +1873,8 @@ class MusicCog(commands.Cog):
         provider = "ytmsearch"
         search_text = original_query
         prefixes = ("ytsearch:", "ytmsearch:", "spsearch:", "scsearch:", "dzsearch:", "amsearch:")
-        if query.lower().startswith(prefixes):
+        explicit_prefix = query.lower().startswith(prefixes)
+        if explicit_prefix:
             provider, search_text = query.split(":", 1)
 
         filler = re.compile(
@@ -1884,25 +1885,39 @@ class MusicCog(commands.Cog):
         search_text = re.sub(r"\s+", " ", filler.sub("", search_text)).strip() or search_text
 
         started = time.time()
-        try:
-            results = await wavelink.Playable.search(search_text, source=provider)
-            finished = time.time()
-            print(f"[Music] {provider}: {len(results) if results else 0} results ({finished - started:.2f}s)")
-            if gp:
-                gp.metrics["load_start"] = started
-                gp.metrics["load_end"] = finished
-        except Exception as exc:
-            print(f"[Music] {provider} failed: {exc}")
-            return {"type": "error", "message": "Music search failed. Try again or use Artist - Song."}
+        results = []
+        providers_to_try = [provider] if explicit_prefix else ["ytmsearch", "ytsearch", "spsearch", "scsearch"]
+
+        for prov in providers_to_try:
+            try:
+                raw = await wavelink.Playable.search(search_text, source=prov)
+                if raw:
+                    results = list(raw)
+                    finished = time.time()
+                    print(f"[Music] {prov}: {len(results)} results ({finished - started:.2f}s)")
+                    if gp:
+                        gp.metrics["load_start"] = started
+                        gp.metrics["load_end"] = finished
+                    break
+            except Exception as exc:
+                print(f"[Music] {prov} failed: {exc}")
+                continue
 
         if not results:
-            return {"type": "error", "message": "No playable music was found."}
+            return {"type": "error", "message": f"No playable music was found for `{search_text}`. Try adding the artist name."}
 
         ranked = self._rank_tracks(search_text, list(results))
         if ranked.get("type") == "single":
             return {"type": "single", "track": tag(ranked["track"])}
         if ranked.get("type") == "ambiguous":
             return {"type": "ambiguous", "tracks": [tag(track) for track in ranked["tracks"]]}
+        
+        # Fallback to first track if ranker rejected all
+        if results:
+            for tr in results:
+                if not getattr(tr, "is_stream", False):
+                    return {"type": "single", "track": tag(tr)}
+
         return {"type": "error", "message": ranked.get("message", "No suitable music result found.")}
 
     # ── Slash Commands ────────────────────────────────────────────────────────
