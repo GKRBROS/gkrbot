@@ -195,21 +195,21 @@ def build_progress_bar(position: int, duration: int, length: int = 15) -> str:
 # attachment links are not meant to be hotlinked long-term. That link's `ex`
 # timestamp decodes to 2026-08-20, so it had been rendering as a broken image
 # in every "Now Playing" panel since then. Fixed by loading a local file
-VISUALIZER_CANDIDATE_PATHS = [
-    os.path.join(os.path.dirname(__file__), "turntable_cropped.gif"),
-    os.path.join(os.path.dirname(__file__), "combined_music_visualizer.gif"),
-    os.path.join(os.path.dirname(__file__), "turntable_original.gif"),
-    os.path.join(os.path.dirname(__file__), "assets", "music_visualizer.gif"),
-]
-MUSIC_VISUALIZER_GIF_FILENAME = "music_visualizer.gif"
-MUSIC_VISUALIZER_GIF_URL = os.getenv("MUSIC_VISUALIZER_GIF_URL", "")
+COMBINED_VISUALIZER_GIF_PATH = os.path.join(os.path.dirname(__file__), "combined_music_visualizer.gif")
+MUSIC_VISUALIZER_GIF_FILENAME = "combined_music_visualizer.gif"
+MUSIC_VISUALIZER_GIF_URL = os.getenv(
+    "MUSIC_VISUALIZER_GIF_URL",
+    "https://media.discordapp.net/attachments/1247646566794133585/1557275890897915964/combined_music_visualizer.gif?ex=6ac735b1&is=6ac5e431&hm=d49822eb1aab21e736aaa77df4ac4f63109c12b7979e39210e42481133dc4434&="
+)
 
 
 def get_visualizer_file() -> Optional[discord.File]:
-    """Returns a fresh discord.File for the visualizer gif from the best available local asset."""
-    for p in VISUALIZER_CANDIDATE_PATHS:
-        if os.path.isfile(p):
-            return discord.File(p, filename=MUSIC_VISUALIZER_GIF_FILENAME)
+    """Returns a fresh discord.File for combined_music_visualizer.gif if the local asset exists."""
+    if os.path.isfile(COMBINED_VISUALIZER_GIF_PATH):
+        try:
+            return discord.File(COMBINED_VISUALIZER_GIF_PATH, filename=MUSIC_VISUALIZER_GIF_FILENAME)
+        except Exception:
+            pass
     return None
 
 async def set_voice_channel_status(bot: commands.Bot, channel_id: int, status: str):
