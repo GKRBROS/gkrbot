@@ -7,19 +7,119 @@ Supports YouTube, Spotify (search fallback), SoundCloud, playlists, and interact
 import asyncio
 import os
 import random
-import discord
-import wavelink
-import aiohttp
 import difflib
 import re
+from typing import Optional, List, Tuple
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+import aiohttp
+import discord
+import wavelink
 from discord import app_commands
 from discord.ext import commands, tasks
-from typing import Optional, List, Tuple
 from gkr_ui import C, embed_error, embed_success, embed_info, BOT_NAME
 from dotenv import load_dotenv
 from voice_handoff import yield_voice_to, restore_voice_from
 
 load_dotenv()
+
+
+# ==================================================
+# URL / TRACK NORMALIZATION HELPERS
+# ==================================================
+
+
+def is_http_url(value: str) -> bool:
+    try:
+        parsed = urlparse(value.strip())
+        return parsed.scheme.lower() in {"http", "https"} and bool(parsed.netloc)
+    except Exception:
+        return False
+
+
+def clean_youtube_watch_url(value: str) -> str:
+    """Normalize single-video YouTube URLs and remove tracking/playlist parameters."""
+    text = value.strip()
+    try:
+        parsed = urlparse(text)
+        host = parsed.netloc.lower().removeprefix("www.")
+        params = parse_qs(parsed.query)
+
+        video_id: Optional[str] = None
+
+        if host == "youtu.be":
+            video_id = parsed.path.strip("/").split("/")[0] or None
+
+        elif host in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
+            if parsed.path.rstrip("/") == "/watch" and params.get("v"):
+                video_id = params["v"][0]
+            else:
+                parts = [part for part in parsed.path.split("/") if part]
+                if len(parts) >= 2 and parts[0] in {"shorts", "live", "embed"}:
+                    video_id = parts[1]
+
+        if video_id:
+            kept: dict[str, str] = {"v": video_id}
+            for optional in ("t", "start"):
+                if params.get(optional):
+                    kept[optional] = params[optional][0]
+            return urlunparse(("https", "www.youtube.com", "/watch", "", urlencode(kept), ""))
+
+    except Exception:
+        pass
+
+    return text
+
+
+def clean_spotify_url(value: str) -> str:
+    """Normalize Spotify share links and remove tracking parameters."""
+    text = value.strip()
+    try:
+        parsed = urlparse(text)
+        host = parsed.netloc.lower().removeprefix("www.")
+        if host != "open.spotify.com":
+            return text
+
+        parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) >= 2 and parts[0].startswith("intl-"):
+            parts = parts[1:]
+
+        if len(parts) >= 2 and parts[0] in {
+            "track",
+            "album",
+            "playlist",
+            "artist",
+            "episode",
+            "show",
+        }:
+            return urlunparse(
+                ("https", "open.spotify.com", "/" + "/".join(parts[:2]), "", "", "")
+            )
+    except Exception:
+        pass
+    return text
+
+
+def youtube_video_id(value: str) -> Optional[str]:
+    try:
+        parsed = urlparse(value.strip())
+        host = parsed.netloc.lower().removeprefix("www.")
+
+        if host == "youtu.be":
+            video_id = parsed.path.strip("/").split("/")[0]
+            return video_id or None
+
+        if host in {"youtube.com", "m.youtube.com", "music.youtube.com"}:
+            params = parse_qs(parsed.query)
+            if params.get("v"):
+                return params["v"][0]
+
+            parts = [part for part in parsed.path.split("/") if part]
+            if len(parts) >= 2 and parts[0] in {"shorts", "live", "embed"}:
+                return parts[1]
+    except Exception:
+        return None
+    return None
+
 
 
 def get_player(guild: Optional[discord.Guild]) -> Optional[wavelink.Player]:
@@ -1869,21 +1969,17 @@ class MusicCog(commands.Cog):
         return {"type": "single", "track": tag(scored[0][1])}
 
     async def _resolve(self, query: str, requester: discord.Member, gp=None) -> dict:
-        """Resolve one search and trust _rank_tracks for the final decision."""
+        """Resolve query or URL to playable track(s), prioritizing vocal/studio audio releases."""
         import time
 
         if not wavelink.Pool.nodes:
             return {"type": "error", "message": "No Lavalink node connected."}
 
-        original_query = (query or "").strip()
-        if not original_query:
+        raw_query = (query or "").strip()
+        if not raw_query:
             return {"type": "error", "message": "Please enter a song name or URL."}
 
-        if "music.youtube.com" in query:
-            query = query.replace("music.youtube.com", "www.youtube.com")
-        if "youtu.be/" in query:
-            video_id = query.split("youtu.be/", 1)[1].split("?", 1)[0].split("&", 1)[0]
-            query = f"https://www.youtube.com/watch?v={video_id}"
+        cleaned = clean_spotify_url(clean_youtube_watch_url(raw_query))
 
         def tag(track):
             try:
@@ -1894,9 +1990,10 @@ class MusicCog(commands.Cog):
                 pass
             return track
 
-        if query.startswith(("http://", "https://")):
+        # Direct HTTP/HTTPS URL
+        if is_http_url(cleaned):
             try:
-                results = await wavelink.Playable.search(query)
+                results = await asyncio.wait_for(wavelink.Playable.search(cleaned), timeout=35)
                 if isinstance(results, wavelink.Playlist):
                     tracks = [tag(track) for track in results.tracks if track]
                     return ({"type": "playlist", "tracks": tracks} if tracks else
@@ -1907,40 +2004,48 @@ class MusicCog(commands.Cog):
                 return {"type": "error", "message": f"Could not resolve URL: {exc}"}
             return {"type": "error", "message": "Could not resolve the supplied URL."}
 
-        provider = "ytmsearch"
-        search_text = original_query
+        # Explicit prefix search if provided (e.g. ytmsearch:, ytsearch:, spsearch:)
         prefixes = ("ytsearch:", "ytmsearch:", "spsearch:", "scsearch:", "dzsearch:", "amsearch:")
-        explicit_prefix = query.lower().startswith(prefixes)
-        if explicit_prefix:
-            provider, search_text = query.split(":", 1)
+        explicit_prefix = cleaned.lower().startswith(prefixes)
 
-        filler = re.compile(
-            r"\b(full song|full video song|official song|official music video|official audio|"
-            r"official video|music video|audio|video|song|track|music|mp3|hd|4k)\b",
-            re.IGNORECASE,
-        )
-        search_text = re.sub(r"\s+", " ", filler.sub("", search_text)).strip() or search_text
+        search_text = cleaned
+        if explicit_prefix:
+            provider, search_text = cleaned.split(":", 1)
+            sources_to_try = [provider]
+        else:
+            filler = re.compile(
+                r"\b(full song|full video song|official song|official music video|official audio|"
+                r"official video|music video|audio|video|song|track|music|mp3|hd|4k)\b",
+                re.IGNORECASE,
+            )
+            search_text = re.sub(r"\s+", " ", filler.sub("", cleaned)).strip() or cleaned
+            sources_to_try = [
+                wavelink.TrackSource.YouTubeMusic,
+                wavelink.TrackSource.YouTube,
+                wavelink.TrackSource.SoundCloud,
+            ]
 
         started = time.time()
         results = []
         ranked = {"type": "error", "message": "No suitable music result found."}
 
-        # Keep YouTube Music as the primary source for normal song searches.
-        # Raw YouTube is only a fallback when the previous provider has no
-        # usable result.
-        providers_to_try = [provider] if explicit_prefix else [
-            "ytmsearch", "ytsearch", "spsearch", "scsearch"
-        ]
-
-        for prov in providers_to_try:
+        for src in sources_to_try:
             try:
-                raw = await wavelink.Playable.search(search_text, source=prov)
+                if explicit_prefix:
+                    raw = await asyncio.wait_for(
+                        wavelink.Playable.search(search_text, source=src), timeout=35
+                    )
+                else:
+                    raw = await asyncio.wait_for(
+                        wavelink.Playable.search(search_text, source=src), timeout=35
+                    )
+
                 if not raw:
                     continue
 
                 candidate_results = list(raw)
                 finished = time.time()
-                print(f"[Music] {prov}: {len(candidate_results)} results ({finished - started:.2f}s)")
+                print(f"[Music] {src}: {len(candidate_results)} results ({finished - started:.2f}s)")
 
                 if gp:
                     gp.metrics["load_start"] = started
@@ -1948,24 +2053,39 @@ class MusicCog(commands.Cog):
 
                 candidate_ranked = self._rank_tracks(search_text, candidate_results)
 
-                # Use the first provider that actually produced a valid music
-                # candidate. This prevents a raw ytsearch result from silently
-                # replacing a good YouTube Music release.
                 if candidate_ranked.get("type") in ("single", "ambiguous"):
                     results = candidate_results
                     ranked = candidate_ranked
                     break
 
             except Exception as exc:
-                print(f"[Music] {prov} failed: {exc}")
+                print(f"[Music] {src} search failed: {exc}")
                 continue
+
+        # Fallback: Video ID search if query had a video ID
+        if ranked.get("type") == "error":
+            vid = youtube_video_id(cleaned)
+            if vid:
+                try:
+                    raw = await asyncio.wait_for(
+                        wavelink.Playable.search(vid, source=wavelink.TrackSource.YouTube),
+                        timeout=35,
+                    )
+                    if raw:
+                        candidate_results = list(raw)
+                        candidate_ranked = self._rank_tracks(search_text, candidate_results)
+                        if candidate_ranked.get("type") in ("single", "ambiguous"):
+                            results = candidate_results
+                            ranked = candidate_ranked
+                except Exception as exc:
+                    print(f"[Music] Video ID fallback search failed: {exc}")
 
         if ranked.get("type") == "single":
             return {"type": "single", "track": tag(ranked["track"])}
         if ranked.get("type") == "ambiguous":
             return {"type": "ambiguous", "tracks": [tag(track) for track in ranked["tracks"]]}
-        
-        # Fallback to first track if ranker rejected all
+
+        # Fallback to first non-stream track if ranker was too strict
         if results:
             for tr in results:
                 if not getattr(tr, "is_stream", False):
