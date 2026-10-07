@@ -1335,9 +1335,26 @@ class MusicCog(commands.Cog):
             token_rel = MusicCog._token_relevance(norm_title_intent, norm_t, norm_a)
             relevance_score = (title_sim * 0.6 + token_rel * 0.4)
 
+            # Check sub-segments (e.g., "Artist - Song Title | Official Video")
+            title_parts = re.split(r"[-–—:|]", raw_title)
+            best_sub_sim = 0.0
+            for part in title_parts:
+                norm_part = MusicCog._normalize_query(part)
+                if norm_part:
+                    part_sim = difflib.SequenceMatcher(None, norm_title_intent, norm_part).ratio()
+                    if norm_title_intent == norm_part:
+                        best_sub_sim = max(best_sub_sim, 1.0)
+                    elif norm_title_intent in norm_part.split():
+                        best_sub_sim = max(best_sub_sim, 0.95)
+                    else:
+                        best_sub_sim = max(best_sub_sim, part_sim)
+
+            if best_sub_sim > 0.6:
+                relevance_score = max(relevance_score, best_sub_sim * 0.7 + token_rel * 0.3)
+
             # Exact core title word in candidate title (big boost)
-            if norm_title_intent and norm_title_intent in norm_t:
-                relevance_score = min(1.0, relevance_score + 0.3)
+            if norm_title_intent and norm_title_intent in norm_t.split():
+                relevance_score = min(1.0, max(relevance_score + 0.3, 0.90))
 
             # ── 2. Artist Match (0.0–1.0) ─────────────────────────────────────
             artist_score = 0.0
@@ -1365,10 +1382,10 @@ class MusicCog(commands.Cog):
             # ── 4. Official Score (0.0–1.0) ───────────────────────────────────
             official_score = MusicCog._official_score(raw_title, raw_author)
 
-            # ── 5. Popularity Proxy (0.0–1.0) ─────────────────────────────────
-            # Search engine returns results roughly sorted by views/relevance.
-            # Use rank position as a soft popularity proxy (diminishing returns).
-            popularity_score = max(0.0, 1.0 - (rank_idx * 0.08))
+            # ── 5. Search Engine Rank Priority (0.0–1.0) ──────────────────────
+            # Top search hits from YouTube/Spotify (rank 0, 1, 2) represent the true popular matches.
+            rank_priority = 1.0 if rank_idx == 0 else 0.85 if rank_idx == 1 else 0.70 if rank_idx == 2 else max(0.0, 1.0 - (rank_idx * 0.07))
+            popularity_score = rank_priority
 
             # ── 6. Duration Score (0.0–1.0) ───────────────────────────────────
             # Standard songs: 2:00–6:00 min. Bonus for that range.
@@ -1388,12 +1405,11 @@ class MusicCog(commands.Cog):
             # ── FINAL SCORE ────────────────────────────────────────────────────
             final = (
                 relevance_score  * 0.35
-                + relevance_score  * 0.25  # title component doubled (dominant)
+                + popularity_score * 0.22  # High weight for top YouTube search rank [0]
                 + artist_score     * 0.15
                 + canonical_score  * 0.10
-                + official_score   * 0.07
-                + popularity_score * 0.04
-                + duration_score   * 0.04
+                + official_score   * 0.10
+                + duration_score   * 0.08
                 - shorts_penalty
                 - (alt_penalty * 0.60)  # strong penalty for unwanted alternate versions
             )
