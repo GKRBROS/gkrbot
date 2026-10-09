@@ -115,7 +115,7 @@ async def _get_or_create_plain_vc(bot: commands.Bot, guild: discord.Guild, chann
 
         # If vc is attached to guild._voice_client but not connected yet (e.g. gateway reconnecting
         # on bot restart), give it a brief moment to complete the handshake
-        for _ in range(5):
+        for _ in range(12):
             await asyncio.sleep(0.5)
             if is_connected(vc):
                 if vc.channel and vc.channel.id != channel.id:
@@ -579,6 +579,9 @@ class RadioCog(commands.Cog, name="Radio System"):
         # know to give it back via restore_voice_from() once Music finishes.
         self._handoff_paused: set = set()
         self._idle_paused: set = set()
+        # Guild ids currently mid-reconnect — dedupes the race between
+        # auto_reconnect_loop and on_voice_state_update's recovery path.
+        self._reconnecting: set = set()
         init_db()
 
     async def cog_load(self):
@@ -859,6 +862,9 @@ class RadioCog(commands.Cog, name="Radio System"):
             needs_connect = (vc is None) or (not is_connected(vc)) or (not isinstance(vc, discord.VoiceClient))
 
             if needs_connect:
+                if guild_id_int in self._reconnecting:
+                    continue  # already being reconnected by voice-state handler
+                self._reconnecting.add(guild_id_int)
                 try:
                     logger.info(f"[Radio] 24/7 Auto-reconnecting to {voice_channel.name} in {guild.name}...")
                     vc = await _get_or_create_plain_vc(self.bot, guild, voice_channel, timeout=20, reconnect=True, self_deaf=True)
@@ -866,6 +872,8 @@ class RadioCog(commands.Cog, name="Radio System"):
                 except Exception as e:
                     logger.warning(f"[Radio] Could not reconnect to {voice_channel.name}: {e}")
                     continue
+                finally:
+                    self._reconnecting.discard(guild_id_int)
             elif vc.channel and vc.channel.id != voice_channel.id:
                 try:
                     await vc.move_to(voice_channel)
@@ -936,12 +944,17 @@ class RadioCog(commands.Cog, name="Radio System"):
 
             target_ch = guild.get_channel(int(vc_id))
             if isinstance(target_ch, discord.VoiceChannel):
+                if guild.id in self._reconnecting:
+                    return  # loop already reconnecting this guild
                 await asyncio.sleep(4)  # Grace period for gateway handoffs
                 vc = guild.voice_client
                 fresh_state = get_radio_state(guild.id) or {}
                 if bool(fresh_state.get("is_paused", 0)):
                     return
+                if guild.id in self._reconnecting:
+                    return  # loop grabbed it during the grace period
                 if not vc or not is_connected(vc) or not isinstance(vc, discord.VoiceClient):
+                    self._reconnecting.add(guild.id)
                     try:
                         new_vc = await _get_or_create_plain_vc(self.bot, guild, target_ch, timeout=15, self_deaf=True)
                         station_key = state.get("station_key", DEFAULT_STATION_KEY)
@@ -951,6 +964,8 @@ class RadioCog(commands.Cog, name="Radio System"):
                         await self.start_stream(guild, new_vc, station_key, station_name, stream_url, vol)
                     except Exception as e:
                         logger.debug(f"[Radio] Voice state recovery error: {e}")
+                    finally:
+                        self._reconnecting.discard(guild.id)
 
     # -----------------------------------------------------------------------
     # Slash Commands: /radio
