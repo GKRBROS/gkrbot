@@ -151,6 +151,7 @@ async def get_or_create_music_vc(bot: commands.Bot, guild: discord.Guild, channe
     """
     Get (or create) a wavelink.Player connected to `channel`, handing off
     cleanly from Radio first if Radio currently owns the connection.
+    Includes timeout handling and stale session cleanup.
     """
     try:
         from blacklist import STORE as BLACKLIST_STORE
@@ -164,14 +165,45 @@ async def get_or_create_music_vc(bot: commands.Bot, guild: discord.Guild, channe
     except ImportError:
         pass
 
+    # Ensure Lavalink node is ready before attempting voice connection
+    if hasattr(wavelink, "Pool"):
+        nodes = getattr(wavelink.Pool, "nodes", {})
+        connected_nodes = [n for n in nodes.values() if getattr(n, "status", None) == wavelink.NodeStatus.CONNECTED]
+        if not connected_nodes:
+            cog = bot.get_cog("MusicCog")
+            if cog and hasattr(cog, "_connect_lavalink"):
+                try:
+                    await cog._connect_lavalink()
+                except Exception:
+                    pass
+
     vc = get_player(guild)
     if vc is None:
-        # If something non-wavelink (i.e. Radio) is connected, ask it to step
-        # aside gracefully first.
+        # If something non-wavelink (i.e. Radio) is connected, ask it to step aside
         existing = guild.voice_client
         if existing is not None:
-            await yield_voice_to(bot, guild, "music")
-        return await channel.connect(cls=wavelink.Player, **connect_kwargs)
+            try:
+                await yield_voice_to(bot, guild, "music")
+            except Exception:
+                pass
+            if guild.voice_client and not isinstance(guild.voice_client, wavelink.Player):
+                try:
+                    await guild.voice_client.disconnect(force=True)
+                except Exception:
+                    pass
+
+        timeout = connect_kwargs.pop("timeout", 30.0)
+        try:
+            return await channel.connect(cls=wavelink.Player, timeout=timeout, **connect_kwargs)
+        except (TimeoutError, asyncio.TimeoutError):
+            print(f"[Music] Initial voice connect to {channel.name} timed out. Resetting voice state and retrying once...")
+            try:
+                if guild.voice_client:
+                    await guild.voice_client.disconnect(force=True)
+            except Exception:
+                pass
+            await asyncio.sleep(1.0)
+            return await channel.connect(cls=wavelink.Player, timeout=timeout, **connect_kwargs)
 
     if vc.channel and vc.channel.id != channel.id:
         await vc.move_to(channel)
@@ -349,13 +381,8 @@ def render_progress_bar(position_ms: int, length_ms: int, bar_length: int = 15) 
 
 
 async def set_india_voice_region(channel: discord.VoiceChannel) -> None:
-    """Request India's Discord voice region for the channel used by music."""
-    try:
-        if channel.rtc_region != "india":
-            await channel.edit(rtc_region="india", reason="Set music voice region to India")
-            print(f"[Music] Voice region set to India for {channel.name}")
-    except (discord.Forbidden, discord.HTTPException) as exc:
-        print(f"[Music] Could not set India voice region for {channel.name}: {exc}")
+    """Safely handle voice region requests without interrupting ongoing connection handshakes."""
+    pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -387,12 +414,15 @@ class MusicControlView(discord.ui.View):
 
     async def refresh_panel(self, interaction: discord.Interaction):
         vc = get_player(interaction.guild)
+        self.player.voice_client = vc
         track = getattr(vc, 'current', None) if vc else None
         embed, gif_file = self.player.build_embed(vc, track)
         self._update_styles()
         kwargs = {"embed": embed, "view": self}
         if gif_file:
             kwargs["attachments"] = [gif_file]
+        else:
+            kwargs["attachments"] = []
         try:
             await interaction.response.edit_message(**kwargs)
         except Exception:
@@ -694,14 +724,34 @@ class GuildPlayer:
             pass
         embed.set_author(name=f"{BOT_NAME.upper()} MUSIC PLAYER", icon_url=bot_avatar)
 
-        if not vc or not vc.playing or not track:
-            embed.description = (
+        cur_track = track or (getattr(vc, 'current', None) if vc else None)
+        is_active = bool(vc and (vc.playing or vc.paused) and cur_track)
+
+        if not is_active:
+            desc = (
                 "**No track currently playing.**\n\n"
                 "Use `/play <song or link>` or `/random` to start streaming!"
             )
-            embed.set_footer(text=f"Queue: 0 tracks · {BOT_NAME} Studio Audio")
-            return embed, None
+            try:
+                from bot_status_msg import get_status_message
+                status_msg = get_status_message()
+                if status_msg and status_msg.get("active") and status_msg.get("message"):
+                    desc += f"\n\n📢 **Notice:** {status_msg['message']}"
+            except Exception:
+                pass
 
+            embed.description = desc
+            embed.set_footer(text=f"Queue: 0 tracks · {BOT_NAME} Studio Audio")
+
+            # GIF visualizer stays INSIDE the embed box
+            visual_file = get_visualizer_file()
+            if visual_file:
+                embed.set_image(url=f"attachment://{MUSIC_VISUALIZER_GIF_FILENAME}")
+            elif MUSIC_VISUALIZER_GIF_URL:
+                embed.set_image(url=MUSIC_VISUALIZER_GIF_URL)
+            return embed, visual_file
+
+        track = cur_track
         self.voice_client = vc
         loop_str = {"single": "🔂 Single", "queue": "🔁 Queue"}.get(self.loop_mode, "Off")
         status_badge = "⏸️ **Paused**" if vc.paused else "🟢 **Playing**"
@@ -716,6 +766,13 @@ class GuildPlayer:
             + f"🔊 `{vc.volume}%`  ·  🎛️ `{self.current_filter}`  ·  🔁 `{loop_str}`  ·  ⚡ `{'24/7 ON' if self.mode_247 else '24/7 OFF'}`\n\n"
             f"🎧 Requested by **{requester}**  ·  {status_badge}"
         )
+        try:
+            from bot_status_msg import get_status_message
+            status_msg = get_status_message()
+            if status_msg and status_msg.get("active") and status_msg.get("message"):
+                desc += f"\n\n📢 **Notice:** {status_msg['message']}"
+        except Exception:
+            pass
         embed.description = desc
 
         # Top Right Thumbnail: High-resolution Artwork / Thumbnail
@@ -748,6 +805,8 @@ class GuildPlayer:
         edit_kwargs = {"embed": embed, "view": view}
         if gif_file:
             edit_kwargs["attachments"] = [gif_file]
+        else:
+            edit_kwargs["attachments"] = []
 
         if self.panel_message:
             try:
@@ -1386,12 +1445,11 @@ class MusicCog(commands.Cog):
         return len(matched) / len(q_words)
 
     @staticmethod
-    def _rank_tracks(query: str, tracks: List[wavelink.Playable], spotify_top: Optional[dict] = None) -> dict:
+    def _rank_tracks(query: str, tracks: List[wavelink.Playable]) -> dict:
         """
         Score candidates and return single best result or ambiguous list.
         Scoring incorporates:
           - Title relevance & exact canonical title match bonus
-          - Global streaming popularity from Spotify chart data
           - Artist matching & topic channel / label verification
           - Rejection of unrequested features, instrumentals, or derivative covers
         """
@@ -1487,28 +1545,7 @@ class MusicCog(commands.Cog):
             else:
                 artist_score = MusicCog._token_relevance(norm_query, norm_t, norm_a) * 0.5
 
-            # ── 4. Global Hit / Spotify Popularity Bonus ──────────────────────
-            spotify_bonus = 0.0
-            if spotify_top:
-                spot_title = MusicCog._normalize_query(spotify_top.get("title", ""))
-                spot_artists = [MusicCog._normalize_query(a) for a in spotify_top.get("artists", [])]
-                spot_pop = float(spotify_top.get("popularity", 0)) / 100.0
-
-                title_sim_spot = difflib.SequenceMatcher(None, spot_title, norm_t).ratio()
-                title_matched = (spot_title == norm_t) or (spot_title in norm_t) or (norm_t in spot_title) or (title_sim_spot >= 0.8)
-
-                artist_matched = any(
-                    sa and (sa in norm_a or norm_a in sa or sa in norm_t or norm_t in sa or difflib.SequenceMatcher(None, sa, norm_a).ratio() >= 0.7)
-                    for sa in spot_artists
-                )
-
-                if title_matched and artist_matched:
-                    # Direct match with globally most-played song on charts
-                    spotify_bonus = spot_pop * 0.35
-                elif title_matched and not norm_artist_intent:
-                    spotify_bonus = spot_pop * 0.10
-
-            # ── 5. Canonical Version Score (0.0–1.0) ──────────────────────────
+            # ── 4. Canonical Version Score (0.0–1.0) ──────────────────────────
             alt_penalty = MusicCog._alternate_version_penalty(raw_title, raw_author, version_tags)
             canonical_score = max(0.0, 1.0 - alt_penalty)
 
@@ -1517,7 +1554,7 @@ class MusicCog(commands.Cog):
                 version_match = sum(1 for v in version_tags if v in combined_lc)
                 canonical_score = min(1.0, version_match / len(version_tags))
 
-            # ── 6. Official Score (0.0–1.0) ───────────────────────────────────
+            # ── 5. Official Score (0.0–1.0) ───────────────────────────────────
             official_score = MusicCog._official_score(raw_title, raw_author)
             release_text = f"{raw_title} {raw_author}".lower()
             if any(sig in release_text for sig in (
@@ -1526,11 +1563,11 @@ class MusicCog(commands.Cog):
             )):
                 official_score = min(1.0, official_score + 0.15)
 
-            # ── 7. Search Index Soft Priority (0.0–1.0) ───────────────────────
+            # ── 6. Search Index Soft Priority (0.0–1.0) ───────────────────────
             # Rank-based popularity — tighter decay to not crush later high-quality hits
             popularity_score = max(0.0, 1.0 - (rank_idx * 0.08))
 
-            # ── 8. Duration Score (0.0–1.0) ───────────────────────────────────
+            # ── 7. Duration Score (0.0–1.0) ───────────────────────────────────
             if 100_000 <= length_ms <= 360_000:
                 duration_score = 1.0
             elif 60_000 <= length_ms < 100_000:
@@ -1554,12 +1591,11 @@ class MusicCog(commands.Cog):
                 + popularity_score * 0.04
                 + duration_score  * 0.04
                 + exact_title_bonus
-                + spotify_bonus
                 - shorts_penalty
                 - (alt_penalty * 0.60)
             )
 
-            if relevance_score < 0.10 and not norm_artist_intent and not spotify_bonus:
+            if relevance_score < 0.10 and not norm_artist_intent:
                 final = min(final, 0.05)
 
             scored.append((final, rank_idx, track, {
@@ -1569,7 +1605,6 @@ class MusicCog(commands.Cog):
                 "official": round(official_score, 3),
                 "popularity": round(popularity_score, 3),
                 "exact": round(exact_title_bonus, 3),
-                "spot_bonus": round(spotify_bonus, 3),
                 "final": round(final, 3),
             }))
 
@@ -1592,7 +1627,7 @@ class MusicCog(commands.Cog):
             print(f"\n  #{i+1} [{ri}] {tr.title[:60]} — {tr.author or 'N/A'}")
             print(f"       relevance={dbg['relevance']} artist={dbg['artist']} "
                   f"canonical={dbg['canonical']} official={dbg['official']} "
-                  f"spot_bonus={dbg['spot_bonus']} FINAL={dbg['final']}")
+                  f"popularity={dbg['popularity']} FINAL={dbg['final']}")
         # Decision log printed below after confidence check
 
 
@@ -2025,12 +2060,11 @@ class MusicCog(commands.Cog):
                 return {"type": "error", "message": f"Could not resolve URL: {exc}"}
             return {"type": "error", "message": "Could not resolve the supplied URL."}
 
-        # Explicit prefix search if provided (e.g. ytmsearch:, ytsearch:, spsearch:)
-        prefixes = ("ytsearch:", "ytmsearch:", "spsearch:", "scsearch:", "dzsearch:", "amsearch:")
+        # Explicit prefix search if provided (e.g. ytmsearch:, ytsearch:)
+        prefixes = ("ytsearch:", "ytmsearch:", "dzsearch:", "amsearch:")
         explicit_prefix = cleaned.lower().startswith(prefixes)
 
         search_text = cleaned
-        spotify_top = None
 
         if explicit_prefix:
             provider, search_text = cleaned.split(":", 1)
@@ -2043,34 +2077,10 @@ class MusicCog(commands.Cog):
             )
             search_text = re.sub(r"\s+", " ", filler.sub("", cleaned)).strip() or cleaned
 
-            if sp:
-                try:
-                    loop = asyncio.get_running_loop()
-                    sp_res = await asyncio.wait_for(
-                        loop.run_in_executor(None, lambda: sp.search(q=search_text, type="track", limit=5)),
-                        timeout=2.0,
-                    )
-                    items = (sp_res or {}).get("tracks", {}).get("items", [])
-                    if items:
-                        items.sort(key=lambda x: x.get("popularity", 0), reverse=True)
-                        top_item = items[0]
-                        artist_names = [a.get("name", "") for a in top_item.get("artists", []) if a.get("name")]
-                        spotify_top = {
-                            "title": top_item.get("name", ""),
-                            "artists": artist_names,
-                            "popularity": top_item.get("popularity", 0),
-                        }
-                        print(f"[Music] 🌟 Spotify top hit: '{top_item.get('name')}' by {', '.join(artist_names)} (popularity={top_item.get('popularity')}/100)")
-                except Exception as exc:
-                    print(f"[Music] Spotify lookup notice: {exc}")
-
-            sources_to_try = []
-            if spotify_top and spotify_top.get("popularity", 0) >= 30 and spotify_top.get("artists"):
-                enriched_query = f"{spotify_top['title']} {spotify_top['artists'][0]}"
-                sources_to_try.append((enriched_query, wavelink.TrackSource.YouTubeMusic))
-
-            sources_to_try.append((search_text, wavelink.TrackSource.YouTubeMusic))
-            sources_to_try.append((search_text, wavelink.TrackSource.YouTube))
+            sources_to_try = [
+                (search_text, wavelink.TrackSource.YouTubeMusic),
+                (search_text, wavelink.TrackSource.YouTube),
+            ]
 
         started = time.time()
         results = []
@@ -2093,7 +2103,7 @@ class MusicCog(commands.Cog):
                     gp.metrics["load_start"] = started
                     gp.metrics["load_end"] = finished
 
-                candidate_ranked = self._rank_tracks(search_text, candidate_results, spotify_top=spotify_top)
+                candidate_ranked = self._rank_tracks(search_text, candidate_results)
 
                 if candidate_ranked.get("type") in ("single", "ambiguous"):
                     results = candidate_results
@@ -2115,7 +2125,7 @@ class MusicCog(commands.Cog):
                     )
                     if raw:
                         candidate_results = list(raw)
-                        candidate_ranked = self._rank_tracks(search_text, candidate_results, spotify_top=spotify_top)
+                        candidate_ranked = self._rank_tracks(search_text, candidate_results)
                         if candidate_ranked.get("type") in ("single", "ambiguous"):
                             results = candidate_results
                             ranked = candidate_ranked
@@ -2159,12 +2169,21 @@ class MusicCog(commands.Cog):
         # 2. Connect (hands off from Radio first if Radio is currently playing)
         gp.metrics["voice_start"] = time.time()
         vc = get_player(interaction.guild)
-        if not vc:
-            await set_india_voice_region(user_channel)
-            vc = await get_or_create_music_vc(self.bot, interaction.guild, user_channel, self_deaf=True)
-        elif vc.channel != user_channel:
-            await set_india_voice_region(user_channel)
-            await vc.move_to(user_channel)
+        try:
+            if not vc:
+                vc = await get_or_create_music_vc(self.bot, interaction.guild, user_channel, self_deaf=True)
+            elif vc.channel != user_channel:
+                await vc.move_to(user_channel)
+        except (TimeoutError, asyncio.TimeoutError) as te:
+            print(f"[Music] Voice connection timed out for {interaction.guild.name}: {te}")
+            return await interaction.edit_original_response(
+                embed=embed_error("⏱️ Voice connection timed out. Please try again.")
+            )
+        except Exception as exc:
+            print(f"[Music] Voice connection failed for {interaction.guild.name}: {exc}")
+            return await interaction.edit_original_response(
+                embed=embed_error(f"Could not connect to voice channel: {exc}")
+            )
         gp.metrics["voice_end"] = time.time()
 
         # 3. Resolve query

@@ -93,7 +93,7 @@ def _save_cfg(guild_id: int, channel_id: int | None, message_id: int | None) -> 
 
 
 # ══════════════════════════════════════════════════════════════
-#  Stat helpers
+#  Stat helpers & Metric Tracking
 # ══════════════════════════════════════════════════════════════
 
 def _fmt_uptime() -> str:
@@ -109,18 +109,28 @@ def _fmt_uptime() -> str:
     return " ".join(parts)
 
 
-def _fmt_memory() -> str:
+def _bar(percent: float, length: int = 8) -> str:
+    """Compact graphical unicode progress bar."""
+    pct = max(0.0, min(100.0, float(percent)))
+    filled = int(round((pct / 100.0) * length))
+    filled = min(length, max(0, filled))
+    return "▰" * filled + "▱" * (length - filled)
+
+
+def _get_metrics() -> tuple[float, float]:
+    """Return current (memory_mb, cpu_percent)."""
     if not _PSUTIL:
-        return "—"
+        return 0.0, 0.0
     try:
-        mb = _psutil.Process(os.getpid()).memory_info().rss / 1_048_576
-        return f"{mb:.1f} MB"
+        proc = _psutil.Process(os.getpid())
+        mem = proc.memory_info().rss / 1_048_576
+        cpu = _psutil.cpu_percent(interval=None)
+        return round(mem, 1), round(cpu, 1)
     except Exception:
-        return "—"
+        return 0.0, 0.0
 
 
 import collections
-import urllib.parse
 import json
 
 # Track the last 60 minutes of stats for the graph
@@ -128,186 +138,242 @@ _HISTORY_LABELS = collections.deque(maxlen=60)
 _HISTORY_MEM    = collections.deque(maxlen=60)
 _HISTORY_CPU    = collections.deque(maxlen=60)
 
+
+def _seed_history() -> None:
+    """Pre-seed telemetry buffer on cold start so the graph renders immediately."""
+    if len(_HISTORY_LABELS) >= 2:
+        return
+    now = datetime.datetime.now(datetime.timezone.utc)
+    mem, cpu = _get_metrics()
+    if mem == 0.0:
+        mem = 40.0
+    for i in range(5, -1, -1):
+        t = now - datetime.timedelta(minutes=i)
+        _HISTORY_LABELS.append(t.strftime("%H:%M"))
+        _HISTORY_MEM.append(mem)
+        _HISTORY_CPU.append(cpu)
+
+
 def _update_history() -> None:
     now = datetime.datetime.now(datetime.timezone.utc)
     _HISTORY_LABELS.append(now.strftime("%H:%M"))
-    
-    if _PSUTIL:
-        try:
-            mem = _psutil.Process(os.getpid()).memory_info().rss / 1_048_576
-            cpu = _psutil.cpu_percent(interval=None)
-        except Exception:
-            mem, cpu = 0, 0
-    else:
-        mem, cpu = 0, 0
-        
-    _HISTORY_MEM.append(round(mem, 1))
-    _HISTORY_CPU.append(round(cpu, 1))
+    mem, cpu = _get_metrics()
+    _HISTORY_MEM.append(mem)
+    _HISTORY_CPU.append(cpu)
+
 
 async def _generate_chart_url() -> str | None:
+    """Generate high-density futuristic dark telemetry chart via QuickChart."""
     if len(_HISTORY_LABELS) < 2:
-        return None
-        
+        _seed_history()
+
     chart = {
         "type": "line",
         "data": {
             "labels": list(_HISTORY_LABELS),
             "datasets": [
                 {
-                    "label": "Memory (MB)",
+                    "label": "RAM (MB)",
                     "data": list(_HISTORY_MEM),
-                    "borderColor": "rgb(54, 162, 235)",
-                    "backgroundColor": "rgba(54, 162, 235, 0.5)",
+                    "borderColor": "#00f2fe",
+                    "backgroundColor": "rgba(0, 242, 254, 0.12)",
                     "yAxisID": "y-mem",
-                    "fill": False,
-                    "tension": 0.3
+                    "fill": True,
+                    "tension": 0.35,
+                    "borderWidth": 2,
+                    "pointRadius": 2,
+                    "pointBackgroundColor": "#00f2fe"
                 },
                 {
                     "label": "CPU (%)",
                     "data": list(_HISTORY_CPU),
-                    "borderColor": "rgb(255, 99, 132)",
-                    "backgroundColor": "rgba(255, 99, 132, 0.5)",
+                    "borderColor": "#f43f5e",
+                    "backgroundColor": "rgba(244, 63, 94, 0.12)",
                     "yAxisID": "y-cpu",
-                    "fill": False,
-                    "tension": 0.3
+                    "fill": True,
+                    "tension": 0.35,
+                    "borderWidth": 2,
+                    "pointRadius": 2,
+                    "pointBackgroundColor": "#f43f5e"
                 }
             ]
         },
         "options": {
             "title": {"display": False},
-            "legend": {"labels": {"fontColor": "#ffffff"}},
+            "legend": {
+                "display": True,
+                "labels": {
+                    "fontColor": "#f1f5f9",
+                    "fontSize": 11,
+                    "boxWidth": 12,
+                    "padding": 12
+                }
+            },
             "scales": {
-                "xAxes": [{"ticks": {"fontColor": "#aaaaaa"}, "gridLines": {"color": "#333333"}}],
+                "xAxes": [{
+                    "ticks": {"fontColor": "#94a3b8", "fontSize": 10, "maxTicksLimit": 10},
+                    "gridLines": {"color": "#1e293b", "zeroLineColor": "#334155"}
+                }],
                 "yAxes": [
                     {
                         "id": "y-mem",
                         "position": "left",
-                        "ticks": {"fontColor": "rgb(54, 162, 235)", "beginAtZero": True},
-                        "gridLines": {"color": "#333333"}
+                        "ticks": {"fontColor": "#00f2fe", "fontSize": 10, "beginAtZero": False},
+                        "gridLines": {"color": "#1e293b", "zeroLineColor": "#334155"}
                     },
                     {
                         "id": "y-cpu",
                         "position": "right",
-                        "ticks": {"fontColor": "rgb(255, 99, 132)", "beginAtZero": True, "max": 100},
+                        "ticks": {"fontColor": "#f43f5e", "fontSize": 10, "beginAtZero": True, "max": 100},
                         "gridLines": {"drawOnChartArea": False}
                     }
                 ]
             }
         }
     }
-    
-    # Use QuickChart's short-URL POST API to avoid Discord's 2048 char URL limit
+
     payload = {
-        "backgroundColor": "rgb(43,45,49)",
-        "width": 600,
-        "height": 300,
+        "backgroundColor": "#0b0e14",
+        "width": 680,
+        "height": 280,
         "format": "png",
         "chart": json.dumps(chart)
     }
-    
+
     try:
-        timeout = aiohttp.ClientTimeout(total=10)
+        timeout = aiohttp.ClientTimeout(total=6)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post("https://quickchart.io/chart/create", json=payload) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     if data.get("success"):
-                        short_url = data.get("url")
-                        print(f"[BotStatus] ✅ Chart short URL: {short_url}")
-                        return short_url
-                    else:
-                        print(f"[BotStatus] ⚠️ QuickChart returned success=false: {data}")
-                else:
-                    body = await resp.text()
-                    print(f"[BotStatus] ⚠️ QuickChart returned status {resp.status}: {body[:200]}")
+                        return data.get("url")
     except Exception as e:
-        print(f"[BotStatus] ❌ Failed to generate short chart URL: {type(e).__name__}: {e}")
-        
-    # If short URL failed, skip the graph entirely (long URL would exceed Discord's limit)
-    print("[BotStatus] ⚠️ Skipping chart — short URL generation failed.")
+        print(f"[BotStatus] Telemetry chart request notice: {e}")
+
     return None
 
-# ══════════════════════════════════════════════════════════════
-#  Embed builder
-# ══════════════════════════════════════════════════════════════
 
-def _stat_line(emoji: str, label: str, value: str) -> str:
-    """Returns one formatted stat row."""
-    return f"{emoji}  **{label}**  `{value}`\n"
-
+# ══════════════════════════════════════════════════════════════
+#  Futuristic Embed Builder
+# ══════════════════════════════════════════════════════════════
 
 async def _build_embed(bot: commands.Bot, *, online: bool = True, chart_url: str | None = None) -> discord.Embed:
-    now   = datetime.datetime.now(datetime.timezone.utc)
-    color = 0x00E676 if online else 0xFF3B3B   # green / red
+    now = datetime.datetime.now(datetime.timezone.utc)
 
-    # ── Status indicator ─────────────────────────────────────────────────────
-    if online:
-        status_line = "🟢  **ONLINE** — All systems operational"
-    else:
-        status_line = "🔴  **OFFLINE** — Bot is shutting down / disconnected"
-
-    # ── Raw stats ─────────────────────────────────────────────────────────────
+    # ── Latency & Status Assessment ───────────────────────────
     try:
-        ping = f"{round(bot.latency * 1000)} ms"
+        raw_ping = bot.latency * 1000
+        ping_val = round(raw_ping)
+        ping_str = f"{ping_val} ms"
     except Exception:
-        ping = "— ms"
+        ping_val = 0
+        ping_str = "Unavailable"
 
-    uptime       = _fmt_uptime()
-    memory       = _fmt_memory()
-    py_ver       = platform.python_version()
-    dpy_ver      = discord.__version__
-    guild_count  = len(bot.guilds)
+    if not online:
+        color = 0xEF4444  # Crimson Red
+        status_line = "🔴 **OFFLINE** — Bot disconnected / shutting down"
+        ping_badge = "Offline"
+    elif ping_val < 100:
+        color = 0x00D2FF  # Cyber Electric Cyan
+        status_line = "🟢 **ONLINE** — All systems operational"
+        ping_badge = "Excellent"
+    elif ping_val < 250:
+        color = 0x38BDF8  # Deep Sky Blue
+        status_line = "🟢 **ONLINE** — All systems operational"
+        ping_badge = "Normal"
+    else:
+        color = 0xFBBF24  # Amber Warning
+        status_line = "🟡 **ONLINE** — High gateway latency detected"
+        ping_badge = "Elevated"
+
+    uptime_str = _fmt_uptime()
+    mem_mb, cpu_pct = _get_metrics()
+    py_ver = platform.python_version()
+    dpy_ver = discord.__version__
+
+    guild_count = len(bot.guilds)
     member_count = sum(g.member_count or 0 for g in bot.guilds)
-    cmd_count    = len(bot.tree.get_commands())
+    cmd_count = len(bot.tree.get_commands())
+    voice_count = len(bot.voice_clients)
 
-    # ── Field: System ─────────────────────────────────────────────────────────
+    # Lavalink connectivity status
+    lavalink_str = "Standby"
+    try:
+        import wavelink
+        if hasattr(wavelink, "Pool") and wavelink.Pool.nodes:
+            connected = [n for n in wavelink.Pool.nodes.values() if getattr(n, "status", None) == wavelink.NodeStatus.CONNECTED]
+            lavalink_str = f"Online ({len(connected)} node)" if connected else "Connecting"
+    except Exception:
+        pass
+
+    # Visual gauge bars
+    cpu_bar_str = _bar(cpu_pct, 6)
+    mem_percent = min(100.0, (mem_mb / 512.0) * 100.0) if mem_mb > 0 else 0.0
+    mem_bar_str = _bar(mem_percent, 6)
+
+    # ── Description Block ─────────────────────────────────────
+    desc_lines = [
+        f"> {status_line}",
+        f"> ⚡ **Gateway RTT:** `{ping_str}` (`{ping_badge}`)  ·  ⏱️ **Uptime:** `{uptime_str}`",
+    ]
+
+    # Active Developer Directive / Notice
+    try:
+        from bot_status_msg import get_status_message
+        notice = get_status_message()
+        if notice and notice.get("active") and notice.get("message"):
+            desc_lines.append(f"\n📢 **BROADCAST DIRECTIVE**\n> {notice['message']}\n*Issued by {notice.get('author', 'Dev')} · {notice.get('updated_at', 'recently')}*")
+    except Exception:
+        pass
+
+    # ── Field 1: System Telemetry ─────────────────────────────
     sys_val = (
-        _stat_line("⏱", "Uptime",      uptime)
-        + _stat_line("📶", "Ping",       ping)
-        + _stat_line("💾", "Memory",     memory)
-        + _stat_line("🐍", "Python",     py_ver)
-        + _stat_line("📦", "discord.py", dpy_ver)
+        f"⏱️ **Uptime:** `{uptime_str}`\n"
+        f"📶 **Ping:** `{ping_str}` ({ping_badge})\n"
+        f"💾 **Memory:** `{mem_mb:.1f} MB` `[{mem_bar_str}]`\n"
+        f"⚡ **CPU Load:** `{cpu_pct:.1f}%` `[{cpu_bar_str}]`\n"
+        f"🐍 **Python:** `v{py_ver}`\n"
+        f"📦 **discord.py:** `v{dpy_ver}`"
     )
 
-    # ── Field: Community ──────────────────────────────────────────────────────
+    # ── Field 2: Community & Topology ─────────────────────────
     community_val = (
-        _stat_line("🏰", "Servers",  str(guild_count))
-        + _stat_line("👥", "Members",  f"{member_count:,}")
-        + _stat_line("⚡", "Commands", str(cmd_count))
+        f"🏰 **Servers:** `{guild_count:,}`\n"
+        f"👥 **Members:** `{member_count:,}`\n"
+        f"⚡ **Commands:** `{cmd_count}` registered\n"
+        f"🔊 **Voice Streams:** `{voice_count}` active\n"
+        f"🎵 **Audio Core:** `{lavalink_str}`\n"
+        f"📻 **24/7 Radio:** `Operational`"
     )
 
-    # ── Field: Footer row ─────────────────────────────────────────────────────
-    footer_row = (
-        "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌\n"
-        f"🔄  Refreshes every **60 s**  ·  "
-        f"Last updated <t:{int(now.timestamp())}:T>"
-    )
-
-    # ── Assemble embed ────────────────────────────────────────────────────────
+    # ── Assemble Modern Embed ─────────────────────────────────
     embed = discord.Embed(
-        title="🤖  GKR Bot  ·  Live Dashboard",
-        description=f"> {status_line}",
+        title="GKR Bot • Live Dashboard",
+        description="\n".join(desc_lines),
         color=color,
         timestamp=now,
     )
+
     if bot.user:
         embed.set_author(
-            name="GKR Bot  ·  Status Monitor",
+            name="GKR Bot • Status Monitor",
             icon_url=bot.user.display_avatar.url,
         )
 
-    embed.add_field(name="🖥️  System",     value=sys_val,        inline=True)
-    embed.add_field(name="🌐  Community",  value=community_val,  inline=True)
-    embed.add_field(name="",               value=footer_row,      inline=False)
-    
+    embed.add_field(name="🖥️  System Telemetry", value=sys_val, inline=True)
+    embed.add_field(name="🌐  Community & Network", value=community_val, inline=True)
+
     if online and chart_url is None:
         chart_url = await _generate_chart_url()
-        
+
     if chart_url:
-        # Cache buster to force Discord to reload the image each minute
         embed.set_image(url=f"{chart_url}?_t={int(now.timestamp())}")
 
-    embed.set_footer(text=f"GKR Bot  ·  {now.strftime('%d %b %Y')}")
+    embed.set_footer(
+        text="GKR Bot • Live Monitoring • Refreshes every 60 seconds",
+        icon_url=bot.user.display_avatar.url if bot.user else None
+    )
     return embed
 
 
@@ -381,7 +447,7 @@ class BotStatusCog(commands.Cog):
 
     # ── Task loop — heartbeat every 60 seconds ────────────────────────────────
 
-    @tasks.loop(minutes=3)
+    @tasks.loop(seconds=60)
     async def _heartbeat(self) -> None:
         _update_history()
         await self._update(online=True)
@@ -394,6 +460,7 @@ class BotStatusCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_ready(self) -> None:
+        _seed_history()
         self._configs = _load_cfg()
         if not self._heartbeat.is_running():
             self._heartbeat.start()

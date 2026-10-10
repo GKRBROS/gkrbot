@@ -352,7 +352,57 @@ class ModerationCog(commands.Cog):
             color=C.SUCCESS if latency_ms < 200 else C.WARNING,
             timestamp=discord.utils.utcnow()
         )
+
+        try:
+            from bot_status_msg import get_status_message
+            status_msg = get_status_message()
+            if status_msg and status_msg.get("active") and status_msg.get("message"):
+                embed.add_field(
+                    name="📢 Developer Notice",
+                    value=f"> {status_msg['message']}\n*Updated: {status_msg.get('updated_at', 'recently')} by {status_msg.get('author', 'Dev')}*",
+                    inline=False
+                )
+        except Exception:
+            pass
+
         await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="devmessage", description="Set or clear the global developer status message (Dev only)")
+    @app_commands.describe(message="The notice to broadcast (leave blank to clear)", active="Whether the notice is active")
+    async def devmessage(self, interaction: discord.Interaction, message: Optional[str] = None, active: bool = True) -> None:
+        from bot_status_msg import set_status_message, clear_status_message
+        is_allowed = False
+        try:
+            if await self.bot.is_owner(interaction.user):
+                is_allowed = True
+            else:
+                from admin_api import _admin_ids
+                if interaction.user.id in _admin_ids(self.bot):
+                    is_allowed = True
+        except Exception:
+            is_allowed = False
+
+        if not is_allowed:
+            return await interaction.response.send_message(
+                embed=discord.Embed(title="❌ Access Denied", description="Only bot developers can use this command.", color=C.DANGER),
+                ephemeral=True
+            )
+
+        if not message or not message.strip():
+            clear_status_message()
+            return await interaction.response.send_message(
+                embed=discord.Embed(title="✅ Notice Cleared", description="The global developer status notice has been removed.", color=C.SUCCESS),
+                ephemeral=True
+            )
+
+        saved = set_status_message(message.strip(), author=interaction.user.display_name, active=active)
+        state_str = "🟢 Active" if active else "⏸️ Disabled"
+        embed = discord.Embed(
+            title="📢 Developer Notice Updated",
+            description=f"**Status:** {state_str}\n\n> {saved['message']}\n\n*This notice is now visible in `/status` and system panels.*",
+            color=C.SUCCESS
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

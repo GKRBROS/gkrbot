@@ -142,9 +142,47 @@ def make_banner_handler(get_user_id):
     return handle_banner
 
 
+def make_status_message_handlers(get_user_id):
+    async def handle_get_status_message(request: web.Request):
+        from bot_status_msg import get_all_status_info
+        return web.json_response(get_all_status_info())
+
+    async def handle_post_status_message(request: web.Request):
+        if not await _is_admin(request, get_user_id):
+            return _err("Forbidden", 403)
+        try:
+            data = await request.json()
+        except Exception:
+            return _err("Invalid JSON.")
+
+        from bot_status_msg import set_status_message, clear_status_message
+        msg = str(data.get("message", "")).strip()
+        active = bool(data.get("active", True))
+        actor_id = await get_user_id(request)
+
+        if not msg:
+            res = clear_status_message()
+        else:
+            res = set_status_message(msg, author=f"WebAdmin({actor_id})", active=active)
+
+        try:
+            from weblog import post_weblog
+            state_text = "Enabled" if active and msg else "Cleared/Disabled"
+            await post_weblog("Bot Status Notice Updated", f"<@{actor_id}>", f"State: {state_text}\nMessage: {msg}", color=0xFEE75C)
+        except Exception:
+            pass
+
+        return web.json_response({"success": True, "notice": res})
+
+    return handle_get_status_message, handle_post_status_message
+
+
 def register_admin_routes(app: web.Application, get_user_id) -> None:
+    get_status_msg, post_status_msg = make_status_message_handlers(get_user_id)
     app.add_routes([
         web.get("/api/admin/whoami", make_whoami_handler(get_user_id)),
         web.get("/api/admin/tickets", make_tickets_handler(get_user_id)),
         web.post("/api/admin/bot-banner", make_banner_handler(get_user_id)),
+        web.get("/api/admin/status-message", get_status_msg),
+        web.post("/api/admin/status-message", post_status_msg),
     ])
