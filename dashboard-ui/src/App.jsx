@@ -42,6 +42,7 @@ import Birthdays from './pages/features/Birthdays';
 import Leaderboard from './pages/features/Leaderboard';
 import Community from './pages/features/Community';
 import Pinger from './pages/features/Pinger';
+import Announce from './pages/features/Announce';
 
 import { useToast } from './components/ToastContext';
 
@@ -188,6 +189,7 @@ function App() {
         <Route path="role-sync" element={<RoleSync />} />
         <Route path="sync" element={<ServerSync />} />
         <Route path="pinger" element={<Pinger />} />
+        <Route path="announce" element={<Announce />} />
       </Route>
 
       {/* Fallback route for unknown paths */}

@@ -4,7 +4,7 @@ import { SitePage } from '../components/SiteLayout';
 import {
   ShieldAlert, ImageIcon, Loader2, Ticket, ExternalLink,
   Newspaper, Trash2, Send, Ban, FileText, Settings, Users,
-  Activity, ChevronRight, AlertCircle
+  Activity, ChevronRight, AlertCircle, Megaphone
 } from 'lucide-react';
 import { Loader, Spinner } from '../components/Loader';
 import { Link } from 'react-router-dom';
@@ -56,6 +56,18 @@ export function Admin({ user }) {
   const [newsError, setNewsError] = useState('');
   const [newsStatus, setNewsStatus] = useState('idle');
 
+  // Announcement sender
+  const [guilds, setGuilds] = useState(null);
+  const [annGuild, setAnnGuild] = useState('');
+  const [annChannel, setAnnChannel] = useState('');
+  const [annTitle, setAnnTitle] = useState('');
+  const [annBody, setAnnBody] = useState('');
+  const [annColor, setAnnColor] = useState('#8A2BE2');
+  const [annPing, setAnnPing] = useState('none');
+  const [annStatus, setAnnStatus] = useState('idle');
+  const [annError, setAnnError] = useState('');
+  const [annSuccess, setAnnSuccess] = useState('');
+
   useEffect(() => {
     api.get('/admin/whoami')
       .then(res => setIsAdmin(!!res.data?.is_admin))
@@ -68,12 +80,40 @@ export function Admin({ user }) {
     api.get('/admin/tickets')
       .then(res => setTickets(res.data.tickets || []))
       .catch(err => setTicketsError(err.response?.data?.error || 'Could not load tickets.'));
+    api.get('/admin/channels')
+      .then(res => setGuilds(res.data.guilds || []))
+      .catch(() => setGuilds([]));
   }, [isAdmin]);
 
   const loadNews = () => {
     api.get('/public/devnews').then(res => setNews(res.data.entries || [])).catch(() => setNews([]));
   };
   useEffect(() => { if (isAdmin) loadNews(); }, [isAdmin]);
+
+  const handleAnnSubmit = async (e) => {
+    e.preventDefault();
+    setAnnError(''); setAnnSuccess('');
+    if (!annChannel) return setAnnError('Select a channel.');
+    if (!annBody.trim()) return setAnnError('Message body is required.');
+    setAnnStatus('sending');
+    try {
+      await api.post('/admin/send-announcement', {
+        channel_id: annChannel,
+        title: annTitle.trim(),
+        body: annBody.trim(),
+        color: annColor,
+        ping: annPing,
+      });
+      setAnnSuccess('Announcement sent! ✅');
+      setAnnTitle(''); setAnnBody('');
+    } catch (err) {
+      setAnnError(err.response?.data?.error || 'Failed to send.');
+    } finally {
+      setAnnStatus('idle');
+    }
+  };
+
+  const selectedGuildChannels = guilds?.find(g => g.id === annGuild)?.channels || [];
 
   const handleNewsSubmit = async (e) => {
     e.preventDefault();
@@ -274,6 +314,145 @@ export function Admin({ user }) {
                 )}
               </div>
             </div>
+
+            {/* Announcement Sender — full width */}
+            <div style={{ gridColumn: '1 / -1' }}>
+              <div className="site-card admin-section-card">
+                <SectionHeader icon={Megaphone} title="Send Discord Announcement" subtitle="Compose and send an embed to any server channel — uses the existing announcement system" />
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, alignItems: 'start' }}>
+
+                  {/* ── Left: Form ── */}
+                  <form onSubmit={handleAnnSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                    <div className="admin-field-row">
+                      <div className="site-field">
+                        <label>Server</label>
+                        <select value={annGuild} onChange={e => { setAnnGuild(e.target.value); setAnnChannel(''); }}>
+                          <option value="">— Select server —</option>
+                          {(guilds || []).map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="site-field">
+                        <label>Channel</label>
+                        <select value={annChannel} onChange={e => setAnnChannel(e.target.value)} disabled={!annGuild}>
+                          <option value="">— Select channel —</option>
+                          {selectedGuildChannels.map(c => <option key={c.id} value={c.id}>#{c.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="site-field">
+                      <label>Title (optional)</label>
+                      <input type="text" value={annTitle} onChange={e => setAnnTitle(e.target.value)}
+                        placeholder="e.g. Music system maintenance" maxLength={256} />
+                    </div>
+
+                    <div className="site-field">
+                      <label>Message Body</label>
+                      <textarea value={annBody} onChange={e => setAnnBody(e.target.value)}
+                        placeholder="Your announcement here. Supports Discord markdown." rows={5} maxLength={4000} />
+                    </div>
+
+                    <div className="site-field">
+                      <label>Ping</label>
+                      <select value={annPing} onChange={e => setAnnPing(e.target.value)}>
+                        <option value="none">No Ping</option>
+                        <option value="everyone">@everyone</option>
+                        <option value="here">@here</option>
+                      </select>
+                    </div>
+
+                    {/* Color picker */}
+                    <div className="site-field">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        Embed Sidebar Color
+                        <span style={{ width: 20, height: 20, borderRadius: 5, background: annColor, border: '2px solid rgba(255,255,255,0.2)', display: 'inline-block', boxShadow: `0 0 8px ${annColor}55` }} />
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{annColor}</span>
+                      </label>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 6 }}>
+                        {['#8A2BE2','#5865F2','#57F287','#FEE75C','#ED4245','#EB459E','#FF7F50','#00BFFF','#FFFFFF','#23272A'].map(c => (
+                          <button key={c} type="button" onClick={() => setAnnColor(c)}
+                            title={c}
+                            style={{
+                              width: 28, height: 28, borderRadius: 7, background: c,
+                              border: annColor === c ? '2px solid white' : '2px solid rgba(255,255,255,0.1)',
+                              cursor: 'pointer', padding: 0,
+                              boxShadow: annColor === c ? `0 0 10px ${c}99` : 'none',
+                              transition: 'all 0.15s',
+                            }} />
+                        ))}
+                        <input type="color" value={annColor} onChange={e => setAnnColor(e.target.value)}
+                          title="Pick custom color"
+                          style={{ width: 28, height: 28, borderRadius: 7, border: '2px solid rgba(255,255,255,0.15)', padding: 2, cursor: 'pointer', background: 'rgba(255,255,255,0.05)' }} />
+                      </div>
+                    </div>
+
+                    {annError && <div className="site-alert site-alert-error" style={{ display: 'flex', alignItems: 'center', gap: 8 }}><AlertCircle size={14} />{annError}</div>}
+                    {annSuccess && <div className="site-alert site-alert-success">{annSuccess}</div>}
+
+                    <button type="submit" className="site-btn site-btn-primary" disabled={annStatus === 'sending'} style={{ justifyContent: 'center' }}>
+                      {annStatus === 'sending' ? 'Sending…' : <><Send size={15} /><span>Send Announcement</span></>}
+                    </button>
+                  </form>
+
+                  {/* ── Right: Discord Embed Preview ── */}
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-muted)', marginBottom: 10 }}>
+                      Live Preview
+                    </div>
+                    {/* Discord dark background mock */}
+                    <div style={{ background: '#313338', borderRadius: 10, padding: '16px 14px', fontFamily: '"gg sans","Noto Sans",sans-serif' }}>
+                      {/* Bot row */}
+                      <div style={{ display: 'flex', gap: 10, marginBottom: 2 }}>
+                        <div style={{ width: 40, height: 40, borderRadius: '50%', background: 'linear-gradient(135deg,#7c5be2,#5865F2)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>
+                          🤖
+                        </div>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                            <span style={{ fontWeight: 700, fontSize: 14, color: '#00b0f4' }}>GKR Bot</span>
+                            <span style={{ background: '#5865F2', color: 'white', fontSize: 9, fontWeight: 700, padding: '1px 4px', borderRadius: 3, letterSpacing: '0.02em' }}>BOT</span>
+                            <span style={{ fontSize: 11, color: '#87888c' }}>Today at {new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'})}</span>
+                          </div>
+                          {annPing !== 'none' && (
+                            <div style={{ fontSize: 13, color: '#c9cdfb', background: 'rgba(88,101,242,0.15)', display: 'inline-block', padding: '0 4px', borderRadius: 3, marginBottom: 4 }}>
+                              {annPing === 'everyone' ? '@everyone' : '@here'}
+                            </div>
+                          )}
+                          {/* Embed */}
+                          <div style={{
+                            display: 'flex', background: '#2b2d31', borderRadius: '0 4px 4px 4px',
+                            borderLeft: `4px solid ${annColor}`, marginTop: 4, overflow: 'hidden',
+                            boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.04)`,
+                            transition: 'border-color 0.2s',
+                          }}>
+                            <div style={{ padding: '12px 16px 12px 12px', maxWidth: 420 }}>
+                              {(annTitle || !annBody) && (
+                                <div style={{ fontWeight: 700, fontSize: 14, color: '#f2f3f5', marginBottom: annBody ? 6 : 0 }}>
+                                  📢  {annTitle || 'Announcement Title'}
+                                </div>
+                              )}
+                              <div style={{ fontSize: 13, color: '#dbdee1', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                                {annBody || <span style={{ color: '#87888c', fontStyle: 'italic' }}>Your message will appear here…</span>}
+                              </div>
+                              <div style={{ marginTop: 8, fontSize: 11, color: '#87888c', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span style={{ width: 14, height: 14, borderRadius: '50%', background: '#5865F2', display: 'inline-block' }} />
+                                GKR Bot — Official Announcement · {new Date().toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8, textAlign: 'center' }}>
+                      Sidebar color: <code style={{ color: annColor }}>{annColor}</code> — updates live
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+
 
             {/* Right Column: Bot Settings + Tickets */}
             <div className="admin-col-right">

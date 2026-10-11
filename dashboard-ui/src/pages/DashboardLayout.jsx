@@ -37,7 +37,8 @@ import {
   Search,
   LogOut,
   Server,
-  ChevronDown
+  ChevronDown,
+  Megaphone
 } from 'lucide-react';
 
 const PAGE_DEFINITIONS = [
@@ -78,6 +79,7 @@ const PAGE_DEFINITIONS = [
   {
     label: 'Server Automation',
     items: [
+      { id: 'announce', name: 'Announcements', path: 'announce', icon: Megaphone },
       { id: 'sticky', name: 'Sticky Messages', path: 'sticky', icon: Pin },
       { id: 'auto-reactions', name: 'Auto Reactions', path: 'auto-reactions', icon: Zap },
       { id: 'custom-commands', name: 'Custom Commands', path: 'custom-commands', icon: Terminal },

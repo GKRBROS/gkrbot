@@ -1045,7 +1045,7 @@ class ServerLogger:
             actor=event.creator,
             details=details,
             color=C.SUCCESS,
-            thumbnail_url=event.cover.url if event.cover else None,
+            thumbnail_url=event.cover_image.url if event.cover_image else None,
             footer_text="Scheduled Event"
         )
         await self._send(event.guild, "event_create", embed)

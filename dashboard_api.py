@@ -4361,6 +4361,138 @@ async def handle_role_sync_backfill_post(request: web.Request):
     return web.json_response({"success": True, "synced": synced, "qualifying": qualifying})
 
 
+# ── Announcements ──────────────────────────────────────────────────────────
+_announce_webhooks: dict = {}  # {guild_id: {channel_id: webhook_url}}
+
+async def handle_announce_post(request: web.Request):
+    user_id = await get_user_id(request)
+    if not user_id:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = request.match_info["guild_id"]
+    if not await check_guild_permissions(request, guild_id, user_id):
+        return web.json_response({"error": "Missing permissions"}, status=403)
+
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+
+    channel_id = str((data or {}).get("channel_id", "")).strip()
+    title      = str((data or {}).get("title", "")).strip()
+    body       = str((data or {}).get("body", "")).strip()
+    color_str  = str((data or {}).get("color", "#8A2BE2")).strip().lstrip("#")
+    ping       = str((data or {}).get("ping", "none")).strip()
+
+    if not channel_id or not body:
+        return web.json_response({"error": "channel_id and body are required."}, status=400)
+
+    try:
+        color_int = int(color_str or "8A2BE2", 16)
+    except ValueError:
+        color_int = 0x8A2BE2
+
+    bot = request.app["bot"]
+    channel = bot.get_channel(int(channel_id))
+    if channel is None:
+        return web.json_response({"error": "Channel not found or bot lacks access."}, status=404)
+
+    # Check if a webhook URL is configured for this channel
+    webhook_url = _announce_webhooks.get(guild_id, {}).get(channel_id)
+    ping_text = None
+    if ping == "everyone":
+        ping_text = "@everyone"
+    elif ping == "here":
+        ping_text = "@here"
+
+    import datetime, aiohttp as _aiohttp
+    embed_ts = datetime.datetime.now(datetime.timezone.utc)
+
+    if webhook_url:
+        # Send via webhook (preserves custom username/avatar)
+        embed_payload = {
+            "title": f"📢  {title}" if title else "📢 Announcement",
+            "description": body,
+            "color": color_int,
+            "timestamp": embed_ts.isoformat(),
+            "footer": {"text": "GKR Bot — Official Announcement"},
+        }
+        payload = {"embeds": [embed_payload]}
+        if ping_text:
+            payload["content"] = ping_text
+        try:
+            async with _aiohttp.ClientSession() as session:
+                async with session.post(webhook_url, json=payload) as resp:
+                    if resp.status not in (200, 204):
+                        txt = await resp.text()
+                        return web.json_response({"error": f"Webhook error {resp.status}: {txt[:200]}"}, status=502)
+        except Exception as e:
+            return web.json_response({"error": f"Failed to send via webhook: {e}"}, status=502)
+    else:
+        # Send via bot directly
+        embed = discord.Embed(
+            title=f"📢  {title}" if title else "📢 Announcement",
+            description=body,
+            color=color_int,
+            timestamp=embed_ts,
+        )
+        embed.set_footer(text="GKR Bot — Official Announcement")
+        try:
+            await channel.send(content=ping_text, embed=embed)
+        except discord.Forbidden:
+            return web.json_response({"error": "Bot lacks permission to send to that channel."}, status=403)
+        except discord.HTTPException as e:
+            return web.json_response({"error": f"Discord error: {e}"}, status=502)
+
+    await _log_dashboard_action(
+        request, int(guild_id),
+        "Announcement Sent",
+        f"Channel: <#{channel_id}> | Title: {title or '(none)'} | Ping: {ping}",
+        category="moderation", color=color_int,
+    )
+    return web.json_response({"success": True})
+
+
+async def handle_announce_webhook_get(request: web.Request):
+    user_id = await get_user_id(request)
+    if not user_id:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = request.match_info["guild_id"]
+    if not await check_guild_permissions(request, guild_id, user_id):
+        return web.json_response({"error": "Missing permissions"}, status=403)
+    webhooks = _announce_webhooks.get(guild_id, {})
+    # Mask the webhook URLs (show only last 8 chars)
+    masked = {cid: "…" + url[-8:] for cid, url in webhooks.items()}
+    return web.json_response({"webhooks": masked})
+
+
+async def handle_announce_webhook_post(request: web.Request):
+    user_id = await get_user_id(request)
+    if not user_id:
+        return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = request.match_info["guild_id"]
+    if not await check_guild_permissions(request, guild_id, user_id):
+        return web.json_response({"error": "Missing permissions"}, status=403)
+    try:
+        data = await request.json()
+    except Exception:
+        return web.json_response({"error": "Invalid JSON"}, status=400)
+    channel_id = str((data or {}).get("channel_id", "")).strip()
+    webhook_url = str((data or {}).get("webhook_url", "")).strip()
+    if not channel_id:
+        return web.json_response({"error": "channel_id required"}, status=400)
+    if guild_id not in _announce_webhooks:
+        _announce_webhooks[guild_id] = {}
+    if webhook_url:
+        if not webhook_url.startswith("https://discord.com/api/webhooks/"):
+            return web.json_response({"error": "Must be a Discord webhook URL."}, status=400)
+        _announce_webhooks[guild_id][channel_id] = webhook_url
+    else:
+        _announce_webhooks[guild_id].pop(channel_id, None)
+    return web.json_response({"success": True})
+
+# ── End Announcements ───────────────────────────────────────────────────────
+
+
 class DashboardAPI(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -4563,6 +4695,11 @@ class DashboardAPI(commands.Cog):
             web.post("/api/guilds/{guild_id}/role-sync", handle_role_sync_post),
             web.delete("/api/guilds/{guild_id}/role-sync/{rule_id}", handle_role_sync_delete),
             web.post("/api/guilds/{guild_id}/role-sync/{rule_id}/backfill", handle_role_sync_backfill_post),
+
+            # Announcements (per-guild, for users with manage_messages)
+            web.post("/api/guilds/{guild_id}/announce", handle_announce_post),
+            web.get("/api/guilds/{guild_id}/announce/webhook", handle_announce_webhook_get),
+            web.post("/api/guilds/{guild_id}/announce/webhook", handle_announce_webhook_post),
 
         ])
         

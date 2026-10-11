@@ -177,6 +177,100 @@ def make_status_message_handlers(get_user_id):
     return handle_get_status_message, handle_post_status_message
 
 
+def make_send_announcement_handler(get_user_id):
+    async def handle_send_announcement(request: web.Request):
+        if not await _is_admin(request, get_user_id):
+            return _err("Forbidden", 403)
+        try:
+            data = await request.json()
+        except Exception:
+            return _err("Invalid JSON.")
+
+        guild_id = str((data or {}).get("guild_id", "")).strip()
+        channel_id = str((data or {}).get("channel_id", "")).strip()
+        title = str((data or {}).get("title", "")).strip()
+        body = str((data or {}).get("body", "")).strip()
+        color_hex = str((data or {}).get("color", "#8A2BE2")).strip().lstrip("#")
+        ping = str((data or {}).get("ping", "none")).strip()
+        sidebar_color = str((data or {}).get("sidebar_color", "")).strip().lstrip("#")
+
+        if not channel_id or not body:
+            return _err("channel_id and body are required.")
+
+        try:
+            color_int = int(color_hex or "8A2BE2", 16)
+        except ValueError:
+            color_int = 0x8A2BE2
+
+        # sidebar_color overrides color if provided
+        if sidebar_color:
+            try:
+                color_int = int(sidebar_color, 16)
+            except ValueError:
+                pass
+
+        bot = request.app["bot"]
+        channel = bot.get_channel(int(channel_id))
+        if channel is None:
+            return _err("Channel not found or bot lacks access.")
+
+        import datetime
+        actor_id = await get_user_id(request)
+
+        embed = discord.Embed(
+            title=f"📢  {title}" if title else "📢 Announcement",
+            description=body,
+            color=color_int,
+            timestamp=datetime.datetime.now(datetime.timezone.utc),
+        )
+        embed.set_footer(text="GKR Bot — Official Announcement")
+
+        ping_text = None
+        if ping == "everyone":
+            ping_text = "@everyone"
+        elif ping == "here":
+            ping_text = "@here"
+
+        try:
+            await channel.send(content=ping_text, embed=embed)
+        except discord.Forbidden:
+            return _err("Bot lacks permission to send to that channel.")
+        except discord.HTTPException as e:
+            return _err(f"Discord error: {e}")
+
+        print(f"[AdminPanel] Announcement sent to channel {channel_id} by user {actor_id}")
+        try:
+            from weblog import post_weblog
+            await post_weblog(
+                "Announcement Sent",
+                f"<@{actor_id}>",
+                f"Channel: <#{channel_id}>\nTitle: {title}\n{body[:200]}",
+                color=color_int,
+            )
+        except Exception:
+            pass
+
+        return web.json_response({"success": True})
+    return handle_send_announcement
+
+
+def make_list_channels_handler(get_user_id):
+    async def handle_list_channels(request: web.Request):
+        if not await _is_admin(request, get_user_id):
+            return _err("Forbidden", 403)
+        bot = request.app["bot"]
+        guilds = []
+        for guild in bot.guilds:
+            channels = [
+                {"id": str(c.id), "name": c.name}
+                for c in guild.text_channels
+                if c.permissions_for(guild.me).send_messages
+            ]
+            guilds.append({"id": str(guild.id), "name": guild.name, "channels": channels})
+        return web.json_response({"guilds": guilds})
+    return handle_list_channels
+
+
 def register_admin_routes(app: web.Application, get_user_id) -> None:
     get_status_msg, post_status_msg = make_status_message_handlers(get_user_id)
     app.add_routes([
@@ -185,4 +279,6 @@ def register_admin_routes(app: web.Application, get_user_id) -> None:
         web.post("/api/admin/bot-banner", make_banner_handler(get_user_id)),
         web.get("/api/admin/status-message", get_status_msg),
         web.post("/api/admin/status-message", post_status_msg),
+        web.get("/api/admin/channels", make_list_channels_handler(get_user_id)),
+        web.post("/api/admin/send-announcement", make_send_announcement_handler(get_user_id)),
     ])
