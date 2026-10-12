@@ -196,7 +196,7 @@ export default function Announce() {
                 </label>
                 <Select
                   value={selectedChannel}
-                  onChange={e => setSelectedChannel(e.target.value)}
+                  onChange={val => setSelectedChannel(val?.target ? val.target.value : String(val))}
                   options={channels.map(c => ({
                     value: c.id,
                     label: `# ${c.name}${webhooks[c.id] ? ' (Webhook)' : ''}`
@@ -616,7 +616,7 @@ export default function Announce() {
                 </label>
                 <Select
                   value={webhookChannel}
-                  onChange={e => setWebhookChannel(e.target.value)}
+                  onChange={val => setWebhookChannel(val?.target ? val.target.value : String(val))}
                   options={channels.map(c => ({
                     value: c.id,
                     label: `# ${c.name}${webhooks[c.id] ? ' (configured)' : ''}`

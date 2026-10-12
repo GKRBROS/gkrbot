@@ -89,8 +89,8 @@ KICK_CHANNEL_URL    = "https://kick.com/api/v2/channels/{}"  # legacy scrape fal
 STREAM_POLL_SECONDS = 30  # check live every 30 seconds — very fast detection
 VIDEO_POLL_MINUTES  = 10  # how often to check for new video uploads
 
-# Require 1 consecutive live poll before firing (no extra delay, but prevents race conditions)
-YOUTUBE_LIVE_CONFIRM_COUNT = 1
+# Require 2 consecutive live polls before firing (avoids false-positive race conditions)
+YOUTUBE_LIVE_CONFIRM_COUNT = 2
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +102,22 @@ PLATFORM_META = {
     "twitch":  {"emoji": "🟣", "color": 0x9146FF, "name": "Twitch"},
     "kick":    {"emoji": "🟢", "color": 0x53FC18, "name": "Kick"},
 }
+
+
+def _extract_stream_id(platform: str, info: Optional[dict]) -> str:
+    """Extract a unique identifier for the live stream broadcast session to prevent duplicate alerts."""
+    if not info:
+        return ""
+    sid = str(info.get("stream_id") or info.get("video_id") or info.get("id") or "").strip()
+    if sid:
+        return sid
+    url = str(info.get("url") or "").strip()
+    if url:
+        return url
+    title = str(info.get("title") or "").strip()
+    if title:
+        return f"{platform}:{title}"
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +138,7 @@ class AlertConfig:
     notify_videos: bool = True
     last_live: bool = False          # was the creator live last check?
     last_video_id: str = ""          # ID of the last announced video
+    last_stream_id: str = ""         # ID of the last announced livestream
     added_by: str = ""               # user ID who added the alert
 
 
@@ -150,6 +167,7 @@ class StreamAlertsDatabase:
                     notify_videos           INTEGER NOT NULL DEFAULT 1,
                     last_live               INTEGER NOT NULL DEFAULT 0,
                     last_video_id           TEXT NOT NULL DEFAULT '',
+                    last_stream_id          TEXT NOT NULL DEFAULT '',
                     added_by                TEXT NOT NULL DEFAULT '',
                     UNIQUE(guild_id, platform, creator_username)
                 )
@@ -158,6 +176,11 @@ class StreamAlertsDatabase:
             # DB Migration for existing tables
             try:
                 conn.execute("ALTER TABLE stream_alerts ADD COLUMN added_by TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
+
+            try:
+                conn.execute("ALTER TABLE stream_alerts ADD COLUMN last_stream_id TEXT NOT NULL DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
                 
@@ -200,11 +223,25 @@ class StreamAlertsDatabase:
             rows = conn.execute("SELECT * FROM stream_alerts").fetchall()
         return [self._row_to_config(r) for r in rows]
 
-    def update_live_state(self, alert_id: int, is_live: bool) -> None:
+    def update_live_state(self, alert_id: int, is_live: bool, stream_id: str = "") -> None:
+        with self._conn() as conn:
+            if stream_id:
+                conn.execute(
+                    "UPDATE stream_alerts SET last_live = ?, last_stream_id = ? WHERE id = ?",
+                    (1 if is_live else 0, stream_id, alert_id)
+                )
+            else:
+                conn.execute(
+                    "UPDATE stream_alerts SET last_live = ? WHERE id = ?",
+                    (1 if is_live else 0, alert_id)
+                )
+            conn.commit()
+
+    def update_last_stream(self, alert_id: int, stream_id: str) -> None:
         with self._conn() as conn:
             conn.execute(
-                "UPDATE stream_alerts SET last_live = ? WHERE id = ?",
-                (1 if is_live else 0, alert_id)
+                "UPDATE stream_alerts SET last_stream_id = ? WHERE id = ?",
+                (stream_id, alert_id)
             )
             conn.commit()
 
@@ -242,6 +279,7 @@ class StreamAlertsDatabase:
             conn.commit()
 
     def _row_to_config(self, row: sqlite3.Row) -> AlertConfig:
+        keys = row.keys()
         return AlertConfig(
             id=row["id"],
             guild_id=int(row["guild_id"]),
@@ -255,7 +293,8 @@ class StreamAlertsDatabase:
             notify_videos=bool(row["notify_videos"]),
             last_live=bool(row["last_live"]),
             last_video_id=row["last_video_id"],
-            added_by=row["added_by"],
+            last_stream_id=row["last_stream_id"] if "last_stream_id" in keys else "",
+            added_by=row["added_by"] if "added_by" in keys else "",
         )
 
 
@@ -459,6 +498,7 @@ async def get_youtube_batch(
                             "is_live": snip.get("liveBroadcastContent") == "live",
                             "is_upcoming": snip.get("liveBroadcastContent") == "upcoming",
                             "video_id": vid_id,
+                            "stream_id": vid_id,
                             "title": snip.get("title", fallback_title),
                             "thumbnail": snip.get("thumbnails", {}).get("high", {}).get("url", ""),
                             "url": f"https://www.youtube.com/watch?v={vid_id}",
@@ -556,6 +596,7 @@ async def check_youtube_live_direct(
                     return {
                         "is_live": True,
                         "video_id": vid_id,
+                        "stream_id": vid_id,
                         "title": title,
                         "thumbnail": thumbnail,
                         "url": entry.get('url', f"https://www.youtube.com/watch?v={vid_id}"),
@@ -626,6 +667,7 @@ async def get_twitch_stream(session: aiohttp.ClientSession, user_id: str) -> Opt
 
                     return {
                         "is_live": True,
+                        "stream_id": str(s.get("id", "")),
                         "title": s.get("title", ""),
                         "game": s.get("game_name", ""),
                         "thumbnail": thumb,
@@ -700,6 +742,7 @@ async def get_kick_stream_official(session: aiohttp.ClientSession, username: str
 
     return {
         "is_live": True,
+        "stream_id": str(stream.get("id") or channel.get("id") or ""),
         "title": channel.get("stream_title") or f"{creator_name} is live on Kick!",
         "game": category.get("name", ""),
         "thumbnail": thumb,
@@ -824,6 +867,7 @@ async def get_kick_stream_scrape(session: aiohttp.ClientSession, username: str) 
 
             return {
                 "is_live": True,
+                "stream_id": str(livestream.get("id") or data.get("id") or ""),
                 "title": livestream.get("session_title") or f"{creator_name} is live on Kick!",
                 "game": game_name,
                 "thumbnail": thumb_url,
@@ -1015,6 +1059,16 @@ class StreamAlertsCog(commands.Cog):
         # youtube_live_confirm[alert_id] = count of consecutive polls that showed live
         # We require YOUTUBE_LIVE_CONFIRM_COUNT consecutive live polls before firing the alert
         self._yt_live_confirm: dict[int, int] = {}
+        # offline_confirm[alert_id] = count of consecutive polls that showed offline (debouncing)
+        self._offline_confirm: dict[int, int] = {}
+        # In-memory deduplication tracking: alert_id -> stream_id of alerted stream
+        self._sent_stream_ids: dict[int, str] = {}
+        try:
+            for a in self.db.get_all_alerts():
+                if a.last_stream_id:
+                    self._sent_stream_ids[a.id] = a.last_stream_id
+        except Exception:
+            pass
         # Guard: video_check_loop skips until startup sync has finished so it
         # doesn't fire duplicate "new video" alerts immediately after a restart.
         self._startup_sync_done: bool = False
@@ -1164,21 +1218,29 @@ class StreamAlertsCog(commands.Cog):
                 if alert.platform == "youtube":
                     data = yt_results.get(alert.creator_id)
                     is_live_now = bool(data and data.get("is_live"))
+                    stream_id = _extract_stream_id("youtube", data) if is_live_now else ""
                 elif alert.platform == "kick":
                     username = alert.creator_id or alert.creator_username
                     info = await get_kick_stream(self.session, username)
                     is_live_now = info is not None
+                    stream_id = _extract_stream_id("kick", info) if is_live_now else ""
                 elif alert.platform == "twitch" and alert.creator_id:
                     info = await get_twitch_stream(self.session, alert.creator_id)
                     is_live_now = info is not None
+                    stream_id = _extract_stream_id("twitch", info) if is_live_now else ""
                 else:
                     is_live_now = False
+                    stream_id = ""
 
-                # Silently update last_live so the next poll won't fire a duplicate
-                if is_live_now != alert.last_live:
-                    self.db.update_live_state(alert.id, is_live_now)
+                # Populate in-memory sent tracking so already-live streams never ping after restart
+                if is_live_now and stream_id:
+                    self._sent_stream_ids[alert.id] = stream_id
+
+                # Silently update last_live + last_stream_id so the next poll won't fire a duplicate
+                if is_live_now != alert.last_live or (is_live_now and stream_id and stream_id != alert.last_stream_id):
+                    self.db.update_live_state(alert.id, is_live_now, stream_id=stream_id)
                     status = "🔴 LIVE" if is_live_now else "⚫ offline"
-                    print(f"[StreamAlerts] Startup sync: {alert.creator_username} ({alert.platform}) → {status} (no alert sent)")
+                    print(f"[StreamAlerts] Startup sync: {alert.creator_username} ({alert.platform}) → {status} [stream_id={stream_id}] (no alert sent)")
                 else:
                     print(f"[StreamAlerts] Startup sync: {alert.creator_username} ({alert.platform}) → state unchanged")
 
@@ -1246,28 +1308,59 @@ class StreamAlertsCog(commands.Cog):
                     data = yt_results.get(alert.creator_id)
                     is_live_now = bool(data and data.get("is_live"))
                     was_live = alert.last_live
-                    print(f"[StreamAlerts] {alert.creator_username} (youtube): is_live={is_live_now}, was_live={was_live}")
+                    current_stream_id = _extract_stream_id("youtube", data) if is_live_now else ""
 
-                    if is_live_now and not was_live:
-                        # Double-confirm: require YOUTUBE_LIVE_CONFIRM_COUNT consecutive live polls
-                        # to avoid firing alerts from YouTube's API lag when stream already ended
-                        confirm = self._yt_live_confirm.get(alert.id, 0) + 1
-                        self._yt_live_confirm[alert.id] = confirm
-                        if confirm >= YOUTUBE_LIVE_CONFIRM_COUNT:
-                            print(f"[StreamAlerts] 🔴 GOING LIVE (confirmed {confirm}x): {alert.creator_username}")
-                            await self._send_live_alert(alert, data)
-                            self.db.update_live_state(alert.id, True)
-                            self._yt_live_confirm.pop(alert.id, None)
+                    print(f"[StreamAlerts] {alert.creator_username} (youtube): is_live={is_live_now}, was_live={was_live}, stream_id={current_stream_id}")
+
+                    if is_live_now:
+                        self._offline_confirm.pop(alert.id, None)
+
+                        # DEDUPLICATION CHECK: Has this exact stream broadcast ALREADY been alerted?
+                        already_alerted = False
+                        if current_stream_id:
+                            if alert.last_stream_id and alert.last_stream_id == current_stream_id:
+                                already_alerted = True
+                            if self._sent_stream_ids.get(alert.id) == current_stream_id:
+                                already_alerted = True
+
+                        if already_alerted:
+                            # Stream is live and already alerted. Ensure DB last_live is True, but NEVER send another message!
+                            if not was_live:
+                                self.db.update_live_state(alert.id, True, stream_id=current_stream_id)
+                            continue
+
+                        # Not yet alerted: check if we should fire
+                        if not was_live or (current_stream_id and alert.last_stream_id and current_stream_id != alert.last_stream_id):
+                            confirm = self._yt_live_confirm.get(alert.id, 0) + 1
+                            self._yt_live_confirm[alert.id] = confirm
+                            if confirm >= YOUTUBE_LIVE_CONFIRM_COUNT:
+                                print(f"[StreamAlerts] 🔴 GOING LIVE (confirmed {confirm}x): {alert.creator_username} (ID: {current_stream_id})")
+                                await self._send_live_alert(alert, data)
+                                self.db.update_live_state(alert.id, True, stream_id=current_stream_id)
+                                if current_stream_id:
+                                    self._sent_stream_ids[alert.id] = current_stream_id
+                                self._yt_live_confirm.pop(alert.id, None)
+                            else:
+                                print(f"[StreamAlerts] 🟡 YouTube live candidate ({confirm}/{YOUTUBE_LIVE_CONFIRM_COUNT}): {alert.creator_username} — waiting to confirm")
                         else:
-                            print(f"[StreamAlerts] 🟡 YouTube live candidate ({confirm}/{YOUTUBE_LIVE_CONFIRM_COUNT}): {alert.creator_username} — waiting to confirm")
-                    elif not is_live_now:
-                        # Reset confirm counter — stream ended or API caught up
-                        if alert.id in self._yt_live_confirm:
-                            print(f"[StreamAlerts] 🔄 YouTube live confirm reset for {alert.creator_username} (was pending)")
-                            self._yt_live_confirm.pop(alert.id, None)
+                            pass
+
+                    else:
+                        # Channel is currently NOT detected as live
+                        self._yt_live_confirm.pop(alert.id, None)
+
+                        # DEBOUNCE OFFLINE: Require 4 consecutive offline polls (~2 minutes)
+                        # to prevent false offline flips from transient API timeouts or rate-limits
                         if was_live:
-                            print(f"[StreamAlerts] ⚫ WENT OFFLINE: {alert.creator_username}")
-                        self.db.update_live_state(alert.id, False)
+                            off_count = self._offline_confirm.get(alert.id, 0) + 1
+                            self._offline_confirm[alert.id] = off_count
+                            if off_count >= 4:
+                                print(f"[StreamAlerts] ⚫ WENT OFFLINE (confirmed 4x): {alert.creator_username}")
+                                self.db.update_live_state(alert.id, False)
+                                self._offline_confirm.pop(alert.id, None)
+                            else:
+                                print(f"[StreamAlerts] ⏳ Potential offline ({off_count}/4): {alert.creator_username} — holding live state")
+
                 else:
                     # Twitch / Kick — individual calls (their APIs don't support batch)
                     await self._check_live(alert)
@@ -1340,18 +1433,42 @@ class StreamAlertsCog(commands.Cog):
 
         is_live_now = info is not None
         was_live = alert.last_live
+        current_stream_id = _extract_stream_id(alert.platform, info) if is_live_now else ""
 
-        print(f"[StreamAlerts] {alert.creator_username} ({alert.platform}): is_live={is_live_now}, was_live={was_live}")
+        print(f"[StreamAlerts] {alert.creator_username} ({alert.platform}): is_live={is_live_now}, was_live={was_live}, stream_id={current_stream_id}")
 
-        if is_live_now and not was_live:
-            # Just went live — send notification
-            print(f"[StreamAlerts] 🔴 GOING LIVE: {alert.creator_username} — sending alert to guild {alert.guild_id}")
-            await self._send_live_alert(alert, info)
-            self.db.update_live_state(alert.id, True)
-        elif not is_live_now and was_live:
-            print(f"[StreamAlerts] ⚫ WENT OFFLINE: {alert.creator_username}")
-            self.db.update_live_state(alert.id, False)
-        # If state hasn't changed, no update needed
+        if is_live_now:
+            self._offline_confirm.pop(alert.id, None)
+
+            # DEDUPLICATION CHECK: Has this stream session ALREADY been alerted?
+            already_alerted = False
+            if current_stream_id:
+                if alert.last_stream_id and alert.last_stream_id == current_stream_id:
+                    already_alerted = True
+                if self._sent_stream_ids.get(alert.id) == current_stream_id:
+                    already_alerted = True
+
+            if already_alerted:
+                if not was_live:
+                    self.db.update_live_state(alert.id, True, stream_id=current_stream_id)
+                return
+
+            if not was_live or (current_stream_id and alert.last_stream_id and current_stream_id != alert.last_stream_id):
+                print(f"[StreamAlerts] 🔴 GOING LIVE: {alert.creator_username} ({alert.platform}) — sending alert to guild {alert.guild_id}")
+                await self._send_live_alert(alert, info)
+                self.db.update_live_state(alert.id, True, stream_id=current_stream_id)
+                if current_stream_id:
+                    self._sent_stream_ids[alert.id] = current_stream_id
+        else:
+            if was_live:
+                off_count = self._offline_confirm.get(alert.id, 0) + 1
+                self._offline_confirm[alert.id] = off_count
+                if off_count >= 4:
+                    print(f"[StreamAlerts] ⚫ WENT OFFLINE (confirmed 4x): {alert.creator_username}")
+                    self.db.update_live_state(alert.id, False)
+                    self._offline_confirm.pop(alert.id, None)
+                else:
+                    print(f"[StreamAlerts] ⏳ Potential offline ({off_count}/4): {alert.creator_username} ({alert.platform}) — holding live state")
 
     async def _check_new_video(self, alert: AlertConfig) -> None:
         if not alert.creator_id:

@@ -93,7 +93,13 @@ export function Select({
                     aria-selected={isSelected}
                     className={`select-option ${isSelected ? 'selected' : ''}`}
                     onClick={() => {
-                      onChange(o.value);
+                      const strVal = String(o.value);
+                      const valObj = Object.assign(new String(strVal), {
+                        target: { value: strVal },
+                        currentTarget: { value: strVal },
+                        value: strVal,
+                      });
+                      onChange(valObj);
                       setOpen(false);
                       setQuery('');
                     }}
@@ -113,10 +119,11 @@ export function Select({
 
 /**
  * Multi-select dropdown with removable chips — used for role pickers etc.
- * values: array of selected option values
+ * values/value: array of selected option values (or comma-separated string)
  */
 export function MultiSelect({
-  values = [],
+  values: valuesProp,
+  value: valueProp,
   onChange,
   options = [],
   placeholder = 'Select options...',
@@ -128,6 +135,13 @@ export function MultiSelect({
   const [dropUp, setDropUp] = useState(false);
   const [query, setQuery] = useState('');
   const ref = useRef(null);
+
+  const rawValues = valuesProp !== undefined ? valuesProp : (valueProp !== undefined ? valueProp : []);
+  const values = Array.isArray(rawValues)
+    ? rawValues.map(String)
+    : (typeof rawValues === 'string' && rawValues.trim()
+        ? rawValues.split(',').map(s => s.trim()).filter(Boolean)
+        : []);
 
   useEffect(() => {
     const onDoc = (e) => {
@@ -141,7 +155,13 @@ export function MultiSelect({
   }, []);
 
   const toggle = (v) => {
-    onChange(values.includes(v) ? values.filter(x => x !== v) : [...values, v]);
+    if (disabled || !onChange) return;
+    const strV = String(v);
+    const exists = values.some(x => String(x) === strV);
+    const next = exists
+      ? values.filter(x => String(x) !== strV)
+      : [...values, strV];
+    onChange(next);
   };
 
   const toggleOpen = () => {
@@ -219,7 +239,7 @@ export function MultiSelect({
               <div className="select-empty">No options found</div>
             ) : (
               filtered.map(o => {
-                const isSelected = values.includes(o.value);
+                const isSelected = values.some(v => String(v) === String(o.value));
                 return (
                   <div
                     key={o.value}

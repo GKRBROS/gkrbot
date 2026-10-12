@@ -217,8 +217,8 @@ function Tickets() {
     }
   };
 
-  const channelOptions = channels.map(c => ({ value: c.id, label: `#${c.name}` }));
-  const roleOptions = roles.map(r => ({ value: r.id, label: `@${r.name}` }));
+  const channelOptions = channels.map(c => ({ value: String(c.id), label: `#${c.name}` }));
+  const roleOptions = roles.map(r => ({ value: String(r.id), label: `@${r.name}` }));
 
   if (loading) {
     return (
@@ -531,16 +531,36 @@ function Tickets() {
                           {cat.embed_title || 'New Ticket'}
                         </span>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: 'var(--text-muted)' }}>Staff Ping</span>
-                        <span style={{ color: 'var(--text-main)', fontWeight: 500 }}>
-                          {cat.ping_roles ? `${cat.ping_roles.split(',').length} role(s)` : 'None'}
+                        <span style={{ color: 'var(--text-main)', fontWeight: 500, maxWidth: '60%', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {cat.ping_roles
+                            ? cat.ping_roles
+                                .split(',')
+                                .map(s => s.trim())
+                                .filter(Boolean)
+                                .map(id => {
+                                  const r = roles.find(role => String(role.id) === String(id));
+                                  return r ? `@${r.name}` : id;
+                                })
+                                .join(', ')
+                            : 'None'}
                         </span>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: 'var(--text-muted)' }}>Admin Roles</span>
-                        <span style={{ color: 'var(--text-main)', fontWeight: 500 }}>
-                          {cat.admin_roles ? `${cat.admin_roles.split(',').length} role(s)` : 'Default Staff'}
+                        <span style={{ color: 'var(--text-main)', fontWeight: 500, maxWidth: '60%', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {cat.admin_roles
+                            ? cat.admin_roles
+                                .split(',')
+                                .map(s => s.trim())
+                                .filter(Boolean)
+                                .map(id => {
+                                  const r = roles.find(role => String(role.id) === String(id));
+                                  return r ? `@${r.name}` : id;
+                                })
+                                .join(', ')
+                            : 'Default Staff'}
                         </span>
                       </div>
                     </div>
@@ -1056,6 +1076,7 @@ function Tickets() {
               Staff Ping Roles (Mentioned immediately upon opening)
             </label>
             <MultiSelect
+              values={pingRoles}
               value={pingRoles}
               onChange={setPingRoles}
               options={roleOptions}
@@ -1068,6 +1089,7 @@ function Tickets() {
               Ticket Admin Roles (Authorized to close & archive)
             </label>
             <MultiSelect
+              values={adminRoles}
               value={adminRoles}
               onChange={setAdminRoles}
               options={roleOptions}
