@@ -221,17 +221,34 @@ function Tickets() {
     setPublishingHub(true);
     setError('');
     setSuccess('');
+    const payload = {
+      channel_id: hubChannelId,
+      category_ids: selectedHubCats,
+      title: hubTitle,
+      description: hubDesc,
+      embed_color: hubColor,
+      footer: hubFooter,
+      image_url: hubImageUrl,
+    };
     try {
-      await api.post(`/guilds/${guildId}/tickets/hub`, {
-        channel_id: hubChannelId,
-        category_ids: selectedHubCats,
-        title: hubTitle,
-        description: hubDesc,
-        embed_color: hubColor,
-        footer: hubFooter,
-        image_url: hubImageUrl,
-      });
-      setSuccess('Ticket Hub panel deployed to Discord successfully!');
+      if (existingHubs.length > 0) {
+        const hub = existingHubs[existingHubs.length - 1];
+        try {
+          await api.patch(`/guilds/${guildId}/tickets/hub/${hub.message_id}`, payload);
+          setSuccess('Ticket Hub panel updated in Discord successfully!');
+        } catch (patchErr) {
+          const msg = patchErr.response?.data?.error || '';
+          if (msg.includes('not found') || msg.includes('deleted')) {
+            await api.post(`/guilds/${guildId}/tickets/hub`, payload);
+            setSuccess('Previous hub message was deleted. New panel deployed!');
+          } else {
+            throw patchErr;
+          }
+        }
+      } else {
+        await api.post(`/guilds/${guildId}/tickets/hub`, payload);
+        setSuccess('Ticket Hub panel deployed to Discord successfully!');
+      }
       fetchData();
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to publish ticket hub');

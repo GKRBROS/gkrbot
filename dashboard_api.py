@@ -3435,6 +3435,64 @@ async def handle_tickets_hub_post(request: web.Request):
         return web.json_response({"error": f"Failed to post ticket hub: {e}"}, status=500)
 
 
+async def handle_tickets_hub_patch(request: web.Request):
+    """Edit an existing hub Discord message in-place."""
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    message_id = int(request.match_info["message_id"])
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+
+    import tickets
+    db = tickets.TicketDatabase()
+    hubs = db.get_hubs_by_guild(guild_id)
+    hub = next((h for h in hubs if h["message_id"] == message_id), None)
+    if not hub:
+        return web.json_response({"error": "Hub not found"}, status=404)
+
+    channel = guild.get_channel(int(hub["channel_id"]))
+    if not channel:
+        return web.json_response({"error": "Hub channel no longer exists"}, status=404)
+
+    try:
+        msg = await channel.fetch_message(message_id)
+    except Exception:
+        return web.json_response({"error": "Hub message not found in channel. It may have been deleted."}, status=404)
+
+    data = await request.json()
+    category_ids = data.get("category_ids", hub["category_ids"])
+    all_cats = {c.id: c for c in db.get_categories(guild_id)}
+    selected_cats = [all_cats[int(cid)] for cid in category_ids if int(cid) in all_cats]
+    if not selected_cats:
+        return web.json_response({"error": "No valid categories selected"}, status=400)
+
+    title = data.get("title", "🎫 Support Tickets Hub").strip()
+    description = data.get("description", "").strip()
+    color_hex = str(data.get("embed_color", "5865F2")).replace("#", "").replace("0x", "")
+    try:
+        color = int(color_hex, 16)
+    except Exception:
+        color = 0x5865F2
+
+    embed = discord.Embed(title=title, description=description, color=color)
+    if data.get("footer"):
+        embed.set_footer(text=data["footer"])
+    if data.get("image_url"):
+        embed.set_image(url=data["image_url"])
+
+    view = tickets.TicketHubView(selected_cats)
+    try:
+        await msg.edit(embed=embed, view=view)
+        # Update stored category list
+        db.remove_hub(message_id)
+        db.add_hub(message_id, hub["channel_id"], guild_id, [c.id for c in selected_cats])
+        return web.json_response({"success": True, "message_id": str(message_id)})
+    except Exception as e:
+        return web.json_response({"error": f"Failed to edit hub message: {e}"}, status=500)
+
+
 # ---------------------------------------------------------------------------
 # Giveaways Endpoints
 # ---------------------------------------------------------------------------
@@ -4656,6 +4714,7 @@ class DashboardAPI(commands.Cog):
             web.get("/api/guilds/{guild_id}/tickets/list", handle_tickets_list_get),
             web.get("/api/guilds/{guild_id}/tickets/hub", handle_tickets_hub_get),
             web.post("/api/guilds/{guild_id}/tickets/hub", handle_tickets_hub_post),
+            web.patch("/api/guilds/{guild_id}/tickets/hub/{message_id}", handle_tickets_hub_patch),
 
             # Giveaways
             web.get("/api/guilds/{guild_id}/giveaways", handle_giveaways_get),
