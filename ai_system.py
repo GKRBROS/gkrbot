@@ -2117,8 +2117,14 @@ class AICog(commands.Cog, name="AI System"):
         session_key = f"{message.guild.id}_{message.channel.id}_{message.author.id}"
         session = self.memory.get_session(session_key)
 
-        async with message.channel.typing():
-            try:
+        # Check permissions in the channel before attempting to type or respond
+        if message.guild and hasattr(message.channel, "permissions_for"):
+            perms = message.channel.permissions_for(message.guild.me)
+            if not perms.send_messages:
+                return
+
+        try:
+            async with message.channel.typing():
                 lower_content = clean_content.lower()
 
                 # ── Image-request redirect ──────────────────────────────────────
@@ -2196,10 +2202,14 @@ class AICog(commands.Cog, name="AI System"):
                     f"**User:** {message.author.mention} (`{message.author.name}`)\n**Channel:** {message.channel.mention}\n**Prompt:** `{clean_content[:150]}`\n**Dialect:** `{meta.get('dialect', 'english') if meta else 'english'}`",
                     color=C.BRAND
                 )
-
-            except Exception as e:
-                logger.error(f"Error handling AI message: {e}", exc_info=True)
+        except (discord.Forbidden, discord.NotFound):
+            return
+        except Exception as e:
+            logger.error(f"Error handling AI message: {e}", exc_info=True)
+            try:
                 await message.reply("⚠️ An unexpected error occurred while processing your request.", mention_author=False)
+            except Exception:
+                pass
 
     # -----------------------------------------------------------------------
     # Top-Level Comedy Slash Command: /laugh
