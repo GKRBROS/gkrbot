@@ -62,12 +62,49 @@ def _init_db() -> None:
                 message_id  TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS owner_status_config (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
         conn.commit()
 
 
 GIF_ONLINE = "https://cdn.discordapp.com/attachments/1247646566794133585/1559078469021990933/standard_5.gif?ex=6acdc479&is=6acc72f9&hm=1c2bbf588502fc484a624c50116481ad688ebdc1923733341d4d0dc111a0025a&"
 GIF_OFFLINE = "https://media.discordapp.net/attachments/1247646566794133585/1559078524973744308/standard_6.gif?ex=6acdc486&is=6acc7306&hm=ceb8471d616e252e28ecaf399bc877d648a551453f6427107dc910c38f8324e6&=&width=640&height=360"
 GIF_RESTARTING = "https://media.discordapp.net/attachments/1247646566794133585/1559078613511311450/standard_7.gif?ex=6acdc49b&is=6acc731b&hm=c5c1915b7b9949ef24dc32458d8ca3c9f879e24bcff5268b6413ec01acb7e527&=&width=640&height=360"
+
+
+def _clean_channel_id(val) -> int | None:
+    if not val:
+        return None
+    cleaned = str(val).strip().strip('"').strip("'").replace("<#", "").replace(">", "").strip()
+    return int(cleaned) if cleaned.isdigit() else None
+
+
+def _get_owner_channel_id() -> int | None:
+    cid = _clean_channel_id(os.getenv("STATUS_CHANNEL"))
+    if cid:
+        return cid
+    try:
+        with _db() as conn:
+            row = conn.execute("SELECT value FROM owner_status_config WHERE key = 'channel_id'").fetchone()
+            if row and row["value"]:
+                return _clean_channel_id(row["value"])
+    except Exception:
+        pass
+    return None
+
+
+def _set_owner_channel_id(channel_id: int) -> None:
+    with _db() as conn:
+        conn.execute("""
+            INSERT INTO owner_status_config (key, value)
+            VALUES ('channel_id', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """, (str(channel_id),))
+        conn.commit()
 
 
 def _load_owner_msg_id(channel_id: int) -> int | None:
@@ -500,19 +537,32 @@ class BotStatusCog(commands.Cog):
 
     # ── Owner STATUS_CHANNEL Manager ──────────────────────────────────────────
 
-    async def update_owner_status(self, state: str = "online") -> None:
-        raw_ch = (os.getenv("STATUS_CHANNEL") or "").strip()
-        if not raw_ch.isdigit():
-            return
-        ch_id = int(raw_ch)
+    async def update_owner_status(self, state: str = "online", channel_id_override: int | None = None) -> tuple[bool, str]:
+        ch_id = channel_id_override or _get_owner_channel_id()
+        if not ch_id:
+            msg = "STATUS_CHANNEL not configured in .env or database (use `/system setchannel`)"
+            print(f"[OwnerStatus] ⚠️ {msg}")
+            return False, msg
+
         ch = self.bot.get_channel(ch_id)
         if not ch:
             try:
                 ch = await self.bot.fetch_channel(ch_id)
-            except Exception:
-                return
+            except Exception as e:
+                msg = f"Could not find or fetch channel {ch_id}: {e}"
+                print(f"[OwnerStatus] ❌ {msg}")
+                return False, msg
+
         if not isinstance(ch, discord.TextChannel):
-            return
+            msg = f"Channel {ch_id} is not a TextChannel"
+            print(f"[OwnerStatus] ❌ {msg}")
+            return False, msg
+
+        perms = ch.permissions_for(ch.guild.me)
+        if not perms.send_messages:
+            msg = f"Missing 'Send Messages' permission in #{ch.name} ({ch.id})"
+            print(f"[OwnerStatus] ❌ {msg}")
+            return False, msg
 
         now_ts = int(time.time())
         if state == "online":
@@ -523,7 +573,7 @@ class BotStatusCog(commands.Cog):
             notice = get_status_message()
             lines = []
             if notice and notice.get("message"):
-                lines.append(f"📢 **Announcement:**\n{notice['message']}")
+                lines.append(f"📢 **Announcement:**\n{notice['message']}\n")
             lines.append(f"📶 **Latency:** `{round(self.bot.latency * 1000)}ms`")
             lines.append(f"⏱️ **Uptime:** `{_fmt_uptime()}`")
             lines.append(f"🕒 **Last Checked:** <t:{now_ts}:R>")
@@ -557,22 +607,46 @@ class BotStatusCog(commands.Cog):
         if msg:
             try:
                 await msg.edit(embed=embed)
-                return
-            except Exception:
-                pass
+                print(f"[OwnerStatus] ✅ Edited status message ({msg.id}) in #{ch.name}")
+                return True, f"Updated existing status embed in {ch.mention}"
+            except Exception as e:
+                print(f"[OwnerStatus] Edit failed, posting fresh message: {e}")
 
         if state != "offline":
             try:
                 new_msg = await ch.send(embed=embed)
                 _save_owner_msg_id(ch_id, new_msg.id)
+                print(f"[OwnerStatus] ✅ Posted new status message ({new_msg.id}) in #{ch.name}")
+                return True, f"Posted new status embed in {ch.mention}"
             except Exception as e:
-                print(f"[OwnerStatus] Failed to post message in {ch_id}: {e}")
+                err_msg = f"Failed to send status embed in {ch.mention}: {e}"
+                print(f"[OwnerStatus] ❌ {err_msg}")
+                return False, err_msg
+        return True, "Offline state recorded"
 
     async def set_owner_status(self, state: str = "online") -> None:
         await self.update_owner_status(state=state)
 
     async def update_owner_status_now(self) -> None:
         await self.update_owner_status(state="online")
+
+    def _check_owner_access(self, interaction: discord.Interaction) -> tuple[bool, str]:
+        # 1. Guild check (only allowed in owner/dev server)
+        owner_guild = (os.getenv("DISCORD_GUILD_ID") or os.getenv("DEV_GUILD_ID") or "").strip()
+        if owner_guild.isdigit() and interaction.guild_id != int(owner_guild):
+            return False, "❌ This command is only available in the owner's system server."
+
+        # 2. User check
+        owner_user = (os.getenv("OWNER_DISCORD_ID") or "").strip()
+        if owner_user.isdigit() and interaction.user.id == int(owner_user):
+            return True, ""
+        if self.bot.owner_id and interaction.user.id == self.bot.owner_id:
+            return True, ""
+        if self.bot.owner_ids and interaction.user.id in self.bot.owner_ids:
+            return True, ""
+        if interaction.guild and interaction.guild.owner_id == interaction.user.id:
+            return True, ""
+        return False, "❌ Access restricted to the bot owner."
 
     # ── Events ────────────────────────────────────────────────────────────────
 
@@ -586,6 +660,18 @@ class BotStatusCog(commands.Cog):
             self._owner_status_loop.start()
         await self._update(online=True)
         await self.update_owner_status(state="online")
+
+        # Sync /system immediately to owner guild so it appears right away
+        owner_guild = (os.getenv("DISCORD_GUILD_ID") or os.getenv("DEV_GUILD_ID") or "").strip()
+        if owner_guild.isdigit():
+            try:
+                g_obj = discord.Object(id=int(owner_guild))
+                self.bot.tree.add_command(self.system_group, guild=g_obj, override=True)
+                await self.bot.tree.sync(guild=g_obj)
+                print(f"[BotStatus] ✅ Synced /system command to guild {owner_guild}")
+            except Exception as e:
+                print(f"[BotStatus] Warning syncing /system: {e}")
+
         print("[BotStatus] ✅ Live status dashboard active.")
 
     @commands.Cog.listener()
@@ -683,9 +769,120 @@ class BotStatusCog(commands.Cog):
         if guild_id in self._configs:
             del self._configs[guild_id]
         _save_cfg(guild_id, None, None)
+    # ── Owner-only hidden /system command group ───────────────────────────────
+
+    system_group = app_commands.Group(
+        name="system",
+        description="Owner-only hidden system status commands",
+    )
+
+    @system_group.command(
+        name="post",
+        description="Force post or update the live status embed in the owner status channel",
+    )
+    async def sys_post(self, interaction: discord.Interaction) -> None:
+        allowed, reason = self._check_owner_access(interaction)
+        if not allowed:
+            await interaction.response.send_message(reason, ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        ok, msg = await self.update_owner_status(state="online")
+        if ok:
+            await interaction.followup.send(f"✅ **System Status Embed:** {msg}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ **System Status Error:** {msg}", ephemeral=True)
+
+    @system_group.command(
+        name="setchannel",
+        description="Set the target channel for the owner status embed and post it immediately",
+    )
+    @app_commands.describe(channel="Text channel to receive the live status embed")
+    async def sys_setchannel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
+        allowed, reason = self._check_owner_access(interaction)
+        if not allowed:
+            await interaction.response.send_message(reason, ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        _set_owner_channel_id(channel.id)
+        ok, msg = await self.update_owner_status(state="online", channel_id_override=channel.id)
+        if ok:
+            await interaction.followup.send(
+                f"✅ Status channel set to {channel.mention}!\nResult: {msg}",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                f"⚠️ Status channel set to {channel.mention}, but sending embed failed: {msg}\n"
+                f"Make sure the bot has **View Channel**, **Send Messages**, and **Embed Links** permissions there.",
+                ephemeral=True
+            )
+
+    @system_group.command(
+        name="notice",
+        description="Set a custom announcement notice text shown on the status embed",
+    )
+    @app_commands.describe(message="Notice text to display on the embed")
+    async def sys_notice(self, interaction: discord.Interaction, message: str) -> None:
+        allowed, reason = self._check_owner_access(interaction)
+        if not allowed:
+            await interaction.response.send_message(reason, ephemeral=True)
+            return
+
+        from bot_status_msg import set_status_message
+        set_status_message(message.strip(), author=f"{interaction.user.name}", active=True)
+        await self.update_owner_status(state="online")
         await interaction.response.send_message(
-            "✅ Status dashboard cleared and disabled.", ephemeral=True
+            f"✅ **Status notice updated & pushed to embed:**\n> {message.strip()}",
+            ephemeral=True
         )
+
+    @system_group.command(
+        name="clearnotice",
+        description="Clear any custom announcement notice on the status embed",
+    )
+    async def sys_clearnotice(self, interaction: discord.Interaction) -> None:
+        allowed, reason = self._check_owner_access(interaction)
+        if not allowed:
+            await interaction.response.send_message(reason, ephemeral=True)
+            return
+
+        from bot_status_msg import clear_status_message
+        clear_status_message()
+        await self.update_owner_status(state="online")
+        await interaction.response.send_message("✅ Status notice cleared and embed refreshed.", ephemeral=True)
+
+    @system_group.command(
+        name="info",
+        description="View current owner status channel configuration and diagnostics",
+    )
+    async def sys_info(self, interaction: discord.Interaction) -> None:
+        allowed, reason = self._check_owner_access(interaction)
+        if not allowed:
+            await interaction.response.send_message(reason, ephemeral=True)
+            return
+
+        ch_id = _get_owner_channel_id()
+        msg_id = _load_owner_msg_id(ch_id) if ch_id else None
+        ch = self.bot.get_channel(ch_id) if ch_id else None
+
+        info_lines = [
+            "**🛠️ System Status Configuration Diagnostics**",
+            f"• **Channel ID:** `{ch_id or 'Not Configured'}`",
+            f"• **Channel Mention:** {ch.mention if ch else 'Not found in bot cache'}",
+            f"• **Active Message ID:** `{msg_id or 'None'}`",
+            f"• **Bot Latency:** `{round(self.bot.latency * 1000)}ms`",
+            f"• **Uptime:** `{_fmt_uptime()}`",
+            f"• **Loop Running:** `{'Yes' if self._owner_status_loop.is_running() else 'No'}`",
+        ]
+        if ch and hasattr(ch, "permissions_for"):
+            perms = ch.permissions_for(ch.guild.me)
+            info_lines.append(f"• **Bot Send Perms:** `{'Yes' if perms.send_messages else 'NO (Missing Perms!)'}`")
+            info_lines.append(f"• **Bot Embed Perms:** `{'Yes' if perms.embed_links else 'NO (Missing Perms!)'}`")
+
+        await interaction.response.send_message("\n".join(info_lines), ephemeral=True)
+
 
 
 # ══════════════════════════════════════════════════════════════
