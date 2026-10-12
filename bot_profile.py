@@ -13,6 +13,11 @@ All commands require Manage Server permission.
 """
 
 import io
+import json
+import os
+from pathlib import Path
+from urllib.parse import urlparse
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -22,11 +27,111 @@ from gkr_ui import C
 class BotProfileCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.approvals_file = Path(__file__).with_name("approved_banner_guilds.json")
+
+    def _load_approved_guilds(self) -> set[str]:
+        try:
+            if not self.approvals_file.exists():
+                return set()
+            data = json.loads(self.approvals_file.read_text(encoding="utf-8"))
+            if not isinstance(data, list):
+                return set()
+            return {str(guild_id) for guild_id in data if str(guild_id).isdigit()}
+        except (OSError, json.JSONDecodeError):
+            # Fail closed if the approval registry cannot be trusted.
+            return set()
+
+    def _save_approved_guilds(self, guild_ids: set[str]) -> None:
+        self.approvals_file.write_text(
+            json.dumps(sorted(guild_ids), indent=2), encoding="utf-8"
+        )
 
     profile_group = app_commands.Group(
         name="botprofile",
         description="Customize the bot's name and profile picture in this server"
     )
+
+    # ── Owner-only guild approval: /bb ─────────────────────────────────────────
+
+    @app_commands.command(name="bb", description="Bot owner: approve or revoke banner access for a guild")
+    @app_commands.describe(guild_id="The Discord server ID", action="Approve or revoke banner access")
+    @app_commands.choices(action=[
+        app_commands.Choice(name="Approve", value="approve"),
+        app_commands.Choice(name="Revoke", value="revoke"),
+    ])
+    async def bb(self, interaction: discord.Interaction, guild_id: str,
+                 action: app_commands.Choice[str]):
+        owner_id = os.getenv("OWNER_DISCORD_ID", "").strip()
+        if not owner_id.isdigit() or interaction.user.id != int(owner_id):
+            await interaction.response.send_message(
+                "❌ Only the configured bot owner can manage guild approvals.", ephemeral=True
+            )
+            return
+
+        if not guild_id.isdigit():
+            await interaction.response.send_message("❌ Please provide a valid numeric guild ID.", ephemeral=True)
+            return
+
+        guild = self.bot.get_guild(int(guild_id))
+        if guild is None:
+            await interaction.response.send_message(
+                "❌ I cannot find that guild. Make sure the bot is a member of it and the ID is correct.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            approved = self._load_approved_guilds()
+            if action.value == "approve":
+                approved.add(guild_id)
+                self._save_approved_guilds(approved)
+                message = f"✅ Banner management approved for **{guild.name}** (`{guild_id}`)."
+            else:
+                approved.discard(guild_id)
+                self._save_approved_guilds(approved)
+                message = f"✅ Banner management access revoked for **{guild.name}** (`{guild_id}`)."
+            await interaction.response.send_message(message, ephemeral=True)
+        except OSError:
+            await interaction.response.send_message(
+                "❌ Could not save the approval registry. No change was confirmed.", ephemeral=True
+            )
+
+    # ── Global profile banner command: /botbanner ───────────────────────────────
+
+    @app_commands.command(name="botbanner", description="Change the bot's global profile banner using an image URL")
+    @app_commands.describe(url="Direct HTTPS image URL (PNG, JPG, WEBP, or GIF)")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def botbanner(self, interaction: discord.Interaction, url: str):
+        if interaction.guild is None:
+            await interaction.response.send_message("❌ Use this command inside an approved server.", ephemeral=True)
+            return
+        if str(interaction.guild.id) not in self._load_approved_guilds():
+            await interaction.response.send_message(
+                "❌ This server has not been approved by the bot owner. Use /bb to approve it.",
+                ephemeral=True,
+            )
+            return
+
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or not parsed.netloc:
+            await interaction.response.send_message(
+                "❌ Provide a valid direct HTTPS image URL. File uploads are not supported.", ephemeral=True
+            )
+            return
+        if not parsed.path.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".gif")):
+            await interaction.response.send_message(
+                "❌ URL must point directly to a PNG, JPG, WEBP, or GIF image.", ephemeral=True
+            )
+            return
+
+        # Discord's supported bot API does not expose editing the bot account's
+        # global profile banner. Do not fake success or use undocumented endpoints.
+        await interaction.response.send_message(
+            "⚠️ Your server is approved and the URL is valid, but Discord's supported bot API "
+            "does not provide a method for changing a bot account's global profile banner. "
+            "No changes were made. This is separate from the server-specific avatar command.",
+            ephemeral=True,
+        )
 
     # ── /botprofile setnick ────────────────────────────────────────────────────
 
@@ -246,10 +351,12 @@ class BotProfileCog(commands.Cog):
     @resetnick.error
     @setavatar.error
     @resetavatar.error
+    @botbanner.error
     async def profile_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
         if isinstance(error, app_commands.MissingPermissions):
             await interaction.response.send_message(
-                "❌ You need the **Manage Server** permission to use this command.", ephemeral=True
+                "❌ You need the **Administrator** permission to use /botbanner, or the required server-management permission for other profile commands.",
+                ephemeral=True,
             )
 
 
