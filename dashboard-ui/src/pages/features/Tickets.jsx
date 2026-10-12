@@ -72,6 +72,7 @@ function Tickets() {
   const [hubChannelId, setHubChannelId] = useState('');
   const [selectedHubCats, setSelectedHubCats] = useState([]);
   const [publishingHub, setPublishingHub] = useState(false);
+  const [existingHubs, setExistingHubs] = useState([]);
 
   const EMPTY_FORM = {
     name: '',
@@ -85,19 +86,36 @@ function Tickets() {
   const fetchData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     try {
-      const [ticketsRes, channelsRes, rolesRes, statsRes, listRes] = await Promise.allSettled([
+      const [ticketsRes, channelsRes, rolesRes, statsRes, listRes, hubRes] = await Promise.allSettled([
         api.get(`/guilds/${guildId}/tickets`),
         api.get(`/guilds/${guildId}/channels`),
         api.get(`/guilds/${guildId}/roles`),
         api.get(`/guilds/${guildId}/tickets/stats`),
         api.get(`/guilds/${guildId}/tickets/list`),
+        api.get(`/guilds/${guildId}/tickets/hub`),
       ]);
 
       if (ticketsRes.status === 'fulfilled') {
         const cats = ticketsRes.value.data.categories || [];
         setCategories(cats);
         setLogChannelId(ticketsRes.value.data.log_channel_id || '');
-        setSelectedHubCats(prev => (prev.length ? prev : cats.map(c => c.id)));
+
+        // Pre-populate hub from existing hub (only if not already set by user)
+        if (hubRes.status === 'fulfilled') {
+          const hubs = hubRes.value.data.hubs || [];
+          setExistingHubs(hubs);
+          if (hubs.length > 0) {
+            const hub = hubs[hubs.length - 1]; // most recent
+            setHubChannelId(prev => prev || String(hub.channel_id));
+            setSelectedHubCats(prev =>
+              prev.length ? prev : hub.category_ids.map(id => Number(id))
+            );
+          } else {
+            setSelectedHubCats(prev => (prev.length ? prev : cats.map(c => c.id)));
+          }
+        } else {
+          setSelectedHubCats(prev => (prev.length ? prev : cats.map(c => c.id)));
+        }
       }
 
       if (channelsRes.status === 'fulfilled') {
@@ -615,6 +633,30 @@ function Tickets() {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {existingHubs.length > 0 && (
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '10px',
+                  padding: '12px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  background: 'rgba(88, 101, 242, 0.08)',
+                  border: '1px solid rgba(88, 101, 242, 0.25)',
+                  color: 'var(--text-main)',
+                  fontSize: '13px',
+                  marginBottom: '4px'
+                }}>
+                  <span style={{ fontSize: '16px' }}>📌</span>
+                  <div>
+                    <div style={{ fontWeight: 600, marginBottom: '3px' }}>
+                      Existing Hub Found ({existingHubs.length} panel{existingHubs.length > 1 ? 's' : ''})
+                    </div>
+                    <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                      Channel and categories pre-filled from last published hub. Deploying again sends a new panel message — previous panel buttons still work in Discord.
+                    </div>
+                  </div>
+                </div>
+              )}
               <form onSubmit={handlePublishHub} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
@@ -790,7 +832,7 @@ function Tickets() {
                   disabled={!hubChannelId || !selectedHubCats.length}
                   style={{ marginTop: '8px', width: '100%' }}
                 >
-                  Deploy Hub to Discord Channel
+                  {existingHubs.length > 0 ? 'Update Hub (Deploy New Panel)' : 'Deploy Hub to Discord Channel'}
                 </Button>
               </form>
             </CardContent>

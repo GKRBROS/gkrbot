@@ -3375,6 +3375,16 @@ async def handle_tickets_list_get(request: web.Request):
             })
     return web.json_response({"tickets": ticket_list})
 
+async def handle_tickets_hub_get(request: web.Request):
+    """Return all hubs for guild so dashboard can show/edit existing hub."""
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import tickets
+    db = tickets.TicketDatabase()
+    hubs = db.get_hubs_by_guild(guild_id)
+    return web.json_response({"hubs": hubs})
+
 async def handle_tickets_hub_post(request: web.Request):
     sess = _get_session(request)
     if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
@@ -4644,6 +4654,7 @@ class DashboardAPI(commands.Cog):
             # Tickets Extensions (Stats, List, Hub)
             web.get("/api/guilds/{guild_id}/tickets/stats", handle_tickets_stats_get),
             web.get("/api/guilds/{guild_id}/tickets/list", handle_tickets_list_get),
+            web.get("/api/guilds/{guild_id}/tickets/hub", handle_tickets_hub_get),
             web.post("/api/guilds/{guild_id}/tickets/hub", handle_tickets_hub_post),
 
             # Giveaways
