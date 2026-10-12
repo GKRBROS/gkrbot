@@ -67,6 +67,7 @@ class TicketDatabase:
                     custom_buttons TEXT NOT NULL DEFAULT '{}',
                     embed_title TEXT NOT NULL,
                     embed_description TEXT NOT NULL DEFAULT '',
+                    image_url TEXT NOT NULL DEFAULT '',
                     ticket_counter INTEGER NOT NULL DEFAULT 0
                 )
             """)
@@ -78,6 +79,8 @@ class TicketDatabase:
                 conn.execute("ALTER TABLE ticket_categories ADD COLUMN admin_roles TEXT NOT NULL DEFAULT ''")
             if "custom_buttons" not in columns:
                 conn.execute("ALTER TABLE ticket_categories ADD COLUMN custom_buttons TEXT NOT NULL DEFAULT '{}'")
+            if "image_url" not in columns:
+                conn.execute("ALTER TABLE ticket_categories ADD COLUMN image_url TEXT NOT NULL DEFAULT ''")
                 
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS ticket_panels (
@@ -118,13 +121,14 @@ class TicketDatabase:
             conn.commit()
 
     def add_category(self, guild_id: int, name: str, button_label: str, button_emoji: str, 
-                     ping_roles: str, admin_roles: str, embed_title: str, embed_desc: str) -> int:
+                     ping_roles: str, admin_roles: str, embed_title: str, embed_desc: str,
+                     image_url: str = '') -> int:
         with self._conn() as conn:
             cur = conn.execute("""
                 INSERT INTO ticket_categories 
-                (guild_id, name, button_label, button_emoji, ping_roles, admin_roles, embed_title, embed_description)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (str(guild_id), name, button_label, button_emoji, ping_roles, admin_roles, embed_title, embed_desc))
+                (guild_id, name, button_label, button_emoji, ping_roles, admin_roles, embed_title, embed_description, image_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (str(guild_id), name, button_label, button_emoji, ping_roles, admin_roles, embed_title, embed_desc, image_url))
             conn.commit()
             return cur.lastrowid
 
@@ -132,7 +136,7 @@ class TicketDatabase:
         if not kwargs:
             return False
         
-        valid_keys = {"name", "button_label", "button_emoji", "ping_roles", "admin_roles", "embed_title", "embed_description"}
+        valid_keys = {"name", "button_label", "button_emoji", "ping_roles", "admin_roles", "embed_title", "embed_description", "image_url"}
         updates = []
         params = []
         for k, v in kwargs.items():

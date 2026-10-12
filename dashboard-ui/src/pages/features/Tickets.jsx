@@ -58,6 +58,7 @@ function Tickets() {
     button_emoji: '🎫',
     embed_title: 'Support Ticket',
     embed_description: '',
+    image_url: '',
   });
   const [pingRoles, setPingRoles] = useState([]);
   const [adminRoles, setAdminRoles] = useState([]);
@@ -67,6 +68,7 @@ function Tickets() {
   const [hubDesc, setHubDesc] = useState('Need assistance with our community or services? Select the appropriate category below to open a private ticket with our staff team.');
   const [hubColor, setHubColor] = useState('#5865F2');
   const [hubFooter, setHubFooter] = useState('Support System • Fast Response Guaranteed');
+  const [hubImageUrl, setHubImageUrl] = useState('');
   const [hubChannelId, setHubChannelId] = useState('');
   const [selectedHubCats, setSelectedHubCats] = useState([]);
   const [publishingHub, setPublishingHub] = useState(false);
@@ -77,6 +79,7 @@ function Tickets() {
     button_emoji: '🎫',
     embed_title: 'Support Ticket',
     embed_description: '',
+    image_url: '',
   };
 
   const fetchData = useCallback(async (isRefresh = false) => {
@@ -158,6 +161,7 @@ function Tickets() {
       button_emoji: cat.button_emoji || '🎫',
       embed_title: cat.embed_title || '',
       embed_description: cat.embed_description || '',
+      image_url: cat.image_url || '',
     });
     setPingRoles(cat.ping_roles ? cat.ping_roles.split(',').map(s => s.trim()).filter(Boolean) : []);
     setAdminRoles(cat.admin_roles ? cat.admin_roles.split(',').map(s => s.trim()).filter(Boolean) : []);
@@ -207,6 +211,7 @@ function Tickets() {
         description: hubDesc,
         embed_color: hubColor,
         footer: hubFooter,
+        image_url: hubImageUrl,
       });
       setSuccess('Ticket Hub panel deployed to Discord successfully!');
       fetchData();
@@ -695,6 +700,19 @@ function Tickets() {
                 </div>
 
                 <div>
+                  <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                    Banner Image / GIF URL <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional)</span>
+                  </label>
+                  <input
+                    type="url"
+                    className="form-input"
+                    value={hubImageUrl}
+                    onChange={e => setHubImageUrl(e.target.value)}
+                    placeholder="https://i.imgur.com/example.gif"
+                  />
+                </div>
+
+                <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-main)' }}>
                       Categories to Include in Panel
@@ -843,6 +861,14 @@ function Tickets() {
                   <div style={{ fontSize: '13.5px', color: '#dbdee1', lineHeight: '1.45', marginBottom: '10px', whiteSpace: 'pre-wrap' }}>
                     {hubDesc || 'Select an option below to open a ticket...'}
                   </div>
+                  {hubImageUrl && (
+                    <img
+                      src={hubImageUrl}
+                      alt="Hub banner"
+                      style={{ width: '100%', borderRadius: '4px', marginBottom: '8px', maxHeight: '180px', objectFit: 'cover' }}
+                      onError={e => { e.target.style.display = 'none'; }}
+                    />
+                  )}
                   {hubFooter && (
                     <div style={{
                       fontSize: '11.5px',
@@ -1094,6 +1120,19 @@ function Tickets() {
               onChange={setAdminRoles}
               options={roleOptions}
               placeholder="Select roles allowed to manage tickets..."
+            />
+          </div>
+
+          <div>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+              Category Image / GIF URL <span style={{ fontWeight: 400, color: 'var(--text-muted)' }}>(optional — shown in welcome embed)</span>
+            </label>
+            <input
+              type="url"
+              className="form-input"
+              value={form.image_url}
+              onChange={e => setForm({ ...form, image_url: e.target.value })}
+              placeholder="https://i.imgur.com/example.gif"
             />
           </div>
 

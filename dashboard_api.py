@@ -859,6 +859,7 @@ async def handle_tickets_get(request: web.Request):
             "button_emoji": c.button_emoji or "\U0001F3AB", "ping_roles": c.ping_roles or "",
             "admin_roles": c.admin_roles or "", "embed_title": c.embed_title or "",
             "embed_description": c.embed_description or "", "ticket_counter": c.ticket_counter or 0,
+            "image_url": getattr(c, 'image_url', '') or "",
         } for c in cats]
         return web.json_response({"categories": cats_data, "log_channel_id": str(log_ch) if log_ch else None})
     except Exception as e:
@@ -885,6 +886,7 @@ async def handle_tickets_post(request: web.Request):
         "admin_roles": data.get("admin_roles", ""),
         "embed_title": data.get("embed_title", "New Ticket").strip(),
         "embed_description": data.get("embed_description", "").strip(),
+        "image_url": data.get("image_url", "").strip(),
     }
     cat_id = ticket_cog.db.add_category(
         guild_id=guild_id, name=name,
@@ -894,6 +896,7 @@ async def handle_tickets_post(request: web.Request):
         admin_roles=cat_fields["admin_roles"],
         embed_title=cat_fields["embed_title"],
         embed_desc=cat_fields["embed_description"],
+        image_url=cat_fields["image_url"],
     )
 
     if _auto_sync_requested(data, request):
@@ -926,7 +929,7 @@ async def handle_tickets_category_put(request: web.Request):
         return web.json_response({"error": "Tickets module not loaded"}, status=500)
 
     fields = {}
-    for key in ("name", "button_label", "button_emoji", "embed_title", "embed_description", "ping_roles", "admin_roles"):
+    for key in ("name", "button_label", "button_emoji", "embed_title", "embed_description", "ping_roles", "admin_roles", "image_url"):
         if key in data:
             fields[key] = str(data[key]).strip()
     if not fields:
