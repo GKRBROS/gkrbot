@@ -56,6 +56,38 @@ def _init_db() -> None:
                 message_id  TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS owner_status_embed (
+                channel_id  TEXT PRIMARY KEY,
+                message_id  TEXT
+            )
+        """)
+        conn.commit()
+
+
+GIF_ONLINE = "https://cdn.discordapp.com/attachments/1247646566794133585/1559078469021990933/standard_5.gif?ex=6acdc479&is=6acc72f9&hm=1c2bbf588502fc484a624c50116481ad688ebdc1923733341d4d0dc111a0025a&"
+GIF_OFFLINE = "https://media.discordapp.net/attachments/1247646566794133585/1559078524973744308/standard_6.gif?ex=6acdc486&is=6acc7306&hm=ceb8471d616e252e28ecaf399bc877d648a551453f6427107dc910c38f8324e6&=&width=640&height=360"
+GIF_RESTARTING = "https://media.discordapp.net/attachments/1247646566794133585/1559078613511311450/standard_7.gif?ex=6acdc49b&is=6acc731b&hm=c5c1915b7b9949ef24dc32458d8ca3c9f879e24bcff5268b6413ec01acb7e527&=&width=640&height=360"
+
+
+def _load_owner_msg_id(channel_id: int) -> int | None:
+    with _db() as conn:
+        row = conn.execute("SELECT message_id FROM owner_status_embed WHERE channel_id = ?", (str(channel_id),)).fetchone()
+        if row and row["message_id"]:
+            try:
+                return int(row["message_id"])
+            except Exception:
+                pass
+    return None
+
+
+def _save_owner_msg_id(channel_id: int, message_id: int) -> None:
+    with _db() as conn:
+        conn.execute("""
+            INSERT INTO owner_status_embed (channel_id, message_id)
+            VALUES (?, ?)
+            ON CONFLICT(channel_id) DO UPDATE SET message_id = excluded.message_id
+        """, (str(channel_id), str(message_id)))
         conn.commit()
 
 
@@ -456,6 +488,92 @@ class BotStatusCog(commands.Cog):
     async def _before_heartbeat(self) -> None:
         await self.bot.wait_until_ready()
 
+    # ── Task loop — Owner status channel ping every 10 minutes ────────────────
+
+    @tasks.loop(minutes=10)
+    async def _owner_status_loop(self) -> None:
+        await self.update_owner_status(state="online")
+
+    @_owner_status_loop.before_loop
+    async def _before_owner_status_loop(self) -> None:
+        await self.bot.wait_until_ready()
+
+    # ── Owner STATUS_CHANNEL Manager ──────────────────────────────────────────
+
+    async def update_owner_status(self, state: str = "online") -> None:
+        raw_ch = (os.getenv("STATUS_CHANNEL") or "").strip()
+        if not raw_ch.isdigit():
+            return
+        ch_id = int(raw_ch)
+        ch = self.bot.get_channel(ch_id)
+        if not ch:
+            try:
+                ch = await self.bot.fetch_channel(ch_id)
+            except Exception:
+                return
+        if not isinstance(ch, discord.TextChannel):
+            return
+
+        now_ts = int(time.time())
+        if state == "online":
+            color = 0x57F287
+            title = "🟢 Bot Status: Online"
+            gif_url = GIF_ONLINE
+            from bot_status_msg import get_status_message
+            notice = get_status_message()
+            lines = []
+            if notice and notice.get("message"):
+                lines.append(f"📢 **Announcement:**\n{notice['message']}")
+            lines.append(f"📶 **Latency:** `{round(self.bot.latency * 1000)}ms`")
+            lines.append(f"⏱️ **Uptime:** `{_fmt_uptime()}`")
+            lines.append(f"🕒 **Last Checked:** <t:{now_ts}:R>")
+            desc = "\n".join(lines)
+            footer = "GKR Bot • Checked every 10 minutes"
+        elif state == "restarting":
+            color = 0xFEE75C
+            title = "🟡 Bot Status: Restarting"
+            gif_url = GIF_RESTARTING
+            desc = f"⚠️ **The bot is currently restarting.** Services will resume shortly.\n🕒 **Timestamp:** <t:{now_ts}:R>"
+            footer = "GKR Bot • Restarting..."
+        else:
+            color = 0xED4245
+            title = "🔴 Bot Status: Offline"
+            gif_url = GIF_OFFLINE
+            desc = f"❌ **The bot is currently offline.**\n🕒 **Timestamp:** <t:{now_ts}:R>"
+            footer = "GKR Bot • Offline"
+
+        embed = discord.Embed(title=title, description=desc, color=color)
+        embed.set_image(url=gif_url)
+        embed.set_footer(text=footer)
+
+        msg_id = _load_owner_msg_id(ch_id)
+        msg = None
+        if msg_id:
+            try:
+                msg = await ch.fetch_message(msg_id)
+            except Exception:
+                msg = None
+
+        if msg:
+            try:
+                await msg.edit(embed=embed)
+                return
+            except Exception:
+                pass
+
+        if state != "offline":
+            try:
+                new_msg = await ch.send(embed=embed)
+                _save_owner_msg_id(ch_id, new_msg.id)
+            except Exception as e:
+                print(f"[OwnerStatus] Failed to post message in {ch_id}: {e}")
+
+    async def set_owner_status(self, state: str = "online") -> None:
+        await self.update_owner_status(state=state)
+
+    async def update_owner_status_now(self) -> None:
+        await self.update_owner_status(state="online")
+
     # ── Events ────────────────────────────────────────────────────────────────
 
     @commands.Cog.listener()
@@ -464,18 +582,23 @@ class BotStatusCog(commands.Cog):
         self._configs = _load_cfg()
         if not self._heartbeat.is_running():
             self._heartbeat.start()
+        if not self._owner_status_loop.is_running():
+            self._owner_status_loop.start()
         await self._update(online=True)
+        await self.update_owner_status(state="online")
         print("[BotStatus] ✅ Live status dashboard active.")
 
     @commands.Cog.listener()
     async def on_disconnect(self) -> None:
         """Flip the embed to Offline when the bot loses its connection."""
         await self._update(online=False)
+        await self.update_owner_status(state="offline")
 
     @commands.Cog.listener()
     async def on_resumed(self) -> None:
         """Flip back to Online when the connection is restored."""
         await self._update(online=True)
+        await self.update_owner_status(state="online")
 
     # ── Slash-command group ───────────────────────────────────────────────────
 

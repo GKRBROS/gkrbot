@@ -334,7 +334,14 @@ async def graceful_shutdown(signal_name: str = "SIGTERM"):
         except Exception as e:
             print(f"[Shutdown] Error disconnecting voice client: {e}")
 
-    # Step 3: Unload all extensions to trigger each cog's cog_unload() cleanly.
+    # Step 3: Update owner status channel embed and unload extensions cleanly
+    try:
+        status_cog = bot.get_cog("BotStatusCog")
+        if status_cog and hasattr(status_cog, "set_owner_status"):
+            await status_cog.set_owner_status("restarting" if signal_name == "SIGTERM" else "offline")
+    except Exception as e:
+        print(f"[Shutdown] Error updating owner status channel: {e}")
+
     print("[Shutdown] Cancelling background tasks...")
     for ext_name in list(bot.extensions.keys()):
         try:

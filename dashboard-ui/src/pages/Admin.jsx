@@ -68,6 +68,13 @@ export function Admin({ user }) {
   const [annError, setAnnError] = useState('');
   const [annSuccess, setAnnSuccess] = useState('');
 
+  // Status message for Owner Status Channel
+  const [statusMsg, setStatusMsg] = useState('');
+  const [statusMsgActive, setStatusMsgActive] = useState(true);
+  const [statusMsgStatus, setStatusMsgStatus] = useState('idle');
+  const [statusMsgError, setStatusMsgError] = useState('');
+  const [statusMsgSuccess, setStatusMsgSuccess] = useState('');
+
   useEffect(() => {
     api.get('/admin/whoami')
       .then(res => setIsAdmin(!!res.data?.is_admin))
@@ -83,6 +90,12 @@ export function Admin({ user }) {
     api.get('/admin/channels')
       .then(res => setGuilds(res.data.guilds || []))
       .catch(() => setGuilds([]));
+    api.get('/admin/status-message')
+      .then(res => {
+        setStatusMsg(res.data?.message || '');
+        setStatusMsgActive(res.data?.active ?? true);
+      })
+      .catch(() => {});
   }, [isAdmin]);
 
   const loadNews = () => {
@@ -157,6 +170,38 @@ export function Admin({ user }) {
     } catch (err) {
       setBannerStatus('error');
       setBannerError(err.response?.data?.error || 'Failed to update banner.');
+    }
+  };
+
+  const handleStatusMsgSubmit = async (e) => {
+    e.preventDefault();
+    setStatusMsgError('');
+    setStatusMsgSuccess('');
+    setStatusMsgStatus('saving');
+    try {
+      await api.post('/admin/status-message', { message: statusMsg.trim(), active: statusMsgActive });
+      setStatusMsgStatus('success');
+      setStatusMsgSuccess('Status notice saved and pushed to Discord status channel!');
+      setTimeout(() => setStatusMsgSuccess(''), 4000);
+    } catch (err) {
+      setStatusMsgStatus('error');
+      setStatusMsgError(err.response?.data?.error || 'Failed to update status notice.');
+    }
+  };
+
+  const handleStatusMsgClear = async () => {
+    setStatusMsgError('');
+    setStatusMsgSuccess('');
+    setStatusMsgStatus('saving');
+    try {
+      await api.post('/admin/status-message', { message: '', active: false });
+      setStatusMsg('');
+      setStatusMsgStatus('idle');
+      setStatusMsgSuccess('Status notice cleared!');
+      setTimeout(() => setStatusMsgSuccess(''), 4000);
+    } catch (err) {
+      setStatusMsgStatus('error');
+      setStatusMsgError(err.response?.data?.error || 'Failed to clear status notice.');
     }
   };
 
@@ -483,6 +528,34 @@ export function Admin({ user }) {
                   <button type="submit" className="site-btn site-btn-primary" disabled={bannerStatus === 'saving'} style={{ justifyContent: 'center' }}>
                     {bannerStatus === 'saving' ? 'Updating…' : <><ImageIcon size={15} /> Update Banner</>}
                   </button>
+                </form>
+              </div>
+
+              {/* Section: Live Status Notice (Owner Channel) */}
+              <div className="site-card admin-section-card">
+                <SectionHeader icon={Activity} title="Live Bot Status Notice" subtitle="Shown on the owner status channel embed" />
+                <form onSubmit={handleStatusMsgSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div className="site-field">
+                    <label>Custom Status Notice / Announcement</label>
+                    <textarea
+                      value={statusMsg}
+                      onChange={e => setStatusMsg(e.target.value)}
+                      placeholder="e.g. Bot under scheduled maintenance from 2 PM to 3 PM..."
+                      rows={3}
+                    />
+                  </div>
+                  {statusMsgError && <div className="site-alert site-alert-error">{statusMsgError}</div>}
+                  {statusMsgSuccess && <div className="site-alert site-alert-success">{statusMsgSuccess}</div>}
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button type="submit" className="site-btn site-btn-primary" disabled={statusMsgStatus === 'saving'} style={{ flex: 1, justifyContent: 'center' }}>
+                      {statusMsgStatus === 'saving' ? 'Saving…' : <><Send size={15} /> Save & Push</>}
+                    </button>
+                    {statusMsg && (
+                      <button type="button" onClick={handleStatusMsgClear} className="site-btn site-btn-outline" disabled={statusMsgStatus === 'saving'}>
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </form>
               </div>
 

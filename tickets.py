@@ -34,6 +34,7 @@ class TicketCategory:
     embed_title: str
     embed_description: str
     ticket_counter: int
+    image_url: str = ""
 
 @dataclass
 class ActiveTicket:
@@ -115,9 +116,19 @@ class TicketDatabase:
                     message_id TEXT PRIMARY KEY,
                     channel_id TEXT NOT NULL,
                     guild_id TEXT NOT NULL,
-                    category_ids TEXT NOT NULL
+                    category_ids TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    description TEXT NOT NULL DEFAULT '',
+                    embed_color TEXT NOT NULL DEFAULT '',
+                    footer TEXT NOT NULL DEFAULT '',
+                    image_url TEXT NOT NULL DEFAULT ''
                 )
             """)
+            cursor = conn.execute("PRAGMA table_info(ticket_hubs)")
+            hub_cols = [info["name"] for info in cursor.fetchall()]
+            for col in ("title", "description", "embed_color", "footer", "image_url"):
+                if col not in hub_cols:
+                    conn.execute(f"ALTER TABLE ticket_hubs ADD COLUMN {col} TEXT NOT NULL DEFAULT ''")
             conn.commit()
 
     def add_category(self, guild_id: int, name: str, button_label: str, button_emoji: str, 
@@ -194,13 +205,23 @@ class TicketDatabase:
         with self._conn() as conn:
             return conn.execute("SELECT * FROM ticket_panels WHERE category_id = ?", (category_id,)).fetchall()
 
-    def add_hub(self, message_id: int, channel_id: int, guild_id: int, category_ids: list[int]) -> None:
+    def add_hub(self, message_id: int, channel_id: int, guild_id: int, category_ids: list[int],
+                title: str = "", description: str = "", embed_color: str = "", footer: str = "", image_url: str = "") -> None:
         import json
         with self._conn() as conn:
             conn.execute("""
-                INSERT INTO ticket_hubs (message_id, channel_id, guild_id, category_ids)
-                VALUES (?, ?, ?, ?)
-            """, (str(message_id), str(channel_id), str(guild_id), json.dumps(category_ids)))
+                INSERT INTO ticket_hubs (message_id, channel_id, guild_id, category_ids, title, description, embed_color, footer, image_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(message_id) DO UPDATE SET
+                    channel_id = excluded.channel_id,
+                    guild_id = excluded.guild_id,
+                    category_ids = excluded.category_ids,
+                    title = excluded.title,
+                    description = excluded.description,
+                    embed_color = excluded.embed_color,
+                    footer = excluded.footer,
+                    image_url = excluded.image_url
+            """, (str(message_id), str(channel_id), str(guild_id), json.dumps(category_ids), title, description, embed_color, footer, image_url))
             conn.commit()
 
     def get_all_hubs_global(self) -> list:
@@ -224,11 +245,17 @@ class TicketDatabase:
         
         results = []
         for row in rows:
+            keys = row.keys()
             results.append({
                 "message_id": int(row["message_id"]),
                 "channel_id": int(row["channel_id"]),
                 "guild_id": int(row["guild_id"]),
-                "category_ids": json.loads(row["category_ids"])
+                "category_ids": json.loads(row["category_ids"]),
+                "title": row["title"] if "title" in keys else "",
+                "description": row["description"] if "description" in keys else "",
+                "embed_color": row["embed_color"] if "embed_color" in keys else "",
+                "footer": row["footer"] if "footer" in keys else "",
+                "image_url": row["image_url"] if "image_url" in keys else "",
             })
         return results
 
@@ -317,7 +344,8 @@ class TicketDatabase:
             custom_buttons=row["custom_buttons"] if "custom_buttons" in keys else "{}",
             embed_title=row["embed_title"],
             embed_description=row["embed_description"] if "embed_description" in keys else "",
-            ticket_counter=row["ticket_counter"]
+            ticket_counter=row["ticket_counter"],
+            image_url=row["image_url"] if "image_url" in keys else ""
         )
 
     def get_all_categories_global(self) -> list:

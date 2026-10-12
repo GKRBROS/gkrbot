@@ -3383,6 +3383,29 @@ async def handle_tickets_hub_get(request: web.Request):
     import tickets
     db = tickets.TicketDatabase()
     hubs = db.get_hubs_by_guild(guild_id)
+    bot: commands.Bot = request.app.get("bot")
+    guild = bot.get_guild(guild_id) if bot else None
+    for hub in hubs:
+        if (not hub.get("title") or not hub.get("description")) and guild:
+            try:
+                ch = guild.get_channel(int(hub["channel_id"]))
+                if ch:
+                    msg = await ch.fetch_message(int(hub["message_id"]))
+                    if msg.embeds:
+                        emb = msg.embeds[0]
+                        hub["title"] = emb.title or "🎫 Support Tickets Hub"
+                        hub["description"] = emb.description or ""
+                        hub["embed_color"] = f"#{emb.color.value:06x}" if emb.color else "#5865F2"
+                        hub["footer"] = emb.footer.text if emb.footer else ""
+                        hub["image_url"] = emb.image.url if emb.image else ""
+                        db.add_hub(
+                            hub["message_id"], hub["channel_id"], guild_id, hub["category_ids"],
+                            title=hub["title"], description=hub["description"],
+                            embed_color=hub["embed_color"], footer=hub["footer"],
+                            image_url=hub["image_url"]
+                        )
+            except Exception:
+                pass
     return web.json_response({"hubs": hubs})
 
 async def handle_tickets_hub_post(request: web.Request):
@@ -3429,7 +3452,11 @@ async def handle_tickets_hub_post(request: web.Request):
     view = tickets.TicketHubView(selected_cats)
     try:
         msg = await channel.send(embed=embed, view=view)
-        db.add_hub(msg.id, channel.id, guild.id, [c.id for c in selected_cats])
+        db.add_hub(
+            msg.id, channel.id, guild.id, [c.id for c in selected_cats],
+            title=title, description=description, embed_color=data.get("embed_color", "#5865F2"),
+            footer=data.get("footer", ""), image_url=data.get("image_url", "")
+        )
         return web.json_response({"success": True, "message_id": str(msg.id)})
     except Exception as e:
         return web.json_response({"error": f"Failed to post ticket hub: {e}"}, status=500)
@@ -3485,9 +3512,12 @@ async def handle_tickets_hub_patch(request: web.Request):
     view = tickets.TicketHubView(selected_cats)
     try:
         await msg.edit(embed=embed, view=view)
-        # Update stored category list
-        db.remove_hub(message_id)
-        db.add_hub(message_id, hub["channel_id"], guild_id, [c.id for c in selected_cats])
+        # Update stored category list and embed data
+        db.add_hub(
+            message_id, hub["channel_id"], guild_id, [c.id for c in selected_cats],
+            title=title, description=description, embed_color=data.get("embed_color", "#5865F2"),
+            footer=data.get("footer", ""), image_url=data.get("image_url", "")
+        )
         return web.json_response({"success": True, "message_id": str(message_id)})
     except Exception as e:
         return web.json_response({"error": f"Failed to edit hub message: {e}"}, status=500)

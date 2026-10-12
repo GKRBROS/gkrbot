@@ -100,16 +100,18 @@ function Tickets() {
         setCategories(cats);
         setLogChannelId(ticketsRes.value.data.log_channel_id || '');
 
-        // Pre-populate hub from existing hub (only if not already set by user)
         if (hubRes.status === 'fulfilled') {
           const hubs = hubRes.value.data.hubs || [];
           setExistingHubs(hubs);
           if (hubs.length > 0) {
-            const hub = hubs[hubs.length - 1]; // most recent
-            setHubChannelId(prev => prev || String(hub.channel_id));
-            setSelectedHubCats(prev =>
-              prev.length ? prev : hub.category_ids.map(id => Number(id))
-            );
+            const latestHub = hubs[hubs.length - 1];
+            setSelectedHubCats(latestHub.category_ids && latestHub.category_ids.length ? latestHub.category_ids.map(id => Number(id)) : cats.map(c => c.id));
+            if (latestHub.title) setHubTitle(latestHub.title);
+            if (latestHub.description) setHubDesc(latestHub.description);
+            if (latestHub.embed_color) setHubColor(latestHub.embed_color);
+            if (latestHub.footer) setHubFooter(latestHub.footer);
+            if (latestHub.image_url) setHubImageUrl(latestHub.image_url);
+            if (latestHub.channel_id) setHubChannelId(String(latestHub.channel_id));
           } else {
             setSelectedHubCats(prev => (prev.length ? prev : cats.map(c => c.id)));
           }
@@ -144,6 +146,17 @@ function Tickets() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Pre-fill hub channel once BOTH channels and existingHubs are loaded
+  useEffect(() => {
+    if (existingHubs.length > 0 && channels.length > 0) {
+      setHubChannelId(prev => {
+        if (prev) return prev; // already set by user
+        const hub = existingHubs[existingHubs.length - 1];
+        return String(hub.channel_id);
+      });
+    }
+  }, [existingHubs, channels]);
 
   const handleAddCategory = async (e) => {
     e.preventDefault();
@@ -644,9 +657,11 @@ function Tickets() {
           {/* Builder Form */}
           <Card>
             <CardHeader>
-              <CardTitle>Deploy Ticket Hub Panel</CardTitle>
+              <CardTitle>{existingHubs.length > 0 ? 'Edit Ticket Hub Panel' : 'Deploy Ticket Hub Panel'}</CardTitle>
               <CardDescription>
-                Post an interactive Discord embed with button rows directly into a designated channel.
+                {existingHubs.length > 0
+                  ? 'Edit your existing live ticket hub message in Discord or update categories and appearance.'
+                  : 'Post an interactive Discord embed with button rows directly into a designated channel.'}
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -666,10 +681,10 @@ function Tickets() {
                   <span style={{ fontSize: '16px' }}>📌</span>
                   <div>
                     <div style={{ fontWeight: 600, marginBottom: '3px' }}>
-                      Existing Hub Found ({existingHubs.length} panel{existingHubs.length > 1 ? 's' : ''})
+                      Editing Existing Hub Panel
                     </div>
                     <div style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-                      Channel and categories pre-filled from last published hub. Deploying again sends a new panel message — previous panel buttons still work in Discord.
+                      Channel, embed text, colors and selected categories have been pre-filled from your existing hub. Saving will update the message directly in Discord.
                     </div>
                   </div>
                 </div>
@@ -849,7 +864,7 @@ function Tickets() {
                   disabled={!hubChannelId || !selectedHubCats.length}
                   style={{ marginTop: '8px', width: '100%' }}
                 >
-                  {existingHubs.length > 0 ? 'Update Hub (Deploy New Panel)' : 'Deploy Hub to Discord Channel'}
+                  {existingHubs.length > 0 ? 'Save & Update Hub Panel in Discord' : 'Deploy Hub to Discord Channel'}
                 </Button>
               </form>
             </CardContent>
@@ -1193,6 +1208,34 @@ function Tickets() {
               onChange={e => setForm({ ...form, image_url: e.target.value })}
               placeholder="https://i.imgur.com/example.gif"
             />
+            {form.image_url && (
+              <div style={{
+                marginTop: '8px',
+                padding: '8px',
+                borderRadius: 'var(--radius-sm)',
+                background: 'rgba(0,0,0,0.2)',
+                border: '1px solid var(--border)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '4px'
+              }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Image Preview</span>
+                <img
+                  src={form.image_url}
+                  alt="Preview"
+                  style={{
+                    maxHeight: '140px',
+                    maxWidth: '100%',
+                    borderRadius: 'var(--radius-sm)',
+                    objectFit: 'contain'
+                  }}
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                  }}
+                />
+              </div>
+            )}
           </div>
 
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>

@@ -42,6 +42,9 @@ def _admin_ids(bot) -> set:
         raw = raw.strip()
         if raw.isdigit():
             ids.add(int(raw))
+    owner_env = (os.getenv("OWNER_DISCORD_ID") or "").strip()
+    if owner_env.isdigit():
+        ids.add(int(owner_env))
     return ids
 
 
@@ -169,6 +172,14 @@ def make_status_message_handlers(get_user_id):
             from weblog import post_weblog
             state_text = "Enabled" if active and msg else "Cleared/Disabled"
             await post_weblog("Bot Status Notice Updated", f"<@{actor_id}>", f"State: {state_text}\nMessage: {msg}", color=0xFEE75C)
+        except Exception:
+            pass
+
+        try:
+            bot = request.app["bot"]
+            status_cog = bot.get_cog("BotStatusCog")
+            if status_cog and hasattr(status_cog, "update_owner_status_now"):
+                await status_cog.update_owner_status_now()
         except Exception:
             pass
 
