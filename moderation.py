@@ -120,14 +120,14 @@ def parse_duration(raw: str) -> Optional[datetime.timedelta]:
 # Moderation Cog
 # ---------------------------------------------------------------------------
 
-class ModerationCog(commands.Cog):
+class ModerationCog(commands.GroupCog, group_name="mod"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.db = ModerationDatabase()
         self.db.initialize()
         self._start_time = discord.utils.utcnow()
 
-    # ── /mute ─────────────────────────────────────────────────────────────────
+    # ── /mod mute ─────────────────────────────────────────────────────────────
 
     @app_commands.command(name="mute", description="Timeout (mute) a member")
     @app_commands.describe(

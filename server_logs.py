@@ -1462,19 +1462,6 @@ class ServerLogsCog(commands.Cog):
         embed.set_footer(text=f"Total active event types: {len(ALL_EVENTS)} trackable events")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @logs_group.command(name="channel", description="Set a single master channel where all server logs will be sent")
-    @app_commands.default_permissions(manage_guild=True)
-    async def set_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
-        cfg = self.db.get(interaction.guild.id)
-        cfg["log_channel_id"] = channel.id
-        cfg["enabled"] = True
-        self.db.save(cfg)
-
-        embed = embed_success(
-            "Logs Channel Configured",
-            f"Server events will now be logged to {channel.mention}.\nActive events: `{len(cfg['enabled_events'])}/{len(ALL_EVENTS)}`"
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @logs_group.command(name="toggle", description="Enable or disable the logging system for this server")
     @app_commands.default_permissions(manage_guild=True)
