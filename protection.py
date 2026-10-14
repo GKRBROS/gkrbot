@@ -109,9 +109,12 @@ class ProtectionCog(commands.Cog):
                     await self._log_action(message.guild, embed)
                     
                     await asyncio.sleep(5)
-                    await warn_msg.delete()
+                    try:
+                        await warn_msg.delete()
+                    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+                        pass
                     return # Stop processing this message further
-                except discord.Forbidden:
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                     pass
 
         # ---------------------------------------------------------
@@ -138,7 +141,7 @@ class ProtectionCog(commands.Cog):
                     embed.add_field(name="Channel", value=message.channel.mention)
                     embed.add_field(name="Action", value="Timed out for 5 minutes")
                     await self._log_action(message.guild, embed)
-                except discord.Forbidden:
+                except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                     pass
 
         # ---------------------------------------------------------
@@ -206,7 +209,7 @@ class ProtectionCog(commands.Cog):
                                 print(f"[Protection] Failed to extract EXIF for spam log: {e}")
 
                         await self._log_action(message.guild, embed)
-                    except discord.Forbidden:
+                    except (discord.Forbidden, discord.NotFound, discord.HTTPException):
                         pass
 
     @commands.Cog.listener()
@@ -239,8 +242,8 @@ class ProtectionCog(commands.Cog):
                     embed.description = "Mass join detected (>10 users in 10s). The server has been locked down automatically."
                     embed.add_field(name="Action Taken", value="Removed `Send Messages` permission from `@everyone`")
                     await self._log_action(member.guild, embed)
-                except discord.Forbidden:
-                    print("Failed to lock down server - Missing Permissions")
+                except (discord.Forbidden, discord.HTTPException) as e:
+                    print(f"Failed to lock down server - Missing Permissions or error: {e}")
 
     # -----------------------------------------------------------------------
     # Slash Commands

@@ -146,16 +146,22 @@ class AutoBackupCog(commands.Cog):
 
     @tasks.loop(hours=6)
     async def scheduled_backup(self):
-        now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-        print(f"[AutoBackup] Scheduled backup running at {now}...")
-        await self._send_backup(triggered_by=f"⏰ Scheduled — every {BACKUP_INTERVAL_HOURS}h")
+        try:
+            now = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+            print(f"[AutoBackup] Scheduled backup running at {now}...")
+            await self._send_backup(triggered_by=f"⏰ Scheduled — every {BACKUP_INTERVAL_HOURS}h")
+        except Exception as e:
+            print(f"[AutoBackup] Error in scheduled backup: {e}")
 
     @scheduled_backup.before_loop
     async def before_scheduled(self):
         await self.bot.wait_until_ready()
         # Run one backup immediately on startup, then every N hours
         print("[AutoBackup] Bot ready — running startup backup...")
-        await self._send_backup(triggered_by="🚀 Startup — bot came online")
+        try:
+            await self._send_backup(triggered_by="🚀 Startup — bot came online")
+        except Exception as e:
+            print(f"[AutoBackup] Error in startup backup: {e}")
 
     def _register_signals(self):
         # We must use standard Python signal.signal instead of asyncio.add_signal_handler

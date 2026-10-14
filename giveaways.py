@@ -226,11 +226,16 @@ class GiveawayCog(commands.Cog):
     async def conclude_giveaway(self, gw: dict):
         guild = self.bot.get_guild(int(gw["guild_id"]))
         if not guild:
+            self.db.end(gw["id"], [])
             return
 
         channel = guild.get_channel(int(gw["channel_id"]))
         if not channel:
-            return
+            try:
+                channel = await guild.fetch_channel(int(gw["channel_id"]))
+            except Exception:
+                self.db.end(gw["id"], [])
+                return
 
         entries = self.db.get_entries(gw["id"])
         num_winners = min(gw["winners"], len(entries))
@@ -260,23 +265,36 @@ class GiveawayCog(commands.Cog):
                 pass
 
         # Announce winners
-        if winners:
-            winner_mentions = " ".join(f"<@{w}>" for w in winners)
-            await channel.send(
-                f"🎉 Congratulations {winner_mentions}! You won **{gw['prize']}**!\n"
-                f"(Giveaway ID: `{gw['id']}` — `/giveaway reroll {gw['id']}` to reroll)"
-            )
-        else:
-            await channel.send(f"😔 The giveaway for **{gw['prize']}** ended with no valid entries.")
+        try:
+            if winners:
+                winner_mentions = " ".join(f"<@{w}>" for w in winners)
+                await channel.send(
+                    f"🎉 Congratulations {winner_mentions}! You won **{gw['prize']}**!\n"
+                    f"(Giveaway ID: `{gw['id']}` — `/giveaway reroll {gw['id']}` to reroll)"
+                )
+            else:
+                await channel.send(f"😔 The giveaway for **{gw['prize']}** ended with no valid entries.")
+        except Exception as e:
+            print(f"[Giveaways] Failed to send conclusion message: {e}")
 
     @tasks.loop(seconds=30)
     async def _check_giveaways(self):
-        active = self.db.get_all_active()
-        now = datetime.datetime.utcnow()
-        for gw in active:
-            ends_at = datetime.datetime.fromisoformat(gw["ends_at"])
-            if now >= ends_at:
-                await self.conclude_giveaway(gw)
+        try:
+            active = self.db.get_all_active()
+            now = datetime.datetime.utcnow()
+            for gw in active:
+                try:
+                    ends_at = datetime.datetime.fromisoformat(gw["ends_at"])
+                    if ends_at.tzinfo is not None:
+                        now_cmp = datetime.datetime.now(datetime.timezone.utc)
+                    else:
+                        now_cmp = now
+                    if now_cmp >= ends_at:
+                        await self.conclude_giveaway(gw)
+                except Exception as e:
+                    print(f"[Giveaways] Error checking giveaway {gw.get('id')}: {e}")
+        except Exception as e:
+            print(f"[Giveaways] Error in giveaway loop: {e}")
 
     @_check_giveaways.before_loop
     async def before_check(self):

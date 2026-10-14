@@ -2111,16 +2111,19 @@ class AICog(commands.Cog, name="AI System"):
         cooldown = guild_config.get("cooldown_seconds", 3)
         is_limited, remaining = self.rate_limiter.is_rate_limited(message.author.id, cooldown)
         if is_limited:
-            await message.add_reaction("⏳")
+            try:
+                await message.add_reaction("⏳")
+            except (discord.Forbidden, discord.NotFound, discord.HTTPException):
+                pass
             return
 
         session_key = f"{message.guild.id}_{message.channel.id}_{message.author.id}"
         session = self.memory.get_session(session_key)
 
         # Check permissions in the channel before attempting to type or respond
-        if message.guild and hasattr(message.channel, "permissions_for"):
+        if message.guild and message.guild.me and hasattr(message.channel, "permissions_for"):
             perms = message.channel.permissions_for(message.guild.me)
-            if not perms.send_messages:
+            if not (perms.view_channel and perms.send_messages):
                 return
 
         try:

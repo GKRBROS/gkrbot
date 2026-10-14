@@ -892,7 +892,10 @@ class RadioCog(commands.Cog, name="Radio System"):
                 stream_url = s.get("stream_url", STATIONS[DEFAULT_STATION_KEY]["url"])
                 vol = s.get("volume", 100)
                 logger.info(f"[Radio] Resuming stream for {station_name} in {guild.name}...")
-                await self.start_stream(guild, vc, station_key, station_name, stream_url, vol)
+                try:
+                    await self.start_stream(guild, vc, station_key, station_name, stream_url, vol)
+                except Exception as e:
+                    logger.warning(f"[Radio] Error resuming stream in {guild.name}: {e}")
 
     @auto_reconnect_loop.before_loop
     async def before_reconnect(self):

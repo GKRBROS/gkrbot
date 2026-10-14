@@ -205,28 +205,40 @@ class EventCog(commands.Cog):
 
     @tasks.loop(minutes=1)
     async def _reminder_loop(self):
-        pending = self.db.get_pending_reminders()
-        for ev in pending:
-            guild = self.bot.get_guild(int(ev["guild_id"]))
-            if not guild:
-                continue
-            channel = guild.get_channel(int(ev["channel_id"]))
-            if not channel:
-                continue
+        try:
+            pending = self.db.get_pending_reminders()
+            for ev in pending:
+                try:
+                    guild = self.bot.get_guild(int(ev["guild_id"]))
+                    if not guild:
+                        self.db.mark_reminded(ev["id"])
+                        continue
+                    channel = guild.get_channel(int(ev["channel_id"]))
+                    if not channel:
+                        try:
+                            channel = await guild.fetch_channel(int(ev["channel_id"]))
+                        except Exception:
+                            self.db.mark_reminded(ev["id"])
+                            continue
 
-            # Ping RSVPs
-            rsvps = self.db.get_rsvps(ev["id"])
-            starts_at = datetime.datetime.fromisoformat(ev["starts_at"])
-            mention_str = " ".join(f"<@{uid}>" for uid in rsvps) if rsvps else "everyone"
+                    # Ping RSVPs
+                    rsvps = self.db.get_rsvps(ev["id"])
+                    starts_at = datetime.datetime.fromisoformat(ev["starts_at"])
+                    mention_str = " ".join(f"<@{uid}>" for uid in rsvps) if rsvps else "everyone"
 
-            try:
-                await channel.send(
-                    f"⏰ **Reminder!** The event **{ev['title']}** starts <t:{int(starts_at.timestamp())}:R>!\n"
-                    f"Attending: {mention_str}"
-                )
-            except Exception:
-                pass
-            self.db.mark_reminded(ev["id"])
+                    try:
+                        await channel.send(
+                            f"⏰ **Reminder!** The event **{ev['title']}** starts <t:{int(starts_at.timestamp())}:R>!\n"
+                            f"Attending: {mention_str}"
+                        )
+                    except Exception:
+                        pass
+                    self.db.mark_reminded(ev["id"])
+                except Exception as e:
+                    print(f"[ServerEvents] Error processing reminder {ev.get('id')}: {e}")
+                    self.db.mark_reminded(ev["id"])
+        except Exception as e:
+            print(f"[ServerEvents] Error in reminder loop: {e}")
 
     @_reminder_loop.before_loop
     async def before_reminder(self):

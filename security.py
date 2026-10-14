@@ -18,7 +18,7 @@ import os
 import io
 import sqlite3
 import datetime
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Union
 
 import aiohttp
 import discord
@@ -553,21 +553,45 @@ class SecurityCog(commands.Cog):
 
     # ── Moderation Audit Listeners (Bans, Unbans, Kicks, Timeouts) ───────────
 
+    async def _get_audit_entry(
+        self,
+        guild: discord.Guild,
+        action: discord.AuditLogAction,
+        target_id: int,
+        max_age_seconds: Optional[float] = 15.0
+    ) -> Optional[discord.AuditLogEntry]:
+        """Safely fetch a matching audit log entry checking permissions and age."""
+        if not guild or not guild.me:
+            return None
+        perms = getattr(guild.me, "guild_permissions", None)
+        if not perms or not perms.view_audit_log:
+            return None
+
+        try:
+            await asyncio.sleep(0.5)
+            now = discord.utils.utcnow()
+            async for entry in guild.audit_logs(limit=5, action=action):
+                t_id = getattr(entry.target, "id", None)
+                if t_id == target_id:
+                    if max_age_seconds is not None:
+                        age = (now - entry.created_at).total_seconds()
+                        if age > max_age_seconds:
+                            break
+                    return entry
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException, Exception):
+            pass
+        return None
+
     @commands.Cog.listener()
     async def on_member_ban(self, guild: discord.Guild, user: Union[discord.User, discord.Member]) -> None:
         """Log all bans to security logs with moderator & reason from audit log."""
         mod = None
         reason = "No reason provided"
-        try:
-            await asyncio.sleep(0.5)
-            async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.ban):
-                if entry.target.id == user.id:
-                    mod = entry.user
-                    if entry.reason:
-                        reason = entry.reason
-                    break
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        entry = await self._get_audit_entry(guild, discord.AuditLogAction.ban, user.id, max_age_seconds=15.0)
+        if entry:
+            mod = entry.user
+            if entry.reason:
+                reason = entry.reason
 
         avatar = user.display_avatar.url if hasattr(user, "display_avatar") else None
         mod_str = mod.mention if mod else "*Unknown Moderator*"
@@ -584,14 +608,9 @@ class SecurityCog(commands.Cog):
     async def on_member_unban(self, guild: discord.Guild, user: discord.User) -> None:
         """Log unbans to security logs."""
         mod = None
-        try:
-            await asyncio.sleep(0.5)
-            async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.unban):
-                if entry.target.id == user.id:
-                    mod = entry.user
-                    break
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        entry = await self._get_audit_entry(guild, discord.AuditLogAction.unban, user.id, max_age_seconds=15.0)
+        if entry:
+            mod = entry.user
 
         avatar = user.display_avatar.url if hasattr(user, "display_avatar") else None
         mod_str = mod.mention if mod else "*Unknown Moderator*"
@@ -608,22 +627,10 @@ class SecurityCog(commands.Cog):
     async def on_member_remove(self, member: discord.Member) -> None:
         """Detect and log kicks to security logs."""
         guild = member.guild
-        kicker = None
-        kick_reason = "No reason provided"
-        try:
-            await asyncio.sleep(0.5)
-            async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.kick):
-                if entry.target.id == member.id:
-                    # Check if the audit log entry is recent (within 7 seconds)
-                    if (discord.utils.utcnow() - entry.created_at).total_seconds() < 7:
-                        kicker = entry.user
-                        if entry.reason:
-                            kick_reason = entry.reason
-                    break
-        except (discord.Forbidden, discord.HTTPException):
-            pass
-
-        if kicker:
+        entry = await self._get_audit_entry(guild, discord.AuditLogAction.kick, member.id, max_age_seconds=7.0)
+        if entry:
+            kicker = entry.user
+            kick_reason = entry.reason or "No reason provided"
             await self.log_security_action(
                 guild,
                 "👢 Member Kicked",
@@ -640,16 +647,11 @@ class SecurityCog(commands.Cog):
             guild = after.guild
             mod = None
             reason = "No reason provided"
-            try:
-                await asyncio.sleep(0.5)
-                async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.member_update):
-                    if entry.target.id == after.id:
-                        mod = entry.user
-                        if entry.reason:
-                            reason = entry.reason
-                        break
-            except (discord.Forbidden, discord.HTTPException):
-                pass
+            entry = await self._get_audit_entry(guild, discord.AuditLogAction.member_update, after.id, max_age_seconds=10.0)
+            if entry:
+                mod = entry.user
+                if entry.reason:
+                    reason = entry.reason
 
             mod_str = mod.mention if mod else "*Unknown Moderator / AutoMod*"
             if after.timed_out_until and after.timed_out_until > discord.utils.utcnow():
@@ -777,14 +779,18 @@ class SecurityCog(commands.Cog):
                             thumbnail_url=message.author.display_avatar.url,
                             event="security_anti_spam"
                         )
-                        await self.execute_punishment(message.author, len(warns), reason)
+                    except discord.Forbidden:
+                        try:
+                            await self.execute_punishment(message.author, len(warns), reason)
+                        except Exception:
+                            pass
                     except Exception as e:
                         print(f"[Security] Anti-spam timeout failed: {e}")
-                        
-                        # Also check the overall punishment ladder
-                        await self.execute_punishment(message.author, len(warns), reason)
-                    except discord.Forbidden:
-                        pass
+                        try:
+                            # Also check the overall punishment ladder
+                            await self.execute_punishment(message.author, len(warns), reason)
+                        except Exception:
+                            pass
 
     # ── Slash Commands ──────────────────────────────────────────────────────
 

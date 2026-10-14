@@ -242,11 +242,58 @@ class ServerLogger:
                 to_send = embeds[:10]
                 self._queue[channel_id] = embeds[10:]
                 channel = self.bot.get_channel(channel_id)
-                if channel:
+                if not channel:
                     try:
+                        channel = await self.bot.fetch_channel(channel_id)
+                    except (discord.NotFound, discord.Forbidden):
+                        self._queue.pop(channel_id, None)
+                        continue
+                    except Exception:
+                        continue
+
+                if isinstance(channel, discord.TextChannel):
+                    try:
+                        perms = channel.permissions_for(channel.guild.me)
+                        if not perms.send_messages or not perms.embed_links:
+                            continue
                         await channel.send(embeds=to_send)
+                    except (discord.NotFound, discord.Forbidden):
+                        self._queue.pop(channel_id, None)
                     except Exception:
                         pass
+
+    async def _fetch_audit_entry(
+        self,
+        guild: discord.Guild,
+        action: discord.AuditLogAction,
+        limit: int = 3,
+        target_id: Optional[int] = None,
+        max_age_seconds: Optional[float] = None
+    ) -> Optional[discord.AuditLogEntry]:
+        """Safely fetch audit log entries checking permissions and handling errors without crashing."""
+        if not guild or not getattr(guild, "me", None):
+            return None
+        try:
+            if not guild.me.guild_permissions.view_audit_log:
+                return None
+        except Exception:
+            return None
+
+        try:
+            await asyncio.sleep(0.3)
+            async for entry in guild.audit_logs(limit=limit, action=action):
+                if target_id is not None:
+                    target_obj_id = getattr(entry.target, "id", None)
+                    if target_obj_id != target_id:
+                        continue
+                if max_age_seconds is not None and entry.created_at:
+                    age = (discord.utils.utcnow() - entry.created_at).total_seconds()
+                    if age > max_age_seconds:
+                        continue
+                return entry
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException, Exception):
+            return None
+        return None
 
     async def _send(self, guild: discord.Guild, event: str, embed: discord.Embed) -> None:
         cfg = self.db.get(guild.id)
@@ -348,17 +395,12 @@ class ServerLogger:
         is_kick = False
         kicker = None
         kick_reason = "No reason provided"
-        try:
-            await asyncio.sleep(0.3)
-            async for entry in guild.audit_logs(limit=3, action=discord.AuditLogAction.kick):
-                if entry.target.id == member.id and (discord.utils.utcnow() - entry.created_at).total_seconds() < 5:
-                    is_kick = True
-                    kicker = entry.user
-                    if entry.reason:
-                        kick_reason = entry.reason
-                    break
-        except (discord.Forbidden, discord.HTTPException):
-            pass
+        entry = await self._fetch_audit_entry(guild, discord.AuditLogAction.kick, limit=3, target_id=member.id, max_age_seconds=5)
+        if entry:
+            is_kick = True
+            kicker = entry.user
+            if entry.reason:
+                kick_reason = entry.reason
 
         if is_kick:
             embed = create_audit_embed(
@@ -387,15 +429,11 @@ class ServerLogger:
     async def on_member_ban(self, guild: discord.Guild, user: Union[discord.User, discord.Member]) -> None:
         mod = None
         reason = "No reason provided"
-        try:
-            async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.ban):
-                if entry.target.id == user.id:
-                    mod = entry.user
-                    if entry.reason:
-                        reason = entry.reason
-                    break
-        except discord.Forbidden:
-            pass
+        entry = await self._fetch_audit_entry(guild, discord.AuditLogAction.ban, limit=1, target_id=user.id)
+        if entry:
+            mod = entry.user
+            if entry.reason:
+                reason = entry.reason
 
         embed = create_audit_embed(
             title="🔨 Member banned",
@@ -410,13 +448,9 @@ class ServerLogger:
 
     async def on_member_unban(self, guild: discord.Guild, user: discord.User) -> None:
         mod = None
-        try:
-            async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.unban):
-                if entry.target.id == user.id:
-                    mod = entry.user
-                    break
-        except discord.Forbidden:
-            pass
+        entry = await self._fetch_audit_entry(guild, discord.AuditLogAction.unban, limit=1, target_id=user.id)
+        if entry:
+            mod = entry.user
 
         embed = create_audit_embed(
             title="✅ Member unbanned",
@@ -453,14 +487,9 @@ class ServerLogger:
 
         if added or removed:
             mod = None
-            try:
-                await asyncio.sleep(0.5)
-                async for entry in guild.audit_logs(limit=5, action=discord.AuditLogAction.member_role_update):
-                    if entry.target.id == after.id:
-                        mod = entry.user
-                        break
-            except (discord.Forbidden, discord.HTTPException, Exception):
-                pass
+            entry = await self._fetch_audit_entry(guild, discord.AuditLogAction.member_role_update, limit=5, target_id=after.id)
+            if entry:
+                mod = entry.user
 
             if added and removed:
                 added_str = " ".join(r.mention for r in added)
@@ -513,15 +542,11 @@ class ServerLogger:
         if before.timed_out_until != after.timed_out_until and after.timed_out_until:
             mod = None
             reason = "No reason provided"
-            try:
-                async for entry in guild.audit_logs(limit=1, action=discord.AuditLogAction.member_update):
-                    if entry.target.id == after.id:
-                        mod = entry.user
-                        if entry.reason:
-                            reason = entry.reason
-                        break
-            except (discord.Forbidden, discord.HTTPException, Exception):
-                pass
+            entry = await self._fetch_audit_entry(guild, discord.AuditLogAction.member_update, limit=1, target_id=after.id)
+            if entry:
+                mod = entry.user
+                if entry.reason:
+                    reason = entry.reason
 
             embed = create_audit_embed(
                 title="⏱️ Member timed out",
@@ -540,14 +565,9 @@ class ServerLogger:
     async def on_guild_role_create(self, role: discord.Role) -> None:
         guild = role.guild
         mod = None
-        try:
-            await asyncio.sleep(0.4)
-            async for entry in guild.audit_logs(limit=3, action=discord.AuditLogAction.role_create):
-                if entry.target.id == role.id:
-                    mod = entry.user
-                    break
-        except (discord.Forbidden, discord.HTTPException, Exception):
-            pass
+        entry = await self._fetch_audit_entry(guild, discord.AuditLogAction.role_create, limit=3, target_id=role.id)
+        if entry:
+            mod = entry.user
 
         details = []
         if role.color.value:
@@ -573,14 +593,9 @@ class ServerLogger:
     async def on_guild_role_delete(self, role: discord.Role) -> None:
         guild = role.guild
         mod = None
-        try:
-            await asyncio.sleep(0.4)
-            async for entry in guild.audit_logs(limit=3, action=discord.AuditLogAction.role_delete):
-                if entry.target.id == role.id:
-                    mod = entry.user
-                    break
-        except (discord.Forbidden, discord.HTTPException, Exception):
-            pass
+        entry = await self._fetch_audit_entry(guild, discord.AuditLogAction.role_delete, limit=3, target_id=role.id)
+        if entry:
+            mod = entry.user
 
         embed = create_audit_embed(
             title="🗑️ Role deleted",
@@ -612,14 +627,9 @@ class ServerLogger:
             return
 
         mod = None
-        try:
-            await asyncio.sleep(0.4)
-            async for entry in guild.audit_logs(limit=3, action=discord.AuditLogAction.role_update):
-                if entry.target.id == after.id:
-                    mod = entry.user
-                    break
-        except (discord.Forbidden, discord.HTTPException, Exception):
-            pass
+        entry = await self._fetch_audit_entry(guild, discord.AuditLogAction.role_update, limit=3, target_id=after.id)
+        if entry:
+            mod = entry.user
 
         embed = create_audit_embed(
             title="✏️ Role updated",
@@ -692,12 +702,9 @@ class ServerLogger:
 
     async def on_guild_channel_create(self, channel) -> None:
         creator = None
-        try:
-            async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_create):
-                creator = entry.user
-                break
-        except discord.Forbidden:
-            pass
+        entry = await self._fetch_audit_entry(channel.guild, discord.AuditLogAction.channel_create, limit=1, target_id=channel.id)
+        if entry:
+            creator = entry.user
 
         details = [f"Type: `{channel.type}`"]
         if channel.category:
@@ -715,12 +722,9 @@ class ServerLogger:
 
     async def on_guild_channel_delete(self, channel) -> None:
         deleter = None
-        try:
-            async for entry in channel.guild.audit_logs(limit=1, action=discord.AuditLogAction.channel_delete):
-                deleter = entry.user
-                break
-        except discord.Forbidden:
-            pass
+        entry = await self._fetch_audit_entry(channel.guild, discord.AuditLogAction.channel_delete, limit=1, target_id=channel.id)
+        if entry:
+            deleter = entry.user
 
         details = [f"Type: `{channel.type}`"]
         embed = create_audit_embed(
@@ -784,72 +788,6 @@ class ServerLogger:
         )
         await self._send(channel.guild, "webhook_update", embed)
 
-
-    # ── Role Events ───────────────────────────────────────────────────────────
-
-    async def on_guild_role_create(self, role: discord.Role) -> None:
-        creator = None
-        try:
-            async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_create):
-                creator = entry.user
-                break
-        except discord.Forbidden:
-            pass
-
-        embed = create_audit_embed(
-            title="🎭 Role created",
-            subject=role.mention,
-            actor=creator,
-            details=[
-                f"Color #{role.color.value:06x}",
-                "Hoisted" if role.hoist else "Not hoisted"
-            ],
-            color=C.PURPLE,
-            footer_text="Role Created"
-        )
-        await self._send(role.guild, "role_create", embed)
-
-    async def on_guild_role_delete(self, role: discord.Role) -> None:
-        deleter = None
-        try:
-            async for entry in role.guild.audit_logs(limit=1, action=discord.AuditLogAction.role_delete):
-                deleter = entry.user
-                break
-        except discord.Forbidden:
-            pass
-
-        embed = create_audit_embed(
-            title="🗑️ Role deleted",
-            subject=f"@{role.name}",
-            actor=deleter,
-            details=[f"Had {len(role.members):,} members"],
-            color=C.DANGER,
-            footer_text="Role Deleted"
-        )
-        await self._send(role.guild, "role_delete", embed)
-
-    async def on_guild_role_update(self, before: discord.Role, after: discord.Role) -> None:
-        changes: List[Tuple[str, str, str]] = []
-        if before.name != after.name:
-            changes.append(("Name", before.name, after.name))
-        if before.color != after.color:
-            changes.append(("Color", f"#{before.color.value:06x}", f"#{after.color.value:06x}"))
-        if before.hoist != after.hoist:
-            changes.append(("Hoisted", str(before.hoist), str(after.hoist)))
-        if before.mentionable != after.mentionable:
-            changes.append(("Mentionable", str(before.mentionable), str(after.mentionable)))
-
-        if not changes:
-            return
-
-        embed = create_audit_embed(
-            title="✏️ Role updated",
-            subject=after.mention,
-            changes=changes,
-            color=C.PURPLE,
-            footer_text="Role Update"
-        )
-        await self._send(after.guild, "role_update", embed)
 
 
     # ── Voice Events ──────────────────────────────────────────────────────────

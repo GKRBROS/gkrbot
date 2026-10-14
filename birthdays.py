@@ -389,14 +389,20 @@ class BirthdayCog(commands.Cog):
     @tasks.loop(hours=1)
     async def check_birthdays(self):
         """Every hour, check if it is anyone's birthday in IST and send wishes."""
-        now = datetime.datetime.now(IST)
-        await self._send_birthday_wishes(now.day, now.month, now.year)
+        try:
+            now = datetime.datetime.now(IST)
+            await self._send_birthday_wishes(now.day, now.month, now.year)
+        except Exception as e:
+            print(f"[Birthdays] Error in birthday task: {e}")
 
     async def _startup_check(self):
         """Run an immediate birthday check on bot startup once ready."""
-        await self.bot.wait_until_ready()
-        now = datetime.datetime.now(IST)
-        await self._send_birthday_wishes(now.day, now.month, now.year)
+        try:
+            await self.bot.wait_until_ready()
+            now = datetime.datetime.now(IST)
+            await self._send_birthday_wishes(now.day, now.month, now.year)
+        except Exception as e:
+            print(f"[Birthdays] Error in startup check: {e}")
 
     @check_birthdays.before_loop
     async def before_check_birthdays(self):

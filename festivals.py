@@ -198,8 +198,11 @@ class FestivalsCog(commands.GroupCog, name="festivals"):
     # Task to run every day at 8:00 AM IST
     @tasks.loop(time=time(hour=8, minute=0, tzinfo=IST))
     async def announcement_task(self):
-        await self.bot.wait_until_ready()
-        await self.run_announcements()
+        try:
+            await self.bot.wait_until_ready()
+            await self.run_announcements()
+        except Exception as e:
+            print(f"[Festivals] Error in announcement task: {e}")
 
     @app_commands.command(name="setup", description="Setup automated festival announcements")
     @app_commands.describe(channel="The channel to send announcements in")

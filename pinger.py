@@ -150,12 +150,18 @@ class PingerCog(commands.Cog):
     # ── background loop ──────────────────────────────────────────────
     @tasks.loop(seconds=LOOP_TICK_SECONDS)
     async def ping_loop(self):
-        import time
-        now = int(time.time())
-        for cfg in self.db.all_enabled():
-            if cfg.next_run_at > now:
-                continue
-            await self._fire(cfg)
+        try:
+            import time
+            now = int(time.time())
+            for cfg in self.db.all_enabled():
+                try:
+                    if cfg.next_run_at > now:
+                        continue
+                    await self._fire(cfg)
+                except Exception as e:
+                    print(f"[Pinger] Error processing pinger config {getattr(cfg, 'id', None)}: {e}")
+        except Exception as e:
+            print(f"[Pinger] Error in ping_loop: {e}")
 
     @ping_loop.before_loop
     async def _before_loop(self):

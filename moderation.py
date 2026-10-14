@@ -293,14 +293,22 @@ class ModerationCog(commands.Cog):
         embed = discord.Embed(title=title, description=message, color=color_int)
         if interaction.guild and interaction.guild.icon:
             embed.set_footer(text=interaction.guild.name, icon_url=interaction.guild.icon.url)
-        await channel.send(embed=embed)
+        try:
+            await channel.send(embed=embed)
+        except (discord.Forbidden, discord.HTTPException) as e:
+            await interaction.response.send_message(embed=embed_error(f"Failed to send to {channel.mention}: {e}"), ephemeral=True)
+            return
         await interaction.response.send_message(embed=embed_success("Embed Dispatched", f"Sent to {channel.mention}."), ephemeral=True)
 
     @app_commands.command(name="sayt", description="Send a plain text message as the bot")
     @app_commands.describe(channel="Target channel", message="Message content")
     @app_commands.default_permissions(manage_messages=True)
     async def sayt(self, interaction: discord.Interaction, channel: discord.TextChannel, message: str) -> None:
-        await channel.send(message)
+        try:
+            await channel.send(message)
+        except (discord.Forbidden, discord.HTTPException) as e:
+            await interaction.response.send_message(embed=embed_error(f"Failed to send to {channel.mention}: {e}"), ephemeral=True)
+            return
         await interaction.response.send_message(embed=embed_success("Message Dispatched", f"Sent to {channel.mention}."), ephemeral=True)
 
     # ── /config & /status ─────────────────────────────────────────────────────

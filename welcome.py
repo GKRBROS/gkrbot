@@ -1122,9 +1122,10 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
         # Just the image posted as a normal attachment — no embed, no text.
         try:
             await channel.send(file=discord_file)
-        except discord.Forbidden:
-            print(f"[Welcome] Missing Send Messages / Attach Files in #{channel.name}")
-            raise
+        except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
+            print(f"[Welcome] Missing permissions or failed to send card in #{channel.name}: {e}")
+        except Exception as e:
+            print(f"[Welcome] Unexpected error sending card in #{channel.name}: {e}")
         return
 
     # ── Format the custom welcome message ────────────────────────────────────
@@ -1219,7 +1220,12 @@ async def send_welcome(member: discord.Member, config: WelcomeConfig) -> None:
     # ── Content (outside embed) — clean single-line ping ─────────────────────
     content = f"👋  {member.mention} — **Welcome to the family!** 🎊"
 
-    await channel.send(content=content, embed=embed, file=discord_file)
+    try:
+        await channel.send(content=content, embed=embed, file=discord_file)
+    except (discord.Forbidden, discord.NotFound, discord.HTTPException) as e:
+        print(f"[Welcome] Missing permissions or failed to send welcome in #{channel.name}: {e}")
+    except Exception as e:
+        print(f"[Welcome] Unexpected error sending welcome in #{channel.name}: {e}")
 
 
 async def send_leave(member: discord.Member, config: WelcomeConfig) -> None:

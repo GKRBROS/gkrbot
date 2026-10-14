@@ -79,15 +79,18 @@ class AntiHackedCog(commands.Cog):
     @tasks.loop(minutes=5)
     async def cleanup_tracker(self):
         """Runs every 5 minutes to clear out old tracked messages and prevent memory leaks."""
-        now = time.time()
-        for guild_id in list(self.tracker.keys()):
-            for user_id in list(self.tracker[guild_id].keys()):
-                # Keep only messages from the last 20 seconds
-                self.tracker[guild_id][user_id] = [(t, msg) for t, msg in self.tracker[guild_id][user_id] if now - t <= 20.0]
-                if not self.tracker[guild_id][user_id]:
-                    del self.tracker[guild_id][user_id]
-            if not self.tracker[guild_id]:
-                del self.tracker[guild_id]
+        try:
+            now = time.time()
+            for guild_id in list(self.tracker.keys()):
+                for user_id in list(self.tracker[guild_id].keys()):
+                    # Keep only messages from the last 20 seconds
+                    self.tracker[guild_id][user_id] = [(t, msg) for t, msg in self.tracker[guild_id][user_id] if now - t <= 20.0]
+                    if not self.tracker[guild_id][user_id]:
+                        del self.tracker[guild_id][user_id]
+                if not self.tracker[guild_id]:
+                    del self.tracker[guild_id]
+        except Exception as e:
+            print(f"[AntiHacked] cleanup_tracker error: {e}")
 
     def is_staff(self, member: discord.Member) -> bool:
         """Check if the user has any powerful permissions natively."""

@@ -1365,53 +1365,60 @@ def has_gkr_role(member: discord.Member) -> bool:
 @tasks.loop(minutes=10)
 async def nickname_sync_task():
     """Background task to sync nicknames for bot role members — HOME GUILD ONLY."""
-    total_changed = 0
-    total_failed = 0
-    
-    for guild in bot.guilds:
-        # ── Nickname sync only runs in the home server ──────────────
-        if guild.id != GUILD_ID:
-            continue
+    try:
+        total_changed = 0
+        total_failed = 0
+        
+        for guild in bot.guilds:
+            # ── Nickname sync only runs in the home server ──────────────
+            if guild.id != GUILD_ID:
+                continue
 
-        roles = []
-        br = guild.get_role(BOT_ROLE_ID)
-        if br:
-            roles.append(br)
-        # Also catch any role matching BOT_NAME in the home guild
-        target_names = {BOT_NAME.upper(), "GKR"}
-        for r in guild.roles:
-            if r.name.upper() in target_names and r not in roles:
-                roles.append(r)
+            if not guild.me or not guild.me.guild_permissions.manage_nicknames:
+                continue
+
+            roles = []
+            br = guild.get_role(BOT_ROLE_ID)
+            if br:
+                roles.append(br)
+            # Also catch any role matching BOT_NAME in the home guild
+            target_names = {BOT_NAME.upper(), "GKR"}
+            for r in guild.roles:
+                if r.name.upper() in target_names and r not in roles:
+                    roles.append(r)
+                    
+            if not roles:
+                continue
                 
-        if not roles:
-            continue
+            changed = 0
+            failed = 0
+            synced_members = set()
             
-        changed = 0
-        failed = 0
-        synced_members = set()
-        
-        for role in roles:
-            for member in role.members:
-                if member.id in synced_members or member.bot:
-                    continue
-                synced_members.add(member.id)
-                if member.nick != BOT_NAME:
-                    try:
-                        await member.edit(nick=BOT_NAME)
-                        changed += 1
-                    except discord.Forbidden:
-                        failed += 1
-                    except discord.HTTPException:
-                        failed += 1
-                        
-        if changed > 0:
-            print(f"🎯 Server {guild.name} sync complete: {changed} changed, {failed} failed")
-        total_changed += changed
-        total_failed += failed
-        
-    if total_changed > 0:
-        print(f"🎯 {BOT_NAME} Nickname sync complete: {total_changed} changed, {total_failed} failed")
-        print('='*50)
+            for role in roles:
+                for member in role.members:
+                    if member.id in synced_members or member.bot:
+                        continue
+                    if member.top_role >= guild.me.top_role:
+                        continue
+                    synced_members.add(member.id)
+                    if member.nick != BOT_NAME:
+                        try:
+                            await member.edit(nick=BOT_NAME)
+                            changed += 1
+                            await asyncio.sleep(0.5)
+                        except (discord.Forbidden, discord.HTTPException):
+                            failed += 1
+                            
+            if changed > 0:
+                print(f"🎯 Server {guild.name} sync complete: {changed} changed, {failed} failed")
+            total_changed += changed
+            total_failed += failed
+            
+        if total_changed > 0:
+            print(f"🎯 {BOT_NAME} Nickname sync complete: {total_changed} changed, {total_failed} failed")
+            print('='*50)
+    except Exception as e:
+        print(f"[NicknameSync] Error in nickname_sync_task: {e}")
 
 
 @bot.event
@@ -1461,9 +1468,6 @@ async def on_ready():
     if not rotate_activity.is_running():
         rotate_activity.start()
         print("🔄 Activity rotation started!")
-    if not periodic_nickname_sync.is_running():
-        periodic_nickname_sync.start()
-        print("🔄 Periodic nickname sync started!")
 
     # Check roles configurations in the guild
     try:
@@ -1581,67 +1585,25 @@ async def on_guild_channel_update(before, after):
 @tasks.loop(minutes=5)  # Changed to 5 minutes to drastically reduce CPU and API usage
 async def rotate_activity():
     """Rotate bot activities with live stats for a premium feel"""
-    
-    total_members = sum(g.member_count for g in bot.guilds if g.member_count)
-    
-    activities = [
-        discord.Activity(type=discord.ActivityType.watching, name=f"{total_members:,} Members 👥"),
-        discord.Activity(type=discord.ActivityType.playing, name=f"{BOT_NAME} ⚡ | /help"),
-        discord.Activity(type=discord.ActivityType.competing, name=f"{BOT_NAME} Leaderboards 🏆"),
-        discord.Activity(type=discord.ActivityType.listening, name="Slash Commands Only 💬"),
-        discord.Activity(type=discord.ActivityType.watching, name=f"Over The {BOT_NAME} Family 🛡️")
-    ]
-    
-    activity = random.choice(activities)
-    await bot.change_presence(activity=activity)
-    
-    # Occasional logging to avoid console spam
-    if random.randint(1, 12) == 1:  # Only log every ~12th change to reduce console spam
-        print(f"🔄 Activity changed to: {activity.name}")
-
-@tasks.loop(hours=1)
-async def periodic_nickname_sync():
-    """Periodically sync nicknames — HOME GUILD ONLY."""
-    for guild in bot.guilds:
-        # ── Only run in the home server ─────────────────────────────────
-        if guild.id != GUILD_ID:
-            continue
-
-        roles = []
-        br = guild.get_role(BOT_ROLE_ID)
-        if br:
-            roles.append(br)
-        target_names = {BOT_NAME.upper(), "GKR"}
-        for r in guild.roles:
-            if r.name.upper() in target_names and r not in roles:
-                roles.append(r)
-                
-        if not roles:
-            continue
-            
-        changed = 0
-        synced_members = set()
+    try:
+        total_members = sum(g.member_count for g in bot.guilds if g.member_count)
         
-        for role in roles:
-            for member in role.members:
-                if member.id in synced_members or member.bot:
-                    continue
-                synced_members.add(member.id)
-                if member.nick != BOT_NAME:
-                    try:
-                        await member.edit(nick=BOT_NAME)
-                        changed += 1
-                        print(f"🔄 Periodic sync: {member.display_name} → {BOT_NAME} in {guild.name}")
-                        await asyncio.sleep(0.5)
-                    except (discord.Forbidden, discord.HTTPException):
-                        pass
-                        
-        if changed > 0:
-            print(f"🎯 Periodic sync complete: {changed} nicknames updated in {guild.name}")
-
-@periodic_nickname_sync.before_loop
-async def before_periodic_sync():
-    await bot.wait_until_ready()
+        activities = [
+            discord.Activity(type=discord.ActivityType.watching, name=f"{total_members:,} Members 👥"),
+            discord.Activity(type=discord.ActivityType.playing, name=f"{BOT_NAME} ⚡ | /help"),
+            discord.Activity(type=discord.ActivityType.competing, name=f"{BOT_NAME} Leaderboards 🏆"),
+            discord.Activity(type=discord.ActivityType.listening, name="Slash Commands Only 💬"),
+            discord.Activity(type=discord.ActivityType.watching, name=f"Over The {BOT_NAME} Family 🛡️")
+        ]
+        
+        activity = random.choice(activities)
+        await bot.change_presence(activity=activity)
+        
+        # Occasional logging to avoid console spam
+        if random.randint(1, 12) == 1:  # Only log every ~12th change to reduce console spam
+            print(f"🔄 Activity changed to: {activity.name}")
+    except Exception as e:
+        print(f"⚠️ Failed to rotate activity: {e}")
 
 @bot.command(name='setnick')
 @commands.has_permissions(manage_nicknames=True)
@@ -2253,6 +2215,11 @@ async def on_raw_reaction_add(payload):
         
     member = guild.get_member(payload.user_id)
     if not member:
+        try:
+            member = await guild.fetch_member(payload.user_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
+    if not member:
         print(f"❌ Member not found: {payload.user_id}")
         return
     
@@ -2276,12 +2243,13 @@ async def on_raw_reaction_add(payload):
                 # Keep only this user's reaction for this emoji (count stays at 1)
                 try:
                     channel = guild.get_channel(payload.channel_id)
-                    message = await channel.fetch_message(payload.message_id)
-                    for reaction in message.reactions:
-                        if str(reaction.emoji) == emoji:
-                            async for user in reaction.users():
-                                if user.id != payload.user_id and user.id != bot.user.id:
-                                    await message.remove_reaction(reaction.emoji, user)
+                    if channel:
+                        message = await channel.fetch_message(payload.message_id)
+                        for reaction in message.reactions:
+                            if str(reaction.emoji) == emoji:
+                                async for user in reaction.users():
+                                    if user.id != payload.user_id and user.id != bot.user.id:
+                                        await message.remove_reaction(reaction.emoji, user)
                 except Exception as e:
                     print(f"⚠️ Warning when cleaning reactions: {e}")
                                 
@@ -2312,6 +2280,11 @@ async def on_raw_reaction_remove(payload):
         return
         
     member = guild.get_member(payload.user_id)
+    if not member:
+        try:
+            member = await guild.fetch_member(payload.user_id)
+        except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+            pass
     if not member:
         return
     

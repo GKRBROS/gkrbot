@@ -141,7 +141,7 @@ class RoleRestoreCog(commands.Cog):
 
         for role_id in saved_ids:
             role = guild.get_role(role_id)
-            if role and not role.managed and role < guild.me.top_role:
+            if role and not role.managed and guild.me and role < guild.me.top_role:
                 roles_to_restore.append(role)
             else:
                 missing.append(str(role_id))

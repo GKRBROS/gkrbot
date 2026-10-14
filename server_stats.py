@@ -136,21 +136,27 @@ class ServerStatsCog(commands.Cog):
     async def update_stats_task(self):
         """Update the channel names periodically. Discord rate limits channel renames to 2 per 10 minutes."""
         for guild in self.bot.guilds:
-            cfg = self.db.get_config(guild.id)
-            if not cfg:
-                continue
-                
-            total = guild.member_count
-            bots = sum(1 for m in guild.members if m.bot)
-            humans = total - bots
-            
-            # Fetch channels
-            total_ch = guild.get_channel(int(cfg['total_channel_id'])) if cfg['total_channel_id'] else None
-            humans_ch = guild.get_channel(int(cfg['humans_channel_id'])) if cfg['humans_channel_id'] else None
-            bots_ch = guild.get_channel(int(cfg['bots_channel_id'])) if cfg['bots_channel_id'] else None
-            
-            # Update names if needed
             try:
+                cfg = self.db.get_config(guild.id)
+                if not cfg:
+                    continue
+                    
+                total = guild.member_count or len(guild.members)
+                bots = sum(1 for m in guild.members if m.bot)
+                humans = max(0, total - bots)
+                
+                # Fetch channels safely
+                def _get_ch(val):
+                    try:
+                        return guild.get_channel(int(val)) if val else None
+                    except (ValueError, TypeError):
+                        return None
+
+                total_ch = _get_ch(cfg.get('total_channel_id'))
+                humans_ch = _get_ch(cfg.get('humans_channel_id'))
+                bots_ch = _get_ch(cfg.get('bots_channel_id'))
+                
+                # Update names if needed
                 if total_ch and str(total) not in total_ch.name:
                     await total_ch.edit(name=f"👥 Total Members: {total}")
                 if humans_ch and str(humans) not in humans_ch.name:

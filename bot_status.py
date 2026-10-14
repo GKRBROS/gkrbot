@@ -518,8 +518,11 @@ class BotStatusCog(commands.Cog):
 
     @tasks.loop(seconds=60)
     async def _heartbeat(self) -> None:
-        _update_history()
-        await self._update(online=True)
+        try:
+            _update_history()
+            await self._update(online=True)
+        except Exception as e:
+            print(f"[BotStatus] ⚠️ Error in heartbeat loop: {e}")
 
     @_heartbeat.before_loop
     async def _before_heartbeat(self) -> None:
@@ -529,7 +532,10 @@ class BotStatusCog(commands.Cog):
 
     @tasks.loop(minutes=10)
     async def _owner_status_loop(self) -> None:
-        await self.update_owner_status(state="online")
+        try:
+            await self.update_owner_status(state="online")
+        except Exception as e:
+            print(f"[BotStatus] ⚠️ Error in owner status loop: {e}")
 
     @_owner_status_loop.before_loop
     async def _before_owner_status_loop(self) -> None:
