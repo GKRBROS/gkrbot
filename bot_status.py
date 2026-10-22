@@ -406,7 +406,7 @@ async def _build_embed(bot: commands.Bot, *, online: bool = True, chart_url: str
         from bot_status_msg import get_status_message
         notice = get_status_message()
         if notice and notice.get("active") and notice.get("message"):
-            desc_lines.append(f"\n📢 **BROADCAST DIRECTIVE**\n> {notice['message']}\n*Issued by {notice.get('author', 'Dev')} · {notice.get('updated_at', 'recently')}*")
+            desc_lines.append(f"\n📢 **BROADCAST DIRECTIVE**\n```\n{notice['message']}\n```\n*Issued by {notice.get('author', 'Dev')} · {notice.get('updated_at', 'recently')}*")
     except Exception:
         pass
 
@@ -593,7 +593,7 @@ class BotStatusCog(commands.Cog):
             notice = get_status_message()
             lines = []
             if notice and notice.get("message"):
-                lines.append(f"📢 **Announcement:**\n{notice['message']}\n")
+                lines.append(f"📢 **Announcement:**\n```\n{notice['message']}\n```\n")
             lines.append(f"📶 **Latency:** `{round(self.bot.latency * 1000)}ms`")
             lines.append(f"⏱️ **Uptime:** `{_fmt_uptime()}`")
             lines.append(f"🕒 **Last Checked:** <t:{now_ts}:R>")

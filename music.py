@@ -728,13 +728,6 @@ class GuildPlayer:
                 "Use `/play <song or link>` or `/random` to start streaming!"
             )
 
-            try:
-                from bot_status_msg import get_status_message
-                status_msg = get_status_message()
-                if status_msg and status_msg.get("active") and status_msg.get("message"):
-                    desc += f"\n\n```\n📢 Notice: {status_msg['message']}\n```"
-            except Exception:
-                pass
 
             embed.description = desc
             embed.set_footer(text=f"Queue: 0 tracks · {BOT_NAME} Studio Audio")
@@ -768,13 +761,6 @@ class GuildPlayer:
             + f"🔊 `{vol}%`  ·  🎛️ `{self.current_filter}`  ·  🔁 `{loop_str}`  ·  ⚡ `{'24/7 ON' if self.mode_247 else '24/7 OFF'}`\n\n"
             f"🎧 Requested by **{requester}**  ·  {status_badge}"
         )
-        try:
-            from bot_status_msg import get_status_message
-            status_msg = get_status_message()
-            if status_msg and status_msg.get("active") and status_msg.get("message"):
-                desc += f"\n\n```\n📢 Notice: {status_msg['message']}\n```"
-        except Exception:
-            pass
         embed.description = desc
 
         artwork = getattr(track, 'artwork_url', None) or getattr(track, 'thumbnail', None)

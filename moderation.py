@@ -367,7 +367,7 @@ class ModerationCog(commands.GroupCog, group_name="mod"):
             if status_msg and status_msg.get("active") and status_msg.get("message"):
                 embed.add_field(
                     name="📢 Developer Notice",
-                    value=f"> {status_msg['message']}\n*Updated: {status_msg.get('updated_at', 'recently')} by {status_msg.get('author', 'Dev')}*",
+                    value=f"```\n{status_msg['message']}\n```\n*Updated: {status_msg.get('updated_at', 'recently')} by {status_msg.get('author', 'Dev')}*",
                     inline=False
                 )
         except Exception:
