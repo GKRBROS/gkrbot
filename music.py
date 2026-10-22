@@ -298,18 +298,8 @@ LAVALINK_PASSWORD = os.getenv("LAVALINK_PASSWORD")
 
 SPOTIPY_CLIENT_ID     = os.getenv("SPOTIFY_CLIENT_ID")
 SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET")
+# Spotify client disabled: search ranking powered natively by YouTube Music & YouTube
 sp = None
-if SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET:
-    try:
-        import spotipy
-        from spotipy.oauth2 import SpotifyClientCredentials
-        sp = spotipy.Spotify(auth_manager=SpotifyClientCredentials(
-            client_id=SPOTIPY_CLIENT_ID,
-            client_secret=SPOTIPY_CLIENT_SECRET
-        ))
-        print("✅ Spotify integration enabled.")
-    except Exception as e:
-        print(f"⚠️ Spotify not available: {e}")
 
 def build_progress_bar(position: int, duration: int, length: int = 15) -> str:
     """Renders a simple text progress bar, e.g. `▬▬▬🔘▬▬▬▬▬▬▬  1:23 / 3:45`."""
@@ -1377,6 +1367,19 @@ class MusicCog(commands.Cog):
         return "/shorts/" in uri or "#shorts" in title.lower() or "#ytshorts" in title.lower()
 
     @staticmethod
+    def _clean_track_title(title: str) -> str:
+        """Strip parentheticals, brackets, and metadata noise from a track title."""
+        t = re.sub(r"[\(\[\{].*?[\)\]\}]", " ", title)
+        noise = (
+            r"\b(official\s+(music\s+)?video|official\s+audio|official\s+lyric(s)?|"
+            r"lyric\s+video|visualizer|audio\s+track|full\s+song|full\s+video\s+song|"
+            r"hd|4k|hq|music\s+video)\b"
+        )
+        t = re.sub(noise, " ", t, flags=re.IGNORECASE)
+        t = re.sub(r"[-–—:|]+", " ", t)
+        return re.sub(r"\s+", " ", t).strip()
+
+    @staticmethod
     def _official_score(title: str, author: str) -> float:
         """Score how 'official' a result looks (0.0–1.0)."""
         t = title.lower()
@@ -1385,13 +1388,13 @@ class MusicCog(commands.Cog):
         if "- topic" in a or a.endswith("topic"):
             score += 1.0   # YouTube Music official topic channel = highest
         if "vevo" in a or "vevo" in t:
-            score += 0.9
+            score += 0.95
         official_terms = ["official audio", "official music video", "official video",
                           "full video song", "full song", "lyrical video", "lyric video",
                           "official lyric", "official"]
         for term in official_terms:
             if term in t:
-                score += 0.5
+                score += 0.70
                 break
         # Known major labels / music channels
         label_signals = [
@@ -1404,33 +1407,14 @@ class MusicCog(commands.Cog):
         ]
         for lbl in label_signals:
             if lbl in a or lbl in t:
-                score += 0.6
+                score += 0.75
                 break
         return min(score, 1.0)
 
     @staticmethod
     def _alternate_version_penalty(title: str, author: str, requested_versions: set) -> float:
-        """
-        Return a penalty score (0.0 = no penalty, 1.0 = heavy penalty) for
-        alternate/derivative versions that the user did NOT request.
-        """
-        combined = (title + " " + author).lower()
-        alternate_signals = {
-            "instrumental", "instrumental version", "whistle", "flute", "violin",
-            "guitar", "piano", "saxophone", "sitar", "veena", "bgm",
-            "background music", "background score", "karaoke", "minus one",
-            "no vocals", "without vocals", "vocal removed", "acapella",
-            "ost", "cover", "remix", "slowed", "reverb",
-            "sped up", "speed up", "nightcore", "daycore", "bass boosted",
-            "bass boost", "lofi", "lo-fi", "8d", "16d", "acoustic", "unplugged",
-            "live version", "mashup", "medley", "ai cover", "trending music",
-            "trending audio", "edit audio", "ringtone", "status video",
-        }
-        penalty = 0.0
-        for sig in alternate_signals:
-            if sig in combined and sig not in requested_versions:
-                penalty += 0.6  # each unasked-for alternate tag adds penalty
-        return min(penalty, 1.0)
+        """Kept for API compatibility. No longer applies penalties."""
+        return 0.0
 
     @staticmethod
     def _token_relevance(norm_query: str, norm_title: str, norm_author: str) -> float:
@@ -1446,13 +1430,13 @@ class MusicCog(commands.Cog):
         return len(matched) / len(q_words)
 
     @staticmethod
-    def _rank_tracks(query: str, tracks: List[wavelink.Playable], spotify_top: Optional[dict] = None) -> dict:
+    def _rank_tracks(query: str, tracks: List[wavelink.Playable]) -> dict:
         """
         Score candidates and return single best result or ambiguous list.
         Scoring incorporates:
-          - Title relevance & exact canonical title match bonus
-          - Global streaming popularity from Spotify chart data
+          - Title relevance & exact canonical title match bonus (including cleaned video titles)
           - Artist matching & topic channel / label verification
+          - Heavy promotion of verified official releases over amateur/unverified uploads
           - Rejection of unrequested features, instrumentals, or derivative covers
         """
         if not tracks:
@@ -1479,19 +1463,7 @@ class MusicCog(commands.Cog):
                 print(f"[Rank] 🚫 Hard-rejected (non-music): '{raw_title}'")
                 continue
 
-            # Reject vocal-less/alternate versions unless explicitly requested.
-            raw_combined = f"{raw_title} {raw_author}".lower()
-            vocal_less_signals = (
-                "instrumental", "karaoke", "background music",
-                "background score", "no vocals", "without vocals",
-                "vocal removed", "minus one", "karaoke version",
-            )
-            if (any(sig in raw_combined for sig in vocal_less_signals)
-                    and not any(v in version_tags for v in
-                                ("instrumental", "karaoke", "bgm",
-                                 "background music", "playback"))):
-                print(f"[Rank] 🚫 Hard-rejected (vocal-less variant): '{raw_title}'")
-                continue
+
             if MusicCog._is_shorts(uri, raw_title) and not any(v in ("short", "shorts") for v in version_tags):
                 if length_ms < 60_000:
                     print(f"[Rank] 🚫 Hard-rejected (Shorts): '{raw_title}'")
@@ -1501,36 +1473,49 @@ class MusicCog(commands.Cog):
 
             norm_t = MusicCog._normalize_query(raw_title)
             norm_a = MusicCog._normalize_query(raw_author)
+            cleaned_t = MusicCog._normalize_query(MusicCog._clean_track_title(raw_title))
 
             # ── 1. Title Relevance (0.0–1.0) ─────────────────────────────────
             title_sim = difflib.SequenceMatcher(None, norm_title_intent, norm_t).ratio()
             token_rel = MusicCog._token_relevance(norm_title_intent, norm_t, norm_a)
             relevance_score = (title_sim * 0.6 + token_rel * 0.4)
 
+            # Check cleaned title similarity
+            if cleaned_t:
+                cleaned_sim = difflib.SequenceMatcher(None, norm_title_intent, cleaned_t).ratio()
+                relevance_score = max(relevance_score, cleaned_sim * 0.7 + token_rel * 0.3)
+
             # Check sub-segments (e.g., "Artist - Song Title | Official Video")
             title_parts = re.split(r"[-–—:|]", raw_title)
             best_sub_sim = 0.0
+            is_exact_sub_match = False
             for part in title_parts:
                 norm_part = MusicCog._normalize_query(part)
+                clean_part = MusicCog._normalize_query(MusicCog._clean_track_title(part))
                 if norm_part:
                     part_sim = difflib.SequenceMatcher(None, norm_title_intent, norm_part).ratio()
-                    if norm_title_intent == norm_part:
+                    if norm_title_intent == norm_part or (clean_part and norm_title_intent == clean_part):
                         best_sub_sim = max(best_sub_sim, 1.0)
-                    elif norm_title_intent in norm_part.split():
+                        is_exact_sub_match = True
+                    elif clean_part and norm_title_intent in clean_part.split():
                         best_sub_sim = max(best_sub_sim, 0.95)
+                        if len(clean_part.split()) <= 2:
+                            is_exact_sub_match = True
+                    elif norm_title_intent in norm_part.split():
+                        best_sub_sim = max(best_sub_sim, 0.90)
                     else:
                         best_sub_sim = max(best_sub_sim, part_sim)
 
             if best_sub_sim > 0.6:
-                relevance_score = max(relevance_score, best_sub_sim * 0.7 + token_rel * 0.3)
+                relevance_score = max(relevance_score, best_sub_sim * 0.75 + token_rel * 0.25)
 
             if norm_title_intent and norm_title_intent in norm_t.split():
                 relevance_score = min(1.0, max(relevance_score + 0.3, 0.90))
 
             # ── 2. Exact Title Matching Bonus ────────────────────────────────
-            # Pure title "STAY" should beat "Stay (feat. Gabzy)"
             exact_title_bonus = 0.0
-            if norm_title_intent and norm_t == norm_title_intent:
+            is_exact_title = (norm_t == norm_title_intent) or (cleaned_t == norm_title_intent) or is_exact_sub_match
+            if norm_title_intent and is_exact_title:
                 exact_title_bonus = 0.15
             elif norm_title_intent and any(feat in norm_t for feat in ("feat", "ft", "featuring", "with")):
                 if not any(feat in norm_query for feat in ("feat", "ft", "featuring", "with")):
@@ -1542,59 +1527,39 @@ class MusicCog(commands.Cog):
                 artist_sim = difflib.SequenceMatcher(None, norm_artist_intent, norm_a).ratio()
                 artist_token = MusicCog._token_relevance(norm_artist_intent, norm_a, norm_t)
                 artist_score = (artist_sim * 0.6 + artist_token * 0.4)
-                if norm_artist_intent in norm_a:
+                if norm_artist_intent in norm_a or norm_artist_intent in norm_t:
                     artist_score = min(1.0, artist_score + 0.3)
             else:
-                artist_score = MusicCog._token_relevance(norm_query, norm_t, norm_a) * 0.5
+                # No artist specified in query — check if author name appeared in query
+                author_words = set(norm_a.split())
+                query_words = set(norm_query.split())
+                if author_words and query_words:
+                    common = author_words & query_words
+                    if common:
+                        artist_score = min(1.0, len(common) / len(author_words))
 
-            # ── 4. Global Hit / Spotify Popularity Bonus ──────────────────────
-            spotify_bonus = 0.0
-            if spotify_top:
-                spot_title = MusicCog._normalize_query(spotify_top.get("title", ""))
-                spot_artists = [MusicCog._normalize_query(a) for a in spotify_top.get("artists", [])]
-                spot_pop = float(spotify_top.get("popularity", 0)) / 100.0
-
-                title_sim_spot = difflib.SequenceMatcher(None, spot_title, norm_t).ratio()
-                title_matched = (spot_title == norm_t) or (spot_title in norm_t) or (norm_t in spot_title) or (title_sim_spot >= 0.8)
-
-                artist_matched = any(
-                    sa and (sa in norm_a or norm_a in sa or sa in norm_t or norm_t in sa or difflib.SequenceMatcher(None, sa, norm_a).ratio() >= 0.7)
-                    for sa in spot_artists
-                )
-
-                if title_matched and artist_matched:
-                    # Direct match with globally most-played song on charts
-                    spotify_bonus = spot_pop * 0.35
-                elif title_matched and not norm_artist_intent:
-                    spotify_bonus = spot_pop * 0.10
-
-            # ── 5. Canonical Version Score (0.0–1.0) ──────────────────────────
-            alt_penalty = MusicCog._alternate_version_penalty(raw_title, raw_author, version_tags)
-            canonical_score = max(0.0, 1.0 - alt_penalty)
-
+            # ── 4. Version Tag Match Bonus (0.0–1.0) ─────────────────────────
+            # If user asked for a specific version (e.g. "slowed reverb"), reward tracks that have it.
+            # No penalty applied — wrong versions just don't get the bonus.
+            alt_penalty = 0.0
             if version_tags:
                 combined_lc = (raw_title + " " + raw_author).lower()
                 version_match = sum(1 for v in version_tags if v in combined_lc)
                 canonical_score = min(1.0, version_match / len(version_tags))
+            else:
+                canonical_score = 1.0
 
-            # ── 6. Official Score (0.0–1.0) ───────────────────────────────────
+            # ── 5. Official Score (0.0–1.0) ───────────────────────────────────
             official_score = MusicCog._official_score(raw_title, raw_author)
-            release_text = f"{raw_title} {raw_author}".lower()
-            if any(sig in release_text for sig in (
-                "official audio", "official lyric", "lyric video",
-                "lyrics", "lyrical", "audio",
-            )):
-                official_score = min(1.0, official_score + 0.15)
 
-            # ── 7. Search Index Soft Priority (0.0–1.0) ───────────────────────
-            # Rank-based popularity — tighter decay to not crush later high-quality hits
-            popularity_score = max(0.0, 1.0 - (rank_idx * 0.08))
+            # ── 6. Search Index Soft Priority (0.0–1.0) ───────────────────────
+            popularity_score = max(0.0, 1.0 - (rank_idx * 0.05))
 
-            # ── 8. Duration Score (0.0–1.0) ───────────────────────────────────
+            # ── 7. Duration Score (0.0–1.0) ───────────────────────────────────
             if 100_000 <= length_ms <= 360_000:
                 duration_score = 1.0
             elif 60_000 <= length_ms < 100_000:
-                duration_score = 0.5
+                duration_score = 0.6
             elif length_ms < 60_000:
                 duration_score = 0.1
             else:
@@ -1604,22 +1569,18 @@ class MusicCog(commands.Cog):
             shorts_penalty = 0.5 if MusicCog._is_shorts(uri, raw_title) else 0.0
 
             # ── FINAL SCORE ────────────────────────────────────────────────────
-            # Weights mirror commit e468fd3: relevance is the dominant factor (0.60 total)
             final = (
-                relevance_score   * 0.35   # primary title relevance
-                + relevance_score * 0.25   # title component doubled (dominant)
+                relevance_score   * 0.42   # dominant title relevance
                 + artist_score    * 0.15
-                + canonical_score * 0.10
-                + official_score  * 0.07
-                + popularity_score * 0.04
-                + duration_score  * 0.04
+                + official_score  * 0.20   # verified Topic / VEVO / Label release
+                + canonical_score * 0.08   # version tag match bonus
+                + popularity_score * 0.05
+                + duration_score  * 0.05
                 + exact_title_bonus
-                + spotify_bonus
                 - shorts_penalty
-                - (alt_penalty * 0.60)
             )
 
-            if relevance_score < 0.10 and not norm_artist_intent and not spotify_bonus:
+            if relevance_score < 0.15 and not norm_artist_intent and artist_score < 0.2:
                 final = min(final, 0.05)
 
             scored.append((final, rank_idx, track, {
@@ -1629,12 +1590,10 @@ class MusicCog(commands.Cog):
                 "official": round(official_score, 3),
                 "popularity": round(popularity_score, 3),
                 "exact": round(exact_title_bonus, 3),
-                "spot_bonus": round(spotify_bonus, 3),
                 "final": round(final, 3),
             }))
 
         if not scored:
-            # All candidates were rejected — return first non-stream as emergency fallback
             for tr in tracks:
                 if not getattr(tr, "is_stream", False):
                     print(f"[Rank] ⚠️ All candidates rejected, emergency fallback to: '{tr.title}'")
@@ -1652,47 +1611,40 @@ class MusicCog(commands.Cog):
             print(f"\n  #{i+1} [{ri}] {tr.title[:60]} — {tr.author or 'N/A'}")
             print(f"       relevance={dbg['relevance']} artist={dbg['artist']} "
                   f"canonical={dbg['canonical']} official={dbg['official']} "
-                  f"spot_bonus={dbg['spot_bonus']} FINAL={dbg['final']}")
-        # Decision log printed below after confidence check
-
+                  f"popularity={dbg['popularity']} FINAL={dbg['final']}")
 
         best_final, _, best_track, best_dbg = scored[0]
 
         # ── Confidence & Disambiguation ────────────────────────────────────────
-        # Decision rules:
-        #   score >= 0.70              → always auto-play (high confidence, best wins)
-        #   score >= 0.45, gap >= 0.06 → auto-play (moderate lead)
-        #   score < 0.30               → always show menu (too uncertain)
-        #   otherwise                  → show menu (close scores, ambiguous)
-        #
-        # NOTE: gap check alone must NOT override a high score. When a search for
-        # "kalyani" returns 5 songs all named Kalyani, they all score ~0.85.
-        # That is not ambiguity — the top result IS the right answer.
         if len(scored) > 1:
             second_final = scored[1][0]
             gap = best_final - second_final
 
+            # High confidence: top result has strong score AND (is official or has clear lead)
             if best_final >= 0.70:
-                # High confidence — top result wins even if others score similarly
-                print(f"[Rank] ✅ HIGH confidence ({best_final:.3f}), auto-playing: \"{best_track.title}\"")
-                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-                return {"type": "single", "track": best_track, "all_tracks": all_ranked_tracks}
+                if best_dbg["official"] >= 0.5 or gap >= 0.08:
+                    print(f"[Rank] ✅ HIGH confidence ({best_final:.3f}, official={best_dbg['official']}), auto-playing: \"{best_track.title}\"")
+                    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+                    return {"type": "single", "track": best_track, "all_tracks": all_ranked_tracks}
+                else:
+                    # Top result is unverified and competitors are close -> show ambiguous menu
+                    print(f"[Rank] ❓ AMBIGUOUS (top {best_final:.3f} lacks official badge, gap={gap:.3f}), showing menu")
+                    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+                    candidates = [t for _, _, t, _ in scored[:5]]
+                    return {"type": "ambiguous", "tracks": candidates, "all_tracks": all_ranked_tracks}
 
             elif best_final >= 0.45 and gap >= 0.06:
-                # Moderate confidence with a clear gap over second place
                 print(f"[Rank] ✅ MODERATE confidence ({best_final:.3f}, gap={gap:.3f}), auto-playing: \"{best_track.title}\"")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
                 return {"type": "single", "track": best_track, "all_tracks": all_ranked_tracks}
 
             elif best_final < 0.30:
-                # Low confidence — let user choose
                 print(f"[Rank] ❓ LOW confidence ({best_final:.3f}), showing menu")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
                 candidates = [t for _, _, t, _ in scored[:5]]
                 return {"type": "ambiguous", "tracks": candidates, "all_tracks": all_ranked_tracks}
 
             else:
-                # Mid-range score with close competitors — show menu
                 print(f"[Rank] ❓ AMBIGUOUS ({best_final:.3f}, gap={gap:.3f}), showing menu")
                 print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
                 candidates = [t for _, _, t, _ in scored[:5]]
@@ -1700,354 +1652,9 @@ class MusicCog(commands.Cog):
         else:
             print(f"[Rank] ✅ Only 1 candidate, auto-playing: \"{best_track.title}\"")
             print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
-
-        return {"type": "single", "track": best_track, "all_tracks": all_ranked_tracks}
-
-
-    async def _resolve_legacy(self, query: str, requester: discord.Member, gp=None) -> dict:
-        """
-        Resolve a search query or URL to track(s).
-        Strategy:
-          1. If URL, load directly.
-          2. If query has explicit prefix (ytmsearch: etc.), use it directly.
-          3. Otherwise:
-             a. Optionally resolve artist+title via Spotify popularity API.
-             b. Search ytmsearch: (YouTube Music catalog) first — most reliable for music.
-             c. Fallback to ytsearch: only if ytmsearch yields low-confidence results.
-             d. scsearch:/spsearch: as tertiary fallbacks.
-          4. Run deterministic ranking engine on each candidate pool.
-          5. Return highest-confidence result.
-        """
-        import time
-
-        nodes = wavelink.Pool.nodes
-        if not nodes:
-            print("[Music] ❌ No Lavalink nodes connected!")
-            return {"type": "error", "message": "No Lavalink node connected"}
-
-        # ── URL normalization ──────────────────────────────────────────────────
-        if "music.youtube.com" in query:
-            query = query.replace("music.youtube.com", "www.youtube.com")
-        if "youtu.be/" in query:
-            video_id = query.split("youtu.be/")[1].split("?")[0].split("&")[0]
-            query = f"https://www.youtube.com/watch?v={video_id}"
-
-        is_url = query.startswith("http://") or query.startswith("https://")
-
-        def _tag(tr):
-            try:
-                tr.extras.requester = requester.display_name
-            except Exception:
-                pass
-            return tr
-
-        # ── Direct URL ────────────────────────────────────────────────────────
-        if is_url:
-            try:
-                results = await wavelink.Playable.search(query)
-                if isinstance(results, wavelink.Playlist):
-                    return {"type": "playlist", "tracks": [_tag(tr) for tr in results.tracks]}
-                elif results:
-                    return {"type": "single", "track": _tag(results[0])}
-            except Exception as e:
-                print(f"[Music] URL search error: {e}")
-            return {"type": "error", "message": "Could not resolve URL"}
-
-        # ── Explicit prefix bypass ─────────────────────────────────────────────
-        explicit_prefixes = ("ytsearch:", "ytmsearch:", "spsearch:", "dzsearch:", "amsearch:")
-        if any(query.startswith(p) for p in explicit_prefixes):
-            try:
-                res = await wavelink.Playable.search(query)
-                if gp:
-                    gp.metrics["load_start"] = gp.metrics.get("load_start", time.time())
-                    gp.metrics["load_end"] = time.time()
-                if res:
-                    ranked = self._rank_tracks(query.split(":", 1)[1], res)
-                    if ranked.get("type") in ("single", "ambiguous"):
-                        if ranked["type"] == "single":
-                            return {"type": "single", "track": _tag(ranked["track"])}
-                        return {"type": "ambiguous", "tracks": [_tag(t) for t in ranked["tracks"]]}
-            except Exception as e:
-                print(f"[Music] Explicit prefix search error: {e}")
-            return {"type": "error", "message": "No results found"}
-
-        # ── Clean query of generic filler before searching ─────────────────────
-        filler_re = r"\b(full song|full video song|official song|official music video|official audio|official video|music video|mp3|hd|4k)\b"
-        clean_q = re.sub(filler_re, "", query, flags=re.IGNORECASE).strip()
-        clean_q = re.sub(r"\s+", " ", clean_q).strip() or query.strip()
-
-        # ── Optional Spotify popularity enrichment ─────────────────────────────
-        spotify_enriched = None
-        if sp:
-            try:
-                loop = asyncio.get_running_loop()
-                sp_res = await loop.run_in_executor(
-                    None, lambda: sp.search(q=clean_q, type="track", limit=5)
-                )
-                items = (sp_res or {}).get("tracks", {}).get("items", [])
-                if items:
-                    items.sort(key=lambda x: x.get("popularity", 0), reverse=True)
-                    top = items[0]
-                    pop = top.get("popularity", 0)
-                    if pop >= 25:
-                        artist = top["artists"][0]["name"]
-                        title = top["name"]
-                        spotify_enriched = f"{artist} - {title}"
-                        print(f"[Music] 🌟 Spotify resolved ({pop}/100): '{spotify_enriched}'")
-            except Exception as e:
-                print(f"[Music] Spotify enrichment info: {e}")
-
-        # ── Search priority ladder ─────────────────────────────────────────────
-        # ytmsearch: targets the YouTube Music catalog which contains verified
-        # artist releases, label uploads, and topic channels — far better signal
-        # quality than raw ytsearch: for music queries.
-        # We only fall back to ytsearch: when ytmsearch: yields low confidence.
-        if spotify_enriched:
-            search_ladder = [
-                ("ytmsearch", f"ytmsearch:{spotify_enriched}"),
-                ("ytmsearch_raw", f"ytmsearch:{clean_q}"),
-                ("ytsearch_enriched", f"ytsearch:{spotify_enriched}"),
-                ("ytsearch", f"ytsearch:{clean_q}"),
-                ("spsearch", f"spsearch:{clean_q}"),
-            ]
-        else:
-            search_ladder = [
-                ("ytmsearch", f"ytmsearch:{clean_q}"),
-                ("ytsearch", f"ytsearch:{clean_q}"),
-                ("spsearch", f"spsearch:{clean_q}"),
-            ]
-
-        best_result = None
-        best_confidence = -1.0
-
-        for source_name, prefix in search_ladder:
-            try:
-                t0 = time.time()
-                res = await wavelink.Playable.search(prefix)
-                t1 = time.time()
-                print(f"[Music] 🔍 {source_name} ({t1-t0:.2f}s) → {len(res) if res else 0} results")
-
-                if gp:
-                    gp.metrics["load_start"] = t0
-                    gp.metrics["load_end"] = t1
-
-                if not res:
-                    continue
-
-                ranked = self._rank_tracks(query, res)
-                if ranked.get("type") == "error":
-                    continue
-
-                if ranked["type"] == "single":
-                    # Estimate confidence from score position
-                    # Re-run to get the top score value for comparison
-                    track = ranked["track"]
-                    # Use a simple heuristic: if we got a clean single result from ytmsearch, trust it
-                    if source_name in ("ytmsearch", "ytmsearch_raw") and best_result is None:
-                        # ytmsearch is trusted catalog — use result immediately if title matches
-                        norm_q = self._normalize_query(query)
-                        norm_t = self._normalize_query(track.title)
-                        sim = difflib.SequenceMatcher(None, norm_q, norm_t).ratio()
-                        if sim >= 0.25 or self._official_score(track.title, track.author) >= 0.5:
-                            return {"type": "single", "track": _tag(track)}
-                        # Low similarity even from ytmsearch — keep searching
-                        best_result = ranked
-                        best_confidence = sim
-                    elif best_result is None:
-                        best_result = ranked
-                        norm_q = self._normalize_query(query)
-                        norm_t = self._normalize_query(track.title)
-                        best_confidence = difflib.SequenceMatcher(None, norm_q, norm_t).ratio()
-
-                elif ranked["type"] == "ambiguous":
-                    if best_result is None:
-                        best_result = ranked
-                    # If we already have a result but it's ambiguous too, keep the first
-
-            except Exception as e:
-                print(f"[Music] Search error ({source_name}): {e}")
-                continue
-
-        # Return whatever we found
-        if best_result:
-            if best_result["type"] == "single":
-                return {"type": "single", "track": _tag(best_result["track"])}
-            elif best_result["type"] == "ambiguous":
-                return {"type": "ambiguous", "tracks": [_tag(t) for t in best_result["tracks"]]}
+            return {"type": "single", "track": best_track, "all_tracks": all_ranked_tracks}
 
 
-
-    async def _resolve_merged(self, query: str, requester: discord.Member, gp=None) -> dict:
-        """Resolve URLs directly and rank merged results from all providers."""
-        import time
-
-        nodes = wavelink.Pool.nodes
-        if not nodes:
-            return {"type": "error", "message": "No Lavalink node connected."}
-
-        original_query = (query or "").strip()
-        if not original_query:
-            return {"type": "error", "message": "Please enter a song name or URL."}
-
-        if "music.youtube.com" in query:
-            query = query.replace("music.youtube.com", "www.youtube.com")
-        if "youtu.be/" in query:
-            video_id = query.split("youtu.be/", 1)[1].split("?", 1)[0].split("&", 1)[0]
-            query = f"https://www.youtube.com/watch?v={video_id}"
-
-        def tag(track):
-            try:
-                if getattr(track, "extras", None) is None:
-                    track.extras = {}
-                track.extras.requester = requester.display_name
-            except Exception:
-                pass
-            return track
-
-        if query.startswith(("http://", "https://")):
-            try:
-                results = await wavelink.Playable.search(query)
-                if isinstance(results, wavelink.Playlist):
-                    tracks = [tag(track) for track in results.tracks if track]
-                    return ({"type": "playlist", "tracks": tracks} if tracks else
-                            {"type": "error", "message": "Playlist contains no playable tracks."})
-                if results:
-                    return {"type": "single", "track": tag(results[0])}
-            except Exception as exc:
-                return {"type": "error", "message": f"Could not resolve URL: {exc}"}
-            return {"type": "error", "message": "Could not resolve the supplied URL."}
-
-        prefixes = ("ytsearch:", "ytmsearch:", "spsearch:", "scsearch:", "dzsearch:", "amsearch:")
-        if query.lower().startswith(prefixes):
-            try:
-                provider, search_text = query.split(":", 1)
-                results = await wavelink.Playable.search(search_text, source=provider)
-                if not results:
-                    return {"type": "error", "message": "No results found."}
-                ranked = self._rank_tracks(search_text, list(results))
-                if ranked.get("type") == "single":
-                    return {"type": "single", "track": tag(ranked["track"])}
-                if ranked.get("type") == "ambiguous":
-                    return {"type": "ambiguous", "tracks": [tag(track) for track in ranked["tracks"]]}
-            except Exception as exc:
-                print(f"[Music] Explicit search failed: {exc}")
-            return {"type": "error", "message": "No playable results found."}
-
-        filler = re.compile(
-            r"\b(full song|full video song|official song|official music video|official audio|"
-            r"official video|music video|audio|video|song|track|music|mp3|hd|4k)\b",
-            re.IGNORECASE,
-        )
-        clean_query = re.sub(r"\s+", " ", filler.sub("", original_query)).strip() or original_query
-
-        spotify_query = None
-        if sp:
-            try:
-                loop = asyncio.get_running_loop()
-                spotify_result = await loop.run_in_executor(
-                    None, lambda: sp.search(q=clean_query, type="track", limit=5)
-                )
-                items = spotify_result.get("tracks", {}).get("items", [])
-                if items and items[0].get("artists"):
-                    artist = items[0]["artists"][0].get("name", "")
-                    title = items[0].get("name", "")
-                    if artist and title:
-                        spotify_query = f"{artist} - {title}"
-            except Exception as exc:
-                print(f"[Music] Spotify enrichment unavailable: {exc}")
-
-        searches = [
-            ("ytmsearch", clean_query),
-            ("ytsearch", clean_query),
-            ("spsearch", clean_query),
-        ]
-        if spotify_query:
-            searches.extend([
-                ("ytmsearch_spotify", spotify_query),
-                ("ytsearch_spotify", spotify_query),
-            ])
-
-        async def search_one(source, search_query):
-            started = time.time()
-            try:
-                provider = source.removesuffix("_spotify")
-                results = await wavelink.Playable.search(search_query, source=provider)
-                tracks = list(results) if results else []
-                print(f"[Music] {source}: {len(tracks)} results ({time.time() - started:.2f}s)")
-                return source, tracks
-            except Exception as exc:
-                print(f"[Music] {source} failed: {exc}")
-                return source, []
-
-        search_results = await asyncio.gather(*(search_one(*item) for item in searches))
-        candidates = {}
-        for source, tracks in search_results:
-            for rank, track in enumerate(tracks[:20]):
-                identifier = getattr(track, "identifier", None) or getattr(track, "uri", None) or getattr(track, "title", "")
-                key = str(identifier).lower()
-                if key and (key not in candidates or rank < candidates[key]["rank"]):
-                    candidates[key] = {"track": track, "source": source, "rank": rank}
-
-        artist_intent, title_intent, requested_versions = self._extract_intent(clean_query)
-        normalized_query = self._normalize_query(clean_query)
-        normalized_title_intent = self._normalize_query(title_intent or clean_query)
-        normalized_artist_intent = self._normalize_query(artist_intent or "")
-        query_words = set(normalized_title_intent.split())
-        scored = []
-        for item in candidates.values():
-            track = item["track"]
-            title = getattr(track, "title", "") or ""
-            author = getattr(track, "author", "") or ""
-            uri = getattr(track, "uri", "") or ""
-            if getattr(track, "is_stream", False) or self._is_non_music(title, author):
-                continue
-            raw = f"{title} {author} {uri}".lower()
-            if ("/shorts/" in uri.lower() or " shorts " in f" {raw} ") and "short" not in normalized_query:
-                continue
-            normalized_title = self._normalize_query(title)
-            normalized_author = self._normalize_query(author)
-            title_words = set(normalized_title.split())
-            author_words = set(normalized_author.split())
-            overlap = (len(query_words.intersection(title_words)) / len(query_words)) if query_words else 0
-            similarity = difflib.SequenceMatcher(None, normalized_title_intent, normalized_title).ratio()
-            title_relevance = 1.0 if normalized_title == normalized_title_intent else max(
-                similarity * 0.55 + overlap * 0.45,
-                0.90 if normalized_title_intent and normalized_title_intent in normalized_title else 0,
-            )
-            artist_score = 0.0
-            if normalized_artist_intent:
-                artist_overlap = len(set(normalized_artist_intent.split()).intersection(normalized_author.split())) / len(normalized_artist_intent.split())
-                artist_score = difflib.SequenceMatcher(None, normalized_artist_intent, normalized_author).ratio() * 0.6 + artist_overlap * 0.4
-                if normalized_artist_intent in normalized_author:
-                    artist_score = min(1.0, artist_score + 0.3)
-            elif normalized_title_intent:
-                artist_score = len(query_words.intersection(title_words | author_words)) / len(query_words)
-
-            author_relevance = difflib.SequenceMatcher(
-                None, normalized_title_intent, normalized_author
-            ).ratio()
-            author_overlap = (
-                len(query_words.intersection(author_words)) / len(query_words)
-                if query_words else 0
-            )
-            if not normalized_artist_intent and author_overlap:
-                title_relevance = max(title_relevance, author_relevance * 0.75 + author_overlap * 0.25)
-
-            # A provider's popularity or official label must not make an unrelated title playable.
-            if normalized_title_intent and title_relevance < 0.20 and artist_score < 0.35:
-                continue
-            unwanted = ("instrumental", "karaoke", "cover", "remix", "slowed", "reverb", "nightcore", "mashup", "trailer", "shorts", "tiktok")
-            alternate_penalty = min(1.0, sum(word in raw and word not in requested_versions for word in unwanted) * 0.25)
-            length = getattr(track, "length", 0) or 0
-            duration = 1.0 if 120000 <= length <= 360000 else 0.65 if 60000 <= length < 120000 else 0.75 if length <= 600000 else 0.25
-            source_bonus = {"ytsearch": 0.08, "ytsearch_spotify": 0.08, "ytmsearch": 0.06, "ytmsearch_spotify": 0.06, "spsearch": 0.04, "scsearch": 0.02}.get(item["source"], 0)
-            final = (title_relevance * 0.50 + artist_score * 0.15 + (1 - alternate_penalty) * 0.15 + self._official_score(title, author) * 0.08 + max(0, 1 - item["rank"] * 0.035) * 0.05 + duration * 0.07 + source_bonus - alternate_penalty * 0.35)
-            scored.append((final, track))
-
-        if not scored:
-            return {"type": "error", "message": "No suitable music result found. Try: Artist - Song."}
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return {"type": "single", "track": tag(scored[0][1])}
 
     async def _resolve(self, query: str, requester: discord.Member, gp=None) -> dict:
         """Resolve query or URL to playable track(s), prioritizing vocal/studio audio releases."""
@@ -2090,7 +1697,6 @@ class MusicCog(commands.Cog):
         explicit_prefix = cleaned.lower().startswith(prefixes)
 
         search_text = cleaned
-        spotify_top = None
 
         if explicit_prefix:
             provider, search_text = cleaned.split(":", 1)
@@ -2103,66 +1709,47 @@ class MusicCog(commands.Cog):
             )
             search_text = re.sub(r"\s+", " ", filler.sub("", cleaned)).strip() or cleaned
 
-            if sp:
-                try:
-                    loop = asyncio.get_running_loop()
-                    sp_res = await asyncio.wait_for(
-                        loop.run_in_executor(None, lambda: sp.search(q=search_text, type="track", limit=5)),
-                        timeout=2.0,
-                    )
-                    items = (sp_res or {}).get("tracks", {}).get("items", [])
-                    if items:
-                        items.sort(key=lambda x: x.get("popularity", 0), reverse=True)
-                        top_item = items[0]
-                        artist_names = [a.get("name", "") for a in top_item.get("artists", []) if a.get("name")]
-                        spotify_top = {
-                            "title": top_item.get("name", ""),
-                            "artists": artist_names,
-                            "popularity": top_item.get("popularity", 0),
-                        }
-                        print(f"[Music] 🌟 Spotify top hit: '{top_item.get('name')}' by {', '.join(artist_names)} (popularity={top_item.get('popularity')}/100)")
-                except Exception as exc:
-                    print(f"[Music] Spotify lookup notice: {exc}")
-
-            sources_to_try = []
-            if spotify_top and spotify_top.get("popularity", 0) >= 30 and spotify_top.get("artists"):
-                enriched_query = f"{spotify_top['title']} {spotify_top['artists'][0]}"
-                sources_to_try.append((enriched_query, wavelink.TrackSource.YouTubeMusic))
-
-            sources_to_try.append((search_text, wavelink.TrackSource.YouTubeMusic))
-            sources_to_try.append((search_text, wavelink.TrackSource.YouTube))
+            sources_to_try = [
+                (search_text, wavelink.TrackSource.YouTubeMusic),
+                (search_text, wavelink.TrackSource.YouTube),
+            ]
 
         started = time.time()
         results = []
         ranked = {"type": "error", "message": "No suitable music result found."}
 
-        for term, src in sources_to_try:
+        async def _fetch_one(term, src):
             try:
-                raw = await asyncio.wait_for(
-                    wavelink.Playable.search(term, source=src), timeout=35
-                )
-
-                if not raw:
-                    continue
-
-                candidate_results = list(raw)
-                finished = time.time()
-                print(f"[Music] {src} ('{term}'): {len(candidate_results)} results ({finished - started:.2f}s)")
-
-                if gp:
-                    gp.metrics["load_start"] = started
-                    gp.metrics["load_end"] = finished
-
-                candidate_ranked = self._rank_tracks(search_text, candidate_results, spotify_top=spotify_top)
-
-                if candidate_ranked.get("type") in ("single", "ambiguous"):
-                    results = candidate_results
-                    ranked = candidate_ranked
-                    break
-
+                t0 = time.time()
+                raw = await asyncio.wait_for(wavelink.Playable.search(term, source=src), timeout=25)
+                tracks = list(raw) if raw else []
+                print(f"[Music] {src} ('{term}'): {len(tracks)} results ({time.time() - t0:.2f}s)")
+                return tracks
             except Exception as exc:
                 print(f"[Music] {src} search failed: {exc}")
-                continue
+                return []
+
+        search_tasks = [_fetch_one(term, src) for term, src in sources_to_try]
+        fetched_lists = await asyncio.gather(*search_tasks)
+
+        candidate_results = []
+        seen_keys = set()
+        for track_list in fetched_lists:
+            for tr in track_list:
+                key = getattr(tr, "identifier", None) or getattr(tr, "uri", None) or tr.title
+                if key and key not in seen_keys:
+                    seen_keys.add(key)
+                    candidate_results.append(tr)
+
+        if gp:
+            gp.metrics["load_start"] = started
+            gp.metrics["load_end"] = time.time()
+
+        if candidate_results:
+            candidate_ranked = self._rank_tracks(search_text, candidate_results)
+            if candidate_ranked.get("type") in ("single", "ambiguous"):
+                results = candidate_results
+                ranked = candidate_ranked
 
         # Fallback: Video ID search if query had a video ID
         if ranked.get("type") == "error":
@@ -2171,11 +1758,11 @@ class MusicCog(commands.Cog):
                 try:
                     raw = await asyncio.wait_for(
                         wavelink.Playable.search(vid, source=wavelink.TrackSource.YouTube),
-                        timeout=35,
+                        timeout=25,
                     )
                     if raw:
                         candidate_results = list(raw)
-                        candidate_ranked = self._rank_tracks(search_text, candidate_results, spotify_top=spotify_top)
+                        candidate_ranked = self._rank_tracks(search_text, candidate_results)
                         if candidate_ranked.get("type") in ("single", "ambiguous"):
                             results = candidate_results
                             ranked = candidate_ranked
