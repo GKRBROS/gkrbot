@@ -727,11 +727,12 @@ class GuildPlayer:
                 "**No track currently playing.**\n\n"
                 "Use `/play <song or link>` or `/random` to start streaming!"
             )
+
             try:
                 from bot_status_msg import get_status_message
                 status_msg = get_status_message()
                 if status_msg and status_msg.get("active") and status_msg.get("message"):
-                    desc += f"\n\n📢 **Notice:** {status_msg['message']}"
+                    desc += f"\n\n```\n📢 Notice: {status_msg['message']}\n```"
             except Exception:
                 pass
 
@@ -771,7 +772,7 @@ class GuildPlayer:
             from bot_status_msg import get_status_message
             status_msg = get_status_message()
             if status_msg and status_msg.get("active") and status_msg.get("message"):
-                desc += f"\n\n📢 **Notice:** {status_msg['message']}"
+                desc += f"\n\n```\n📢 Notice: {status_msg['message']}\n```"
         except Exception:
             pass
         embed.description = desc
