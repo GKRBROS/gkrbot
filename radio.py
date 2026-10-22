@@ -462,6 +462,9 @@ class StationSelectDropdown(discord.ui.Select):
         await interaction.edit_original_response(embed=embed, view=view)
 
 
+TOPGG_VOTE_URL = "https://top.gg/bot/1397848684061790301/vote"
+
+
 class RadioControlView(discord.ui.View):
     def __init__(self, cog: RadioCog, guild_id: int):
         super().__init__(timeout=None)
@@ -471,6 +474,13 @@ class RadioControlView(discord.ui.View):
         current_key = state.get("station_key", DEFAULT_STATION_KEY)
         self.add_item(StationSelectDropdown(cog, current_key))
         self._update_button_states(state)
+        self.add_item(discord.ui.Button(
+            label="Vote on Top.gg",
+            emoji="❤️",
+            style=discord.ButtonStyle.link,
+            url=TOPGG_VOTE_URL,
+            row=2,
+        ))
 
     def _update_button_states(self, state: dict):
         is_paused = bool(state.get("is_paused", 0))

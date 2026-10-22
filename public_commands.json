@@ -1,0 +1,1628 @@
+[
+  {
+    "command": "/achievements",
+    "name": "achievements",
+    "description": "View all achievements and which ones you",
+    "module": "profiles"
+  },
+  {
+    "command": "/activity_config",
+    "name": "activity_config",
+    "description": "Configure Text & Game analytics (Admin only)",
+    "module": "server_activity"
+  },
+  {
+    "command": "/ai ask",
+    "name": "ask",
+    "description": "🔍 Deep research and answer questions in your exact language/dialect.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai banner",
+    "name": "banner",
+    "description": "✨ Generate animated text GIF banners for Discord headers & profiles.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai chat",
+    "name": "chat",
+    "description": "💬 Chat with the AI model with conversation memory & dialect mirroring.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai code",
+    "name": "code",
+    "description": "💻 Code analysis, writing, and debugging assistant.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai disable",
+    "name": "disable",
+    "description": "❌ Disable the  AI system for this server.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai enable",
+    "name": "enable",
+    "description": "🧠  AI Intelligence, Self-Learning, Banners & Comedy",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai forget",
+    "name": "forget",
+    "description": "🧹 Remove a learned fact from the AI",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai imagine",
+    "name": "imagine",
+    "description": "🎨 Generate AI art and images using high-quality models.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai learn",
+    "name": "learn",
+    "description": "🧠 Teach the AI a custom fact, server lore, or definition.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai memory",
+    "name": "memory",
+    "description": "📖 Inspect what the AI has learned and remembered.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai mood",
+    "name": "mood",
+    "description": "🎭 Set the AI conversational mood (Polite, Normal, Harsh, Extreme, Strict).",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai prompt",
+    "name": "prompt",
+    "description": "💡 Enhance a simple concept into a professional AI image prompt.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai research",
+    "name": "research",
+    "description": "🔬 Queue a topic for the AI to research and learn about in the background.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai research_status",
+    "name": "research_status",
+    "description": "📋 See what the AI is currently researching or has learned recently.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai reset",
+    "name": "reset",
+    "description": "🧹 Clear your active conversation history/memory with the AI.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai roast",
+    "name": "roast",
+    "description": "🔥 Generate a hilarious, playful roast for a member or topic.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai sentiment",
+    "name": "sentiment",
+    "description": "📊 Analyze emotional tone and sentiment of a message.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai status",
+    "name": "status",
+    "description": "📊 Check AI system status, self-learning stats, persona & settings.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai summarize",
+    "name": "summarize",
+    "description": "📝 Summarize long text into key bullet points and TL;DR.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai thread",
+    "name": "thread",
+    "description": "🧵 Create a dedicated AI discussion thread with conversation memory.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/ai tts",
+    "name": "tts",
+    "description": "🔊 Generate natural voice speech audio from text.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/alerts add",
+    "name": "add",
+    "description": "🔔 Manage stream & video alerts for YouTube, Twitch and Kick",
+    "module": "stream_alerts"
+  },
+  {
+    "command": "/alerts list",
+    "name": "list",
+    "description": "Show all configured stream alerts for this server",
+    "module": "stream_alerts"
+  },
+  {
+    "command": "/alerts message",
+    "name": "message",
+    "description": "Set a custom notification message for a creator",
+    "module": "stream_alerts"
+  },
+  {
+    "command": "/alerts remove",
+    "name": "remove",
+    "description": "Remove a streamer/creator alert",
+    "module": "stream_alerts"
+  },
+  {
+    "command": "/alerts test",
+    "name": "test",
+    "description": "Send a test alert to verify your configuration",
+    "module": "stream_alerts"
+  },
+  {
+    "command": "/alerts toggle",
+    "name": "toggle",
+    "description": "Turn live or video notifications on/off for a creator",
+    "module": "stream_alerts"
+  },
+  {
+    "command": "/announce category",
+    "name": "category",
+    "description": "Announce a message in every voice channel under a category.",
+    "module": "voice_announce"
+  },
+  {
+    "command": "/announce channel",
+    "name": "channel",
+    "description": "Announce a message in one specific voice channel.",
+    "module": "voice_announce"
+  },
+  {
+    "command": "/announce stop",
+    "name": "stop",
+    "description": "Force the bot to leave its current voice channel in this server.",
+    "module": "voice_announce"
+  },
+  {
+    "command": "/announcement",
+    "name": "announcement",
+    "description": "Create a beautiful, formatted Embed announcement",
+    "module": "main"
+  },
+  {
+    "command": "/antihacked logchannel",
+    "name": "logchannel",
+    "description": "Set the channel where protection logs will be sent",
+    "module": "anti_hacked"
+  },
+  {
+    "command": "/antihacked status",
+    "name": "status",
+    "description": "Show the Anti-Hacked Protection status",
+    "module": "anti_hacked"
+  },
+  {
+    "command": "/antihacked toggle",
+    "name": "toggle",
+    "description": "Manage the Anti-Hacked Account Protection system",
+    "module": "anti_hacked"
+  },
+  {
+    "command": "/autoreact add",
+    "name": "add",
+    "description": "Manage auto-reactions for channels",
+    "module": "auto_reactions"
+  },
+  {
+    "command": "/autoreact clear",
+    "name": "clear",
+    "description": "Remove ALL auto-reactions from a channel",
+    "module": "auto_reactions"
+  },
+  {
+    "command": "/autoreact list",
+    "name": "list",
+    "description": "Show all channels with auto-reactions in this server",
+    "module": "auto_reactions"
+  },
+  {
+    "command": "/autoreact remove",
+    "name": "remove",
+    "description": "Remove a specific auto-reaction from a channel",
+    "module": "auto_reactions"
+  },
+  {
+    "command": "/birthday add",
+    "name": "add",
+    "description": "Birthday tracking commands",
+    "module": "birthdays"
+  },
+  {
+    "command": "/birthday check",
+    "name": "check",
+    "description": "Check a specific user",
+    "module": "birthdays"
+  },
+  {
+    "command": "/birthday list",
+    "name": "list",
+    "description": "Show all registered birthdays in this server",
+    "module": "birthdays"
+  },
+  {
+    "command": "/birthday remove",
+    "name": "remove",
+    "description": "Remove a birthday",
+    "module": "birthdays"
+  },
+  {
+    "command": "/birthday setchannel",
+    "name": "setchannel",
+    "description": "No description provided.",
+    "module": "birthdays"
+  },
+  {
+    "command": "/birthday testwish",
+    "name": "testwish",
+    "description": "No description provided.",
+    "module": "birthdays"
+  },
+  {
+    "command": "/blacklist member",
+    "name": "member",
+    "description": "Blacklist a user by ID",
+    "module": "blacklist"
+  },
+  {
+    "command": "/blacklist memberinfo",
+    "name": "memberinfo",
+    "description": "Show details for a blacklisted user",
+    "module": "blacklist"
+  },
+  {
+    "command": "/blacklist members",
+    "name": "members",
+    "description": "List blacklisted users",
+    "module": "blacklist"
+  },
+  {
+    "command": "/blacklist server",
+    "name": "server",
+    "description": "Blacklist a server by ID",
+    "module": "blacklist"
+  },
+  {
+    "command": "/blacklist server-leave",
+    "name": "server-leave",
+    "description": "Blacklist a server and make the bot leave it",
+    "module": "blacklist"
+  },
+  {
+    "command": "/blacklist serverinfo",
+    "name": "serverinfo",
+    "description": "Show details for a blacklisted server",
+    "module": "blacklist"
+  },
+  {
+    "command": "/blacklist servers",
+    "name": "servers",
+    "description": "List blacklisted servers",
+    "module": "blacklist"
+  },
+  {
+    "command": "/botbanner",
+    "name": "botbanner",
+    "description": "Change the bot",
+    "module": "bot_profile"
+  },
+  {
+    "command": "/botdiagnostics",
+    "name": "botdiagnostics",
+    "description": "Display system and diagnostic info for  Bot",
+    "module": "main"
+  },
+  {
+    "command": "/botprofile resetavatar",
+    "name": "resetavatar",
+    "description": "Remove the bot",
+    "module": "bot_profile"
+  },
+  {
+    "command": "/botprofile resetnick",
+    "name": "resetnick",
+    "description": "Remove the bot",
+    "module": "bot_profile"
+  },
+  {
+    "command": "/botprofile setavatar",
+    "name": "setavatar",
+    "description": "Set the bot",
+    "module": "bot_profile"
+  },
+  {
+    "command": "/botprofile setnick",
+    "name": "setnick",
+    "description": "Set the bot",
+    "module": "bot_profile"
+  },
+  {
+    "command": "/botprofile view",
+    "name": "view",
+    "description": "View the bot",
+    "module": "bot_profile"
+  },
+  {
+    "command": "/botstatus clear",
+    "name": "clear",
+    "description": "No description provided.",
+    "module": "bot_status"
+  },
+  {
+    "command": "/botstatus post",
+    "name": "post",
+    "description": "No description provided.",
+    "module": "bot_status"
+  },
+  {
+    "command": "/botstatus setchannel",
+    "name": "setchannel",
+    "description": "No description provided.",
+    "module": "bot_status"
+  },
+  {
+    "command": "/cc create",
+    "name": "create",
+    "description": "Custom command management",
+    "module": "custom_commands"
+  },
+  {
+    "command": "/cc delete",
+    "name": "delete",
+    "description": "Delete a custom command",
+    "module": "custom_commands"
+  },
+  {
+    "command": "/cc edit",
+    "name": "edit",
+    "description": "Edit an existing custom command",
+    "module": "custom_commands"
+  },
+  {
+    "command": "/cc info",
+    "name": "info",
+    "description": "Show details of a specific custom command",
+    "module": "custom_commands"
+  },
+  {
+    "command": "/cc list",
+    "name": "list",
+    "description": "List all custom commands in this server",
+    "module": "custom_commands"
+  },
+  {
+    "command": "/checkrole",
+    "name": "checkrole",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/clearwarns",
+    "name": "clearwarns",
+    "description": "Clear all warnings for a member",
+    "module": "security"
+  },
+  {
+    "command": "/commands clearfp",
+    "name": "clearfp",
+    "description": "No description provided.",
+    "module": "fivem"
+  },
+  {
+    "command": "/commands fp",
+    "name": "fp",
+    "description": "No description provided.",
+    "module": "fivem"
+  },
+  {
+    "command": "/commands fpexport",
+    "name": "fpexport",
+    "description": "No description provided.",
+    "module": "fivem"
+  },
+  {
+    "command": "/commands fphelp",
+    "name": "fphelp",
+    "description": "No description provided.",
+    "module": "fivem"
+  },
+  {
+    "command": "/commands fplist",
+    "name": "fplist",
+    "description": "No description provided.",
+    "module": "fivem"
+  },
+  {
+    "command": "/commands getfp",
+    "name": "getfp",
+    "description": "No description provided.",
+    "module": "fivem"
+  },
+  {
+    "command": "/config channel",
+    "name": "channel",
+    "description": "Set or clear the dedicated AI chat channel.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/config model",
+    "name": "model",
+    "description": "Select active Ollama model name (e.g. llama3, mistral, deepseek-r1).",
+    "module": "ai_system"
+  },
+  {
+    "command": "/config ollama",
+    "name": "ollama",
+    "description": "Configure custom self-hosted Ollama / Local LLM URL.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/config persona",
+    "name": "persona",
+    "description": "⚙️ Configure AI settings",
+    "module": "ai_system"
+  },
+  {
+    "command": "/config prompt",
+    "name": "prompt",
+    "description": "Set a custom system prompt personality for this server.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/config toggle",
+    "name": "toggle",
+    "description": "Toggle specific AI features on/off.",
+    "module": "ai_system"
+  },
+  {
+    "command": "/debugroles",
+    "name": "debugroles",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/delwarn",
+    "name": "delwarn",
+    "description": "Delete a specific warning by its ID",
+    "module": "security"
+  },
+  {
+    "command": "/disable",
+    "name": "disable",
+    "description": "Disable automated festival announcements",
+    "module": "festivals"
+  },
+  {
+    "command": "/eco addcoins",
+    "name": "addcoins",
+    "description": "Give or remove coins from a user",
+    "module": "economy"
+  },
+  {
+    "command": "/eco additem",
+    "name": "additem",
+    "description": "Add a new item to the shop",
+    "module": "economy"
+  },
+  {
+    "command": "/eco balance",
+    "name": "balance",
+    "description": "Check your or someone else",
+    "module": "economy"
+  },
+  {
+    "command": "/eco buy",
+    "name": "buy",
+    "description": "Purchase an item from the shop",
+    "module": "economy"
+  },
+  {
+    "command": "/eco daily",
+    "name": "daily",
+    "description": "Claim your daily reward",
+    "module": "economy"
+  },
+  {
+    "command": "/eco deposit",
+    "name": "deposit",
+    "description": "Move coins from your wallet into the bank",
+    "module": "economy"
+  },
+  {
+    "command": "/eco inventory",
+    "name": "inventory",
+    "description": "View your purchased items",
+    "module": "economy"
+  },
+  {
+    "command": "/eco leaderboard",
+    "name": "leaderboard",
+    "description": "View the richest members",
+    "module": "economy"
+  },
+  {
+    "command": "/eco pay",
+    "name": "pay",
+    "description": "Send coins to another member",
+    "module": "economy"
+  },
+  {
+    "command": "/eco removeitem",
+    "name": "removeitem",
+    "description": "Remove an item from the shop",
+    "module": "economy"
+  },
+  {
+    "command": "/eco rob",
+    "name": "rob",
+    "description": "Attempt to rob another user",
+    "module": "economy"
+  },
+  {
+    "command": "/eco shop",
+    "name": "shop",
+    "description": "Browse the server shop",
+    "module": "economy"
+  },
+  {
+    "command": "/eco withdraw",
+    "name": "withdraw",
+    "description": "Move coins from the bank to your wallet",
+    "module": "economy"
+  },
+  {
+    "command": "/eco work",
+    "name": "work",
+    "description": "Work a shift to earn coins",
+    "module": "economy"
+  },
+  {
+    "command": "/event cancel",
+    "name": "cancel",
+    "description": "Cancel an event",
+    "module": "server_events"
+  },
+  {
+    "command": "/event create",
+    "name": "create",
+    "description": "Server event commands",
+    "module": "server_events"
+  },
+  {
+    "command": "/event list",
+    "name": "list",
+    "description": "List upcoming events",
+    "module": "server_events"
+  },
+  {
+    "command": "/filter",
+    "name": "filter",
+    "description": "🎛️ Set an audio filter preset",
+    "module": "music"
+  },
+  {
+    "command": "/fivemexport",
+    "name": "fivemexport",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/fivemhelp",
+    "name": "fivemhelp",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/font",
+    "name": "font",
+    "description": "Open the Font Sync settings panel",
+    "module": "font_sync"
+  },
+  {
+    "command": "/force_test",
+    "name": "force_test",
+    "description": "(Admin) Force trigger a festival announcement right now",
+    "module": "festivals"
+  },
+  {
+    "command": "/game leaderboard",
+    "name": "leaderboard",
+    "description": "View the overall gaming time leaderboard",
+    "module": "server_activity"
+  },
+  {
+    "command": "/game stats",
+    "name": "stats",
+    "description": "Game activity tracking and leaderboards",
+    "module": "server_activity"
+  },
+  {
+    "command": "/giveaway end",
+    "name": "end",
+    "description": "End a giveaway early",
+    "module": "giveaways"
+  },
+  {
+    "command": "/giveaway list",
+    "name": "list",
+    "description": "List all active giveaways in this server",
+    "module": "giveaways"
+  },
+  {
+    "command": "/giveaway reroll",
+    "name": "reroll",
+    "description": "Reroll winners for a finished giveaway",
+    "module": "giveaways"
+  },
+  {
+    "command": "/giveaway start",
+    "name": "start",
+    "description": "Giveaway commands",
+    "module": "giveaways"
+  },
+  {
+    "command": "/help",
+    "name": "help",
+    "description": "📖 Show all  Bot commands and features",
+    "module": "main"
+  },
+  {
+    "command": "/honeypot checkuser",
+    "name": "checkuser",
+    "description": "Check how many offenses a user has in the spam trap",
+    "module": "honeypot"
+  },
+  {
+    "command": "/honeypot clearoffenses",
+    "name": "clearoffenses",
+    "description": "Forgive a user and reset their honeypot offense count to 0",
+    "module": "honeypot"
+  },
+  {
+    "command": "/honeypot remove",
+    "name": "remove",
+    "description": "Delete the honeypot channel and remove it from the system",
+    "module": "honeypot"
+  },
+  {
+    "command": "/honeypot setlog",
+    "name": "setlog",
+    "description": "Set a channel to receive honeypot alert logs",
+    "module": "honeypot"
+  },
+  {
+    "command": "/honeypot setup",
+    "name": "setup",
+    "description": "Manage the Honeypot (Spam Trap) Channel system",
+    "module": "honeypot"
+  },
+  {
+    "command": "/imageinfo",
+    "name": "imageinfo",
+    "description": "Analyze an uploaded image or image URL and extract full metadata.",
+    "module": "imageinfo"
+  },
+  {
+    "command": "/imagescan",
+    "name": "imagescan",
+    "description": "Toggle automatic image scanning for this server",
+    "module": "security"
+  },
+  {
+    "command": "/imagescan_test",
+    "name": "imagescan_test",
+    "description": "Test the image scanner against a sample file or URL",
+    "module": "security"
+  },
+  {
+    "command": "/invites leaderboard",
+    "name": "leaderboard",
+    "description": "Show the top inviters in this server",
+    "module": "invite_tracker"
+  },
+  {
+    "command": "/invites reset",
+    "name": "reset",
+    "description": "Reset invite stats for a member",
+    "module": "invite_tracker"
+  },
+  {
+    "command": "/invites setchannel",
+    "name": "setchannel",
+    "description": "🔗  Invite Tracker commands",
+    "module": "invite_tracker"
+  },
+  {
+    "command": "/invites stats",
+    "name": "stats",
+    "description": "Check invite stats for a specific member",
+    "module": "invite_tracker"
+  },
+  {
+    "command": "/laugh",
+    "name": "laugh",
+    "description": "😂 Get a hilarious stand-up comedy joke or punchline!",
+    "module": "ai_system"
+  },
+  {
+    "command": "/leaderboard",
+    "name": "leaderboard",
+    "description": "View the server leaderboard",
+    "module": "profiles"
+  },
+  {
+    "command": "/logs config",
+    "name": "config",
+    "description": "Interactive dropdown menu to toggle specific log events",
+    "module": "server_logs"
+  },
+  {
+    "command": "/logs route",
+    "name": "route",
+    "description": "Route a specific category of logs to a separate channel",
+    "module": "server_logs"
+  },
+  {
+    "command": "/logs setup",
+    "name": "setup",
+    "description": "No description provided.",
+    "module": "server_logs"
+  },
+  {
+    "command": "/logs status",
+    "name": "status",
+    "description": "Show current logging configuration and category routing",
+    "module": "server_logs"
+  },
+  {
+    "command": "/logs toggle",
+    "name": "toggle",
+    "description": "Enable or disable the logging system for this server",
+    "module": "server_logs"
+  },
+  {
+    "command": "/logs unroute",
+    "name": "unroute",
+    "description": "Remove a custom channel route for a category",
+    "module": "server_logs"
+  },
+  {
+    "command": "/lyrics",
+    "name": "lyrics",
+    "description": "🎤 Search lyrics for the current or specified song",
+    "module": "music"
+  },
+  {
+    "command": "/mod config",
+    "name": "config",
+    "description": "View server configuration overview",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod mute",
+    "name": "mute",
+    "description": "Timeout (mute) a member",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod mutelist",
+    "name": "mutelist",
+    "description": "List all currently timed-out members",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod saye",
+    "name": "saye",
+    "description": "Send a formatted embed announcement as the bot",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod sayt",
+    "name": "sayt",
+    "description": "Send a plain text message as the bot",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod staffrole",
+    "name": "staffrole",
+    "description": "Manage administrative staff roles",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod status",
+    "name": "status",
+    "description": "Show bot health, uptime, and system performance",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod unmute",
+    "name": "unmute",
+    "description": "Remove timeout from a member",
+    "module": "moderation"
+  },
+  {
+    "command": "/next",
+    "name": "next",
+    "description": "See upcoming festivals and how many days are left",
+    "module": "festivals"
+  },
+  {
+    "command": "/notifications boost",
+    "name": "boost",
+    "description": "Configure boost notification channel & message",
+    "module": "notifications"
+  },
+  {
+    "command": "/notifications boostlevel",
+    "name": "boostlevel",
+    "description": "Configure server level-up notification channel & message",
+    "module": "notifications"
+  },
+  {
+    "command": "/notifications status",
+    "name": "status",
+    "description": "Show all notification settings",
+    "module": "notifications"
+  },
+  {
+    "command": "/nowplaying",
+    "name": "nowplaying",
+    "description": "🎶 Display the current interactive music player",
+    "module": "music"
+  },
+  {
+    "command": "/pause",
+    "name": "pause",
+    "description": "⏸️ Pause audio playback",
+    "module": "music"
+  },
+  {
+    "command": "/ping bot",
+    "name": "bot",
+    "description": "Ping commands for the bot and roles",
+    "module": "main"
+  },
+  {
+    "command": "/ping role",
+    "name": "role",
+    "description": "Mention a specific role (pinging only)",
+    "module": "main"
+  },
+  {
+    "command": "/pinger addrole",
+    "name": "addrole",
+    "description": "Add a role to the ping rotation",
+    "module": "pinger"
+  },
+  {
+    "command": "/pinger channel",
+    "name": "channel",
+    "description": "Repeating role-ping manager",
+    "module": "pinger"
+  },
+  {
+    "command": "/pinger interval",
+    "name": "interval",
+    "description": "How often to re-ping, in seconds (min )",
+    "module": "pinger"
+  },
+  {
+    "command": "/pinger removerole",
+    "name": "removerole",
+    "description": "Remove a role from the ping rotation",
+    "module": "pinger"
+  },
+  {
+    "command": "/pinger start",
+    "name": "start",
+    "description": "Start the repeating ping",
+    "module": "pinger"
+  },
+  {
+    "command": "/pinger status",
+    "name": "status",
+    "description": "Show the current Pinger configuration",
+    "module": "pinger"
+  },
+  {
+    "command": "/pinger stop",
+    "name": "stop",
+    "description": "Stop the repeating ping and remove the live message",
+    "module": "pinger"
+  },
+  {
+    "command": "/pinger text",
+    "name": "text",
+    "description": "Set the message shown next to the ping (leave blank to clear)",
+    "module": "pinger"
+  },
+  {
+    "command": "/play",
+    "name": "play",
+    "description": "🎵 Play a song or playlist (YouTube, Spotify, SoundCloud)",
+    "module": "music"
+  },
+  {
+    "command": "/poll",
+    "name": "poll",
+    "description": "Create an advanced interactive poll with live graphical progress bars.",
+    "module": "poll"
+  },
+  {
+    "command": "/profile",
+    "name": "profile",
+    "description": "View your or another user",
+    "module": "profiles"
+  },
+  {
+    "command": "/protection set_log_channel",
+    "name": "set_log_channel",
+    "description": "Set the channel where protection alerts go",
+    "module": "protection"
+  },
+  {
+    "command": "/protection status",
+    "name": "status",
+    "description": "Advanced Server Protection settings",
+    "module": "protection"
+  },
+  {
+    "command": "/protection toggle",
+    "name": "toggle",
+    "description": "Toggle a protection feature",
+    "module": "protection"
+  },
+  {
+    "command": "/pubg",
+    "name": "pubg",
+    "description": "Invite players to join PUBG (Malayalam gaming call)",
+    "module": "main"
+  },
+  {
+    "command": "/queue",
+    "name": "queue",
+    "description": "📜 View the upcoming songs in the server queue",
+    "module": "music"
+  },
+  {
+    "command": "/radio 247",
+    "name": "247",
+    "description": "🔄 Toggle 24/7 persistence mode (bot stays in VC and auto-reconnects).",
+    "module": "radio"
+  },
+  {
+    "command": "/radio custom",
+    "name": "custom",
+    "description": "🌐 Stream any custom Icecast/Shoutcast/MP3 direct radio URL 24/7.",
+    "module": "radio"
+  },
+  {
+    "command": "/radio nowplaying",
+    "name": "nowplaying",
+    "description": "🎵 Show current radio station, 24/7 status, and player controls.",
+    "module": "radio"
+  },
+  {
+    "command": "/radio pause",
+    "name": "pause",
+    "description": "⏸️ Pause the radio stream.",
+    "module": "radio"
+  },
+  {
+    "command": "/radio play",
+    "name": "play",
+    "description": "📻 24/7 Ultra-Low PC Usage Radio & Music Streaming",
+    "module": "radio"
+  },
+  {
+    "command": "/radio resume",
+    "name": "resume",
+    "description": "▶️ Resume the radio stream.",
+    "module": "radio"
+  },
+  {
+    "command": "/radio stations",
+    "name": "stations",
+    "description": "📖 Browse all curated 24/7 radio stations and categories.",
+    "module": "radio"
+  },
+  {
+    "command": "/radio stop",
+    "name": "stop",
+    "description": "⏹️ Stop the radio and disconnect from the voice channel.",
+    "module": "radio"
+  },
+  {
+    "command": "/radio volume",
+    "name": "volume",
+    "description": "🔊 Adjust the radio volume level (1-150%).",
+    "module": "radio"
+  },
+  {
+    "command": "/reactionroles",
+    "name": "reactionroles",
+    "description": "Create the reaction roles message",
+    "module": "main"
+  },
+  {
+    "command": "/reg cancel",
+    "name": "cancel",
+    "description": "Cancel your pending registration application",
+    "module": "registration"
+  },
+  {
+    "command": "/reg config",
+    "name": "config",
+    "description": "Configure automation, roles, approval mode, and channels for a form",
+    "module": "registration"
+  },
+  {
+    "command": "/reg create",
+    "name": "create",
+    "description": "Configure and manage  registration forms",
+    "module": "registration"
+  },
+  {
+    "command": "/reg delete",
+    "name": "delete",
+    "description": "Permanently delete a registration form",
+    "module": "registration"
+  },
+  {
+    "command": "/reg delete_submission",
+    "name": "delete_submission",
+    "description": "Delete an application submission (pending, approved, or rejected)",
+    "module": "registration"
+  },
+  {
+    "command": "/reg logs",
+    "name": "logs",
+    "description": "View recent registration audit and activity logs",
+    "module": "registration"
+  },
+  {
+    "command": "/reg panel",
+    "name": "panel",
+    "description": "Publish or re-publish a registration form panel to a channel",
+    "module": "registration"
+  },
+  {
+    "command": "/reg questions",
+    "name": "questions",
+    "description": "Add, edit, or reorder questions for a registration form",
+    "module": "registration"
+  },
+  {
+    "command": "/reg status",
+    "name": "status",
+    "description": "Check the status of your registration applications",
+    "module": "registration"
+  },
+  {
+    "command": "/reg submissions",
+    "name": "submissions",
+    "description": "View and manage recent applications for a form",
+    "module": "registration"
+  },
+  {
+    "command": "/resume",
+    "name": "resume",
+    "description": "▶️ Resume paused playback",
+    "module": "music"
+  },
+  {
+    "command": "/rolerestore status",
+    "name": "status",
+    "description": "Show the current Role Restore configuration",
+    "module": "role_restore"
+  },
+  {
+    "command": "/rolerestore toggle",
+    "name": "toggle",
+    "description": "Manage the Role Restore system",
+    "module": "role_restore"
+  },
+  {
+    "command": "/roles load",
+    "name": "load",
+    "description": "No description provided.",
+    "module": "server_template"
+  },
+  {
+    "command": "/roles save",
+    "name": "save",
+    "description": "Snapshot only the roles of this server",
+    "module": "server_template"
+  },
+  {
+    "command": "/rolesync list",
+    "name": "list",
+    "description": "List all role sync rules for this server",
+    "module": "role_sync"
+  },
+  {
+    "command": "/rolesync remove",
+    "name": "remove",
+    "description": "Remove a role sync rule by its ID",
+    "module": "role_sync"
+  },
+  {
+    "command": "/rolesync setup",
+    "name": "setup",
+    "description": "Cross-server role sync commands",
+    "module": "role_sync"
+  },
+  {
+    "command": "/rroles",
+    "name": "rroles",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/rules",
+    "name": "rules",
+    "description": "Post the server rules as a beautiful formatted embed",
+    "module": "main"
+  },
+  {
+    "command": "/say",
+    "name": "say",
+    "description": "Make  Bot send a message in a channel",
+    "module": "main"
+  },
+  {
+    "command": "/security logchannel",
+    "name": "logchannel",
+    "description": "Security and Anti-Nuke management commands",
+    "module": "security"
+  },
+  {
+    "command": "/security status",
+    "name": "status",
+    "description": "View current security defense & logging configuration",
+    "module": "security"
+  },
+  {
+    "command": "/setallnicks",
+    "name": "setallnicks",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/setfivem",
+    "name": "setfivem",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/setnick",
+    "name": "setnick",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/setrolemenugif",
+    "name": "setrolemenugif",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/setup",
+    "name": "setup",
+    "description": "Setup automated festival announcements",
+    "module": "festivals"
+  },
+  {
+    "command": "/si mood",
+    "name": "mood",
+    "description": "🧠  AI System Controls & Mood (/si mood)",
+    "module": "ai_system"
+  },
+  {
+    "command": "/simpleroles",
+    "name": "simpleroles",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/skip",
+    "name": "skip",
+    "description": "⏭️ Skip the current song",
+    "module": "music"
+  },
+  {
+    "command": "/stats",
+    "name": "stats",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/stats remove",
+    "name": "remove",
+    "description": "Remove the Server Stats category and channels",
+    "module": "server_stats"
+  },
+  {
+    "command": "/stats setup",
+    "name": "setup",
+    "description": "Configure server stats channels",
+    "module": "server_stats"
+  },
+  {
+    "command": "/sticky clear",
+    "name": "clear",
+    "description": "Remove the sticky message from this channel",
+    "module": "sticky_messages"
+  },
+  {
+    "command": "/sticky list",
+    "name": "list",
+    "description": "List all channels with sticky messages in this server",
+    "module": "sticky_messages"
+  },
+  {
+    "command": "/sticky set",
+    "name": "set",
+    "description": "Manage sticky messages for this channel",
+    "module": "sticky_messages"
+  },
+  {
+    "command": "/sticky view",
+    "name": "view",
+    "description": "Preview the current sticky message for this channel",
+    "module": "sticky_messages"
+  },
+  {
+    "command": "/stop",
+    "name": "stop",
+    "description": "⏹️ Stop music, clear queue, and disconnect",
+    "module": "music"
+  },
+  {
+    "command": "/suggest approve",
+    "name": "approve",
+    "description": "[Staff] Approve a suggestion",
+    "module": "community"
+  },
+  {
+    "command": "/suggest deny",
+    "name": "deny",
+    "description": "[Staff] Deny a suggestion",
+    "module": "community"
+  },
+  {
+    "command": "/suggest list",
+    "name": "list",
+    "description": "List top pending suggestions",
+    "module": "community"
+  },
+  {
+    "command": "/suggest submit",
+    "name": "submit",
+    "description": "Suggestion system",
+    "module": "community"
+  },
+  {
+    "command": "/sync-commands",
+    "name": "sync-commands",
+    "description": "Sync the bot",
+    "module": "main"
+  },
+  {
+    "command": "/syncnicks",
+    "name": "syncnicks",
+    "description": "No description provided.",
+    "module": "main"
+  },
+  {
+    "command": "/system clearnotice",
+    "name": "clearnotice",
+    "description": "No description provided.",
+    "module": "bot_status"
+  },
+  {
+    "command": "/system info",
+    "name": "info",
+    "description": "No description provided.",
+    "module": "bot_status"
+  },
+  {
+    "command": "/system notice",
+    "name": "notice",
+    "description": "No description provided.",
+    "module": "bot_status"
+  },
+  {
+    "command": "/system post",
+    "name": "post",
+    "description": "No description provided.",
+    "module": "bot_status"
+  },
+  {
+    "command": "/system setchannel",
+    "name": "setchannel",
+    "description": "No description provided.",
+    "module": "bot_status"
+  },
+  {
+    "command": "/template delete",
+    "name": "delete",
+    "description": "Delete a saved template",
+    "module": "server_template"
+  },
+  {
+    "command": "/template export",
+    "name": "export",
+    "description": "Download a template as a portable JSON file",
+    "module": "server_template"
+  },
+  {
+    "command": "/template import",
+    "name": "import",
+    "description": "Import a template from an uploaded JSON file",
+    "module": "server_template"
+  },
+  {
+    "command": "/template info",
+    "name": "info",
+    "description": "Preview what a saved template contains",
+    "module": "server_template"
+  },
+  {
+    "command": "/template list",
+    "name": "list",
+    "description": "List all saved server templates",
+    "module": "server_template"
+  },
+  {
+    "command": "/template load",
+    "name": "load",
+    "description": "No description provided.",
+    "module": "server_template"
+  },
+  {
+    "command": "/template save",
+    "name": "save",
+    "description": "Snapshot this entire server as a reusable template",
+    "module": "server_template"
+  },
+  {
+    "command": "/template wipe",
+    "name": "wipe",
+    "description": "No description provided.",
+    "module": "server_template"
+  },
+  {
+    "command": "/tempvc cleanup",
+    "name": "cleanup",
+    "description": "Manually delete all orphaned temp VC channels in this server",
+    "module": "temp_vc"
+  },
+  {
+    "command": "/tempvc cohost",
+    "name": "cohost",
+    "description": "Grant, revoke, or list Co-Host managers for your Temp VC",
+    "module": "temp_vc"
+  },
+  {
+    "command": "/tempvc list",
+    "name": "list",
+    "description": "List all active temporary voice channels",
+    "module": "temp_vc"
+  },
+  {
+    "command": "/tempvc panel",
+    "name": "panel",
+    "description": "Get the control panel for your current temporary voice channel",
+    "module": "temp_vc"
+  },
+  {
+    "command": "/tempvc removehub",
+    "name": "removehub",
+    "description": "Remove a voice channel from the Temp VC hub list",
+    "module": "temp_vc"
+  },
+  {
+    "command": "/tempvc sendpanel",
+    "name": "sendpanel",
+    "description": "Drop the master control panel into the current text channel",
+    "module": "temp_vc"
+  },
+  {
+    "command": "/tempvc sethub",
+    "name": "sethub",
+    "description": "Mark an existing voice channel as the Temp VC hub",
+    "module": "temp_vc"
+  },
+  {
+    "command": "/tempvc setup",
+    "name": "setup",
+    "description": "🎮  Temporary Voice Channel System",
+    "module": "temp_vc"
+  },
+  {
+    "command": "/test boost",
+    "name": "boost",
+    "description": "Preview the boost notification in this channel",
+    "module": "notifications"
+  },
+  {
+    "command": "/test boostlevel",
+    "name": "boostlevel",
+    "description": "Preview the server level-up notification in this channel",
+    "module": "notifications"
+  },
+  {
+    "command": "/testemojis",
+    "name": "testemojis",
+    "description": "Test if custom emojis are working",
+    "module": "main"
+  },
+  {
+    "command": "/text leaderboard",
+    "name": "leaderboard",
+    "description": "View the text activity leaderboard",
+    "module": "server_activity"
+  },
+  {
+    "command": "/text stats",
+    "name": "stats",
+    "description": "Text activity, XP, and leaderboards",
+    "module": "server_activity"
+  },
+  {
+    "command": "/ticket button_add",
+    "name": "button_add",
+    "description": "Add a custom button to a ticket category",
+    "module": "tickets"
+  },
+  {
+    "command": "/ticket category_create",
+    "name": "category_create",
+    "description": "Create a new ticket category with custom button styling",
+    "module": "tickets"
+  },
+  {
+    "command": "/ticket category_list",
+    "name": "category_list",
+    "description": "List all ticket categories and their IDs",
+    "module": "tickets"
+  },
+  {
+    "command": "/ticket panel",
+    "name": "panel",
+    "description": "Spawn a ticket creation panel here",
+    "module": "tickets"
+  },
+  {
+    "command": "/ticket panel_add_button",
+    "name": "panel_add_button",
+    "description": "Add a new category button to an existing ticket panel message",
+    "module": "tickets"
+  },
+  {
+    "command": "/ticket panel_remove_button",
+    "name": "panel_remove_button",
+    "description": "Remove a category button from an existing ticket panel message",
+    "module": "tickets"
+  },
+  {
+    "command": "/ticket setlogchannel",
+    "name": "setlogchannel",
+    "description": "Set the channel where closed ticket logs and transcripts are sent",
+    "module": "tickets"
+  },
+  {
+    "command": "/ticket setup",
+    "name": "setup",
+    "description": "Ticket system commands",
+    "module": "tickets"
+  },
+  {
+    "command": "/ticket user_add",
+    "name": "user_add",
+    "description": "Add a user to the current ticket",
+    "module": "tickets"
+  },
+  {
+    "command": "/ticket user_remove",
+    "name": "user_remove",
+    "description": "Remove a user from the current ticket",
+    "module": "tickets"
+  },
+  {
+    "command": "/toggle_247",
+    "name": "toggle_247",
+    "description": "⚡ Toggle 24/7 mode (stay in voice channel forever)",
+    "module": "music"
+  },
+  {
+    "command": "/unblacklist member",
+    "name": "member",
+    "description": "Remove a user from the blacklist",
+    "module": "blacklist"
+  },
+  {
+    "command": "/unblacklist server",
+    "name": "server",
+    "description": "Remove a server from the blacklist",
+    "module": "blacklist"
+  },
+  {
+    "command": "/valo",
+    "name": "valo",
+    "description": "Invite players to join Valorant (Malayalam gaming call)",
+    "module": "main"
+  },
+  {
+    "command": "/verify config",
+    "name": "config",
+    "description": "Configure the verification system",
+    "module": "community"
+  },
+  {
+    "command": "/verify setup",
+    "name": "setup",
+    "description": "Verification system commands",
+    "module": "community"
+  },
+  {
+    "command": "/voice config",
+    "name": "config",
+    "description": "No description provided.",
+    "module": "voice_analytics"
+  },
+  {
+    "command": "/voice leaderboard",
+    "name": "leaderboard",
+    "description": "View the voice leaderboard",
+    "module": "voice_analytics"
+  },
+  {
+    "command": "/voice stats",
+    "name": "stats",
+    "description": "Voice analytics — XP, coins, levels, achievements",
+    "module": "voice_analytics"
+  },
+  {
+    "command": "/volume",
+    "name": "volume",
+    "description": "🔊 Change playback volume (1% - 150%)",
+    "module": "music"
+  },
+  {
+    "command": "/warn",
+    "name": "warn",
+    "description": "Issue a formal warning to a member",
+    "module": "security"
+  },
+  {
+    "command": "/warnings",
+    "name": "warnings",
+    "description": "View a member",
+    "module": "security"
+  },
+  {
+    "command": "/webhook_embed",
+    "name": "webhook_embed",
+    "description": "Create an embed via Webhook. Allows file uploads for images and pasting text.",
+    "module": "webhook_messages"
+  }
+]

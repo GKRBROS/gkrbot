@@ -259,8 +259,10 @@ class HoneypotCog(commands.Cog):
             view = discord.ui.View()
             btn1 = discord.ui.Button(label=f"⚠️ Users Trapped: {total}", style=discord.ButtonStyle.danger, disabled=True)
             btn2 = discord.ui.Button(label=f"🔨 Kicked: {kicked}", style=discord.ButtonStyle.secondary, disabled=True)
+            vote_btn = discord.ui.Button(label="Vote on Top.gg", emoji="❤️", style=discord.ButtonStyle.link, url="https://top.gg/bot/1397848684061790301/vote")
             view.add_item(btn1)
             view.add_item(btn2)
+            view.add_item(vote_btn)
 
             await msg.edit(view=view)
         except (discord.NotFound, discord.Forbidden, discord.HTTPException):
@@ -376,8 +378,15 @@ class HoneypotCog(commands.Cog):
             style=discord.ButtonStyle.secondary,
             disabled=True
         )
+        vote_btn = discord.ui.Button(
+            label="Vote on Top.gg",
+            emoji="❤️",
+            style=discord.ButtonStyle.link,
+            url="https://top.gg/bot/1397848684061790301/vote"
+        )
         view.add_item(btn1)
         view.add_item(btn2)
+        view.add_item(vote_btn)
 
         try:
             trap_msg = await trap_channel.send(embed=trap_embed, view=view)

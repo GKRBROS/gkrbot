@@ -477,6 +477,8 @@ bot.setup_hook = setup_hook
 
 # ── /help command (required for top.gg listing) ───────────────────────────────
 @tree.command(name="help", description=f"📖 Show all {BOT_NAME} Bot commands and features")
+@app_commands.allowed_installs(guilds=True, users=True)
+@app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 @app_commands.describe(category="Filter by a specific feature category (optional)")
 @app_commands.choices(category=[
     app_commands.Choice(name="🤖 AI System", value="ai"),

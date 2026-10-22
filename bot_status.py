@@ -75,6 +75,20 @@ GIF_ONLINE = "https://cdn.discordapp.com/attachments/1247646566794133585/1559078
 GIF_OFFLINE = "https://media.discordapp.net/attachments/1247646566794133585/1559078524973744308/standard_6.gif?ex=6acdc486&is=6acc7306&hm=ceb8471d616e252e28ecaf399bc877d648a551453f6427107dc910c38f8324e6&=&width=640&height=360"
 GIF_RESTARTING = "https://media.discordapp.net/attachments/1247646566794133585/1559078613511311450/standard_7.gif?ex=6acdc49b&is=6acc731b&hm=c5c1915b7b9949ef24dc32458d8ca3c9f879e24bcff5268b6413ec01acb7e527&=&width=640&height=360"
 
+TOPGG_VOTE_URL = "https://top.gg/bot/1397848684061790301/vote"
+
+
+class BotStatusView(discord.ui.View):
+    """Persistent view attached to the bot status embed."""
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(discord.ui.Button(
+            label="Vote on Top.gg",
+            emoji="❤️",
+            style=discord.ButtonStyle.link,
+            url=TOPGG_VOTE_URL,
+        ))
+
 
 def _clean_channel_id(val) -> int | None:
     if not val:
@@ -484,7 +498,7 @@ class BotStatusCog(commands.Cog):
         try:
             if not embed_msg:
                 embed_msg = await _build_embed(self.bot, online=True)
-            msg = await ch.send(embed=embed_msg)
+            msg = await ch.send(embed=embed_msg, view=BotStatusView())
             
             if guild_id not in self._configs:
                 self._configs[guild_id] = {"channel_id": ch.id}
@@ -510,7 +524,7 @@ class BotStatusCog(commands.Cog):
                     await self._post_fresh(guild_id, embed_msg)
                 continue
             try:
-                await msg.edit(embed=embed_msg)
+                await msg.edit(embed=embed_msg, view=BotStatusView())
             except Exception as exc:
                 print(f"[BotStatus] ❌ Failed to edit status embed in {guild_id}: {exc}")
 
