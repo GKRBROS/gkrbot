@@ -51,7 +51,7 @@ except ImportError:
         return False
 
 logger = logging.getLogger("gkr_radio")
-DB_PATH = os.path.join(os.path.dirname(__file__), "radio.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "radio.sqlite3")
 
 # ---------------------------------------------------------------------------
 # Cross-library voice-client compatibility helpers

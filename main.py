@@ -223,7 +223,7 @@ EMOJI_ROLE_MAP = {
 # Helper functions for reaction roles
 def get_role_menu_gif():
     """Get the custom role menu GIF URL if available"""
-    gif_file_path = os.path.join(os.path.dirname(__file__), 'role_menu_gif.txt')
+    gif_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'role_menu_gif.txt')
     
     if os.path.exists(gif_file_path):
         try:
@@ -237,7 +237,7 @@ def get_role_menu_gif():
 
 def save_message_id(message_id):
     """Save the reaction message ID to a file so we can find it again on restart"""
-    message_id_path = os.path.join(os.path.dirname(__file__), 'reaction_message_id.txt')
+    message_id_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reaction_message_id.txt')
     try:
         with open(message_id_path, 'w') as f:
             f.write(str(message_id))
@@ -246,7 +246,7 @@ def save_message_id(message_id):
 
 def load_message_id():
     """Load the saved reaction message ID if it exists"""
-    message_id_path = os.path.join(os.path.dirname(__file__), 'reaction_message_id.txt')
+    message_id_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'reaction_message_id.txt')
     if os.path.exists(message_id_path):
         try:
             with open(message_id_path, 'r') as f:
@@ -2323,7 +2323,7 @@ async def set_role_menu_gif(ctx, gif_url=None):
         /setrolemenugif https://media.giphy.com/media/example/giphy.gif
     """
     # Save the GIF URL to a file
-    gif_file_path = os.path.join(os.path.dirname(__file__), 'role_menu_gif.txt')
+    gif_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'role_menu_gif.txt')
     
     # If no URL provided, show the current one
     if gif_url is None:

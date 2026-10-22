@@ -33,7 +33,7 @@ try:
 except ImportError:
     _PSUTIL = False
 
-_DB_PATH    = os.path.join(os.path.dirname(__file__), "font_sync.sqlite3")
+_DB_PATH    = os.path.join(os.path.dirname(os.path.abspath(__file__)), "font_sync.sqlite3")
 _START_TIME = time.time()   # captured at module load == bot start time
 
 

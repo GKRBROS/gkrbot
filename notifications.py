@@ -32,7 +32,7 @@ load_dotenv()
 # Database
 # ---------------------------------------------------------------------------
 
-_DB_PATH = os.path.join(os.path.dirname(__file__), "font_sync.sqlite3")
+_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "font_sync.sqlite3")
 
 
 def _db() -> sqlite3.Connection:

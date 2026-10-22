@@ -25,7 +25,7 @@ from discord.ext import commands, tasks
 # Constants
 # ---------------------------------------------------------------------------
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "voice_analytics.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voice_analytics.sqlite3")
 
 XP_PER_MINUTE_DEFAULT    = 10
 COINS_PER_MINUTE_DEFAULT = 5

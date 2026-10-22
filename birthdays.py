@@ -20,7 +20,7 @@ from typing import Optional
 
 # ── Database ─────────────────────────────────────────────────────────────────
 
-BIRTHDAY_DB_PATH = os.path.join(os.path.dirname(__file__), "birthdays.sqlite3")
+BIRTHDAY_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "birthdays.sqlite3")
 
 IST = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
 

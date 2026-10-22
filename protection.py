@@ -16,7 +16,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "protection.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protection.sqlite3")
 
 class ProtectionDB:
     def __init__(self):

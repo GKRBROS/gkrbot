@@ -327,7 +327,7 @@ def build_progress_bar(position: int, duration: int, length: int = 15) -> str:
 # attachment links are not meant to be hotlinked long-term. That link's `ex`
 # timestamp decodes to 2026-08-20, so it had been rendering as a broken image
 # in every "Now Playing" panel since then. Fixed by loading a local file
-COMBINED_VISUALIZER_GIF_PATH = os.path.join(os.path.dirname(__file__), "combined_music_visualizer.gif")
+COMBINED_VISUALIZER_GIF_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "combined_music_visualizer.gif")
 MUSIC_VISUALIZER_GIF_FILENAME = "combined_music_visualizer.gif"
 MUSIC_VISUALIZER_GIF_URL = os.getenv(
     "MUSIC_VISUALIZER_GIF_URL",

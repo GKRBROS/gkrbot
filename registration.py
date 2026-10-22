@@ -33,7 +33,7 @@ from discord.ext import commands
 from bot_config import BOT_NAME
 from gkr_ui import C, embed_success, embed_error, embed_info, embed_warning, fmt_ts, fmt_rel
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "registration.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "registration.sqlite3")
 
 # Supported Field Types
 FIELD_TYPES = {

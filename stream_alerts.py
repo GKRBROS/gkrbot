@@ -65,7 +65,7 @@ if has_ytnoti:
 # Constants
 # ---------------------------------------------------------------------------
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "stream_alerts.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stream_alerts.sqlite3")
 
 YOUTUBE_API_KEY    = os.getenv("YOUTUBE_API_KEY", "")
 TWITCH_CLIENT_ID   = os.getenv("TWITCH_CLIENT_ID", "")
@@ -559,7 +559,7 @@ async def check_youtube_live_direct(
     def _run_ytdlp(cid: str) -> Optional[dict]:
         import yt_dlp
         url = f"https://www.youtube.com/channel/{cid}/streams"
-        cookie_path = os.path.join(os.path.dirname(__file__), "cookies.txt")
+        cookie_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
         ydl_opts = {
             'quiet': True,
             'no_warnings': True,

@@ -35,7 +35,7 @@ from gkr_ui import (
 )
 
 DEV_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0"))
-DB_PATH = os.path.join(os.path.dirname(__file__), "dev_logs.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dev_logs.sqlite3")
 
 # Remote console for crash/bug forwarding
 CONSOLE_HOST = "89.106.84.82"

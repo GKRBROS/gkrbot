@@ -30,7 +30,7 @@ def _resolve_client_secret() -> str:
 
 # Session store: token -> dict of user data
 SESSIONS = {}
-SESSIONS_FILE = os.path.join(os.path.dirname(__file__), "dashboard_sessions.json")
+SESSIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard_sessions.json")
 
 def _load_sessions():
     """Restore dashboard sessions from disk so logins survive bot restarts."""
@@ -1811,6 +1811,93 @@ async def handle_security_post(request: web.Request):
 
     return web.json_response({"success": True})
 
+async def handle_antinuke_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import security
+    db = security.SecurityDatabase()
+    db.initialize()
+    cfg = db.get_antinuke_config(guild_id)
+    wl = db.get_antinuke_whitelist(guild_id)
+    return web.json_response({"config": cfg, "whitelist": wl})
+
+async def handle_antinuke_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    import security
+    db = security.SecurityDatabase()
+    db.initialize()
+
+    updates = {}
+    if "enabled" in data: updates["enabled"] = 1 if data["enabled"] else 0
+    if "strict_mode" in data: updates["strict_mode"] = 1 if data["strict_mode"] else 0
+    if "ban_limit" in data: updates["ban_limit"] = int(data["ban_limit"])
+    if "kick_limit" in data: updates["kick_limit"] = int(data["kick_limit"])
+    if "channel_delete_limit" in data: updates["channel_delete_limit"] = int(data["channel_delete_limit"])
+    if "channel_create_limit" in data: updates["channel_create_limit"] = int(data["channel_create_limit"])
+    if "role_delete_limit" in data: updates["role_delete_limit"] = int(data["role_delete_limit"])
+    if "role_create_limit" in data: updates["role_create_limit"] = int(data["role_create_limit"])
+    if "anti_bot" in data: updates["anti_bot"] = 1 if data["anti_bot"] else 0
+    if "action" in data: updates["action"] = str(data["action"])
+    if "time_window_sec" in data: updates["time_window_sec"] = int(data["time_window_sec"])
+
+    db.update_antinuke_config(guild_id, **updates)
+
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Updated Anti-Nuke Settings",
+        "Modified Anti-Nuke defense thresholds and punishment rules",
+        category="security",
+        color=0x5865F2,
+    )
+    return web.json_response({"success": True, "config": db.get_antinuke_config(guild_id)})
+
+async def handle_antinuke_whitelist_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    target_id = data.get("target_id")
+    if not target_id:
+        return web.json_response({"error": "Target user/bot ID required"}, status=400)
+    import security
+    db = security.SecurityDatabase()
+    db.initialize()
+    added_by = sess.get("user_id", 0)
+    db.add_antinuke_whitelist(guild_id, int(target_id), int(added_by))
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Anti-Nuke Whitelist Added",
+        f"Whitelisted entity <@{target_id}> from Anti-Nuke triggers",
+        category="security",
+        color=0x57F287,
+    )
+    return web.json_response({"success": True, "whitelist": db.get_antinuke_whitelist(guild_id)})
+
+async def handle_antinuke_whitelist_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    target_id = int(request.match_info["target_id"])
+    import security
+    db = security.SecurityDatabase()
+    db.initialize()
+    db.remove_antinuke_whitelist(guild_id, target_id)
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Anti-Nuke Whitelist Removed",
+        f"Removed entity <@{target_id}> from Anti-Nuke whitelist",
+        category="security",
+        color=0xED4245,
+    )
+    return web.json_response({"success": True, "whitelist": db.get_antinuke_whitelist(guild_id)})
+
 # --- Sticky Messages Endpoints ---
 
 async def handle_sticky_get(request: web.Request):
@@ -2019,6 +2106,104 @@ async def handle_moderation_staff_del(request: web.Request):
     )
 
     return web.json_response({"success": True})
+
+# --- Moderation Server Bans & Mass Unban Endpoints ---
+
+async def handle_moderation_bans_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+    bans_list = []
+    try:
+        async for ban_entry in guild.bans(limit=100):
+            bans_list.append({
+                "user": {
+                    "id": str(ban_entry.user.id),
+                    "name": ban_entry.user.name,
+                    "discriminator": ban_entry.user.discriminator,
+                    "avatar": ban_entry.user.display_avatar.url if hasattr(ban_entry.user, "display_avatar") else None,
+                },
+                "reason": ban_entry.reason or "No reason specified"
+            })
+    except discord.Forbidden:
+        return web.json_response({"error": "Bot missing 'Ban Members' permission"}, status=403)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+    return web.json_response({"bans": bans_list})
+
+async def handle_moderation_unban_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    user_id = data.get("user_id")
+    if not user_id: return web.json_response({"error": "user_id required"}, status=400)
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+    try:
+        user_obj = discord.Object(id=int(user_id))
+        admin_name = sess.get("username", "Dashboard Admin")
+        await guild.unban(user_obj, reason=f"Unbanned via Dashboard by {admin_name}")
+        await _log_dashboard_action(
+            request, guild_id, "Member Unbanned",
+            f"Unbanned user <@{user_id}>", category="moderation", color=0x57F287
+        )
+        return web.json_response({"success": True})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def handle_moderation_ban_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    data = await request.json()
+    user_id = data.get("user_id")
+    reason = data.get("reason", "Banned via Dashboard")
+    delete_days = int(data.get("delete_message_days", 0))
+    if not user_id: return web.json_response({"error": "user_id required"}, status=400)
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+    try:
+        user_obj = discord.Object(id=int(user_id))
+        admin_name = sess.get("username", "Dashboard Admin")
+        await guild.ban(user_obj, reason=f"{reason} (via Dashboard by {admin_name})", delete_message_days=delete_days)
+        await _log_dashboard_action(
+            request, guild_id, "Member Banned",
+            f"Banned user <@{user_id}>. Reason: {reason}", category="moderation", color=0xED4245
+        )
+        return web.json_response({"success": True})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+
+async def handle_moderation_unbanall_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    bot: commands.Bot = request.app["bot"]
+    guild = bot.get_guild(guild_id)
+    if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+    count = 0
+    errors = 0
+    admin_name = sess.get("username", "Dashboard Admin")
+    try:
+        async for ban_entry in guild.bans(limit=500):
+            try:
+                await guild.unban(ban_entry.user, reason=f"Mass unban executed via Dashboard by {admin_name}")
+                count += 1
+            except Exception:
+                errors += 1
+        await _log_dashboard_action(
+            request, guild_id, "Mass Unban Executed",
+            f"Successfully unbanned {count} user(s) (errors: {errors})", category="moderation", color=0x57F287
+        )
+        return web.json_response({"success": True, "count": count, "errors": errors})
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
 
 # --- Voice Channels Endpoint (for Temp VC etc.) ---
 
@@ -4694,6 +4879,10 @@ class DashboardAPI(commands.Cog):
             # Security & Anti-Nuke
             web.get("/api/guilds/{guild_id}/security", handle_security_get),
             web.post("/api/guilds/{guild_id}/security", handle_security_post),
+            web.get("/api/guilds/{guild_id}/antinuke", handle_antinuke_get),
+            web.post("/api/guilds/{guild_id}/antinuke", handle_antinuke_post),
+            web.post("/api/guilds/{guild_id}/antinuke/whitelist", handle_antinuke_whitelist_post),
+            web.delete("/api/guilds/{guild_id}/antinuke/whitelist/{target_id}", handle_antinuke_whitelist_delete),
             # Sticky Messages
             web.get("/api/guilds/{guild_id}/sticky", handle_sticky_get),
             web.post("/api/guilds/{guild_id}/sticky", handle_sticky_post),
@@ -4702,10 +4891,14 @@ class DashboardAPI(commands.Cog):
             web.get("/api/guilds/{guild_id}/auto-reactions", handle_autoreact_get),
             web.post("/api/guilds/{guild_id}/auto-reactions", handle_autoreact_post),
             web.delete("/api/guilds/{guild_id}/auto-reactions/{id}", handle_autoreact_delete),
-            # Moderation & Staff
+            # Moderation & Staff & Bans
             web.get("/api/guilds/{guild_id}/moderation", handle_moderation_get),
             web.post("/api/guilds/{guild_id}/moderation/staff-roles", handle_moderation_staff_add),
             web.delete("/api/guilds/{guild_id}/moderation/staff-roles/{role_id}", handle_moderation_staff_del),
+            web.get("/api/guilds/{guild_id}/moderation/bans", handle_moderation_bans_get),
+            web.post("/api/guilds/{guild_id}/moderation/unban", handle_moderation_unban_post),
+            web.post("/api/guilds/{guild_id}/moderation/ban", handle_moderation_ban_post),
+            web.post("/api/guilds/{guild_id}/moderation/unbanall", handle_moderation_unbanall_post),
             # Multi-Server Sync
             web.post("/api/guilds/{guild_id}/sync", handle_guild_sync),
             # Music
@@ -4807,7 +5000,7 @@ class DashboardAPI(commands.Cog):
         ])
         
         # Static file serving if dashboard-ui/dist exists
-        dist_path = os.path.join(os.path.dirname(__file__), "dashboard-ui", "dist")
+        dist_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "dashboard-ui", "dist")
         if os.path.exists(dist_path):
             assets_path = os.path.join(dist_path, "assets")
             if os.path.exists(assets_path):

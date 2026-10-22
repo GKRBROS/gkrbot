@@ -198,6 +198,42 @@
     "module": "main"
   },
   {
+    "command": "/antinuke action",
+    "name": "action",
+    "description": "Set the punishment executed against nukers (strip_roles/ban/kick)",
+    "module": "security"
+  },
+  {
+    "command": "/antinuke antibot",
+    "name": "antibot",
+    "description": "Toggle auto-kick for unauthorized bot additions",
+    "module": "security"
+  },
+  {
+    "command": "/antinuke limits",
+    "name": "limits",
+    "description": "Configure trigger thresholds for Anti-Nuke actions",
+    "module": "security"
+  },
+  {
+    "command": "/antinuke status",
+    "name": "status",
+    "description": "Show current Anti-Nuke defense status, thresholds, and whitelisted staff",
+    "module": "security"
+  },
+  {
+    "command": "/antinuke toggle",
+    "name": "toggle",
+    "description": "Enable or disable the Anti-Nuke defense engine",
+    "module": "security"
+  },
+  {
+    "command": "/antinuke whitelist",
+    "name": "whitelist",
+    "description": "Manage trusted admins/bots immune to Anti-Nuke",
+    "module": "security"
+  },
+  {
     "command": "/antihacked logchannel",
     "name": "logchannel",
     "description": "Set the channel where protection logs will be sent",
@@ -808,6 +844,36 @@
     "name": "lyrics",
     "description": "🎤 Search lyrics for the current or specified song",
     "module": "music"
+  },
+  {
+    "command": "/mod ban",
+    "name": "ban",
+    "description": "Ban a member or user from the server",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod banlist",
+    "name": "banlist",
+    "description": "List all currently banned members in the server",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod kick",
+    "name": "kick",
+    "description": "Kick a member from the server",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod unban",
+    "name": "unban",
+    "description": "Unban a member from the server",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod unbanall",
+    "name": "unbanall",
+    "description": "Unban all banned members in this server",
+    "module": "moderation"
   },
   {
     "command": "/mod config",

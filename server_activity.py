@@ -24,7 +24,7 @@ from discord.ext import commands
 # Constants
 # ---------------------------------------------------------------------------
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "server_activity.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_activity.sqlite3")
 
 TEXT_XP_DEFAULT    = 5
 TEXT_COIN_DEFAULT  = 2

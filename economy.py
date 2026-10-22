@@ -25,7 +25,7 @@ from gkr_ui import C, embed_error, embed_success, embed_info, embed_warning, Pag
 # Constants & DB Path
 # ---------------------------------------------------------------------------
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "economy.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "economy.sqlite3")
 
 # ---------------------------------------------------------------------------
 # Database

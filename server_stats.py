@@ -5,7 +5,7 @@ import sqlite3
 import os
 import asyncio
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "server_stats.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_stats.sqlite3")
 
 class StatsDB:
     def __init__(self, db_path: str = DB_PATH):

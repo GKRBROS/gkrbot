@@ -11,8 +11,8 @@ from typing import Optional, Tuple
 from dataclasses import dataclass
 from gkr_ui import embed_success, embed_error, embed_info, C
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "font_sync.sqlite3")
-ASSETS_DIR = os.path.join(os.path.dirname(__file__), "welcome_assets")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "font_sync.sqlite3")
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "welcome_assets")
 
 FONT_BOLD_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/outfit/Outfit%5Bwght%5D.ttf"
 FONT_REGULAR_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/outfit/Outfit%5Bwght%5D.ttf"

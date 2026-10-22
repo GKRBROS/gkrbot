@@ -55,7 +55,7 @@ from gkr_ui import (
 from bot_config import BOT_NAME
 
 logger = logging.getLogger("gkr_ai")
-DB_PATH = os.path.join(os.path.dirname(__file__), "ai_system.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai_system.sqlite3")
 
 # ---------------------------------------------------------------------------
 # Persona System Prompts (Inspired by Discord-AI-Server-Manager)

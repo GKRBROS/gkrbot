@@ -23,7 +23,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "poll.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "poll.sqlite3")
 
 NUMBER_EMOJIS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 

@@ -25,7 +25,7 @@ from discord.ext import commands
 
 # ─── Database ──────────────────────────────────────────────────────────────────
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "invite_tracker.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "invite_tracker.sqlite3")
 
 
 def _db():

@@ -23,7 +23,7 @@ import datetime
 from bot_config import BOT_NAME
 from typing import Optional, List, Dict, Union, Tuple
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "gkr_bot.db")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gkr_bot.db")
 
 # ─── Voice region choices ─────────────────────────────────────────────────────
 REGIONS = [

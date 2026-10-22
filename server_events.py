@@ -23,7 +23,7 @@ from discord import app_commands
 from discord.ext import commands, tasks
 from gkr_ui import C, embed_error, embed_success, embed_info, embed_warning, embed_action  # noqa: E402
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "server_events.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_events.sqlite3")
 
 
 # ---------------------------------------------------------------------------

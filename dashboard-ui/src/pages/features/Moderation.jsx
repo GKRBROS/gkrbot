@@ -11,7 +11,11 @@ import {
   AlertCircle,
   BookOpen,
   Shield,
-  Tag
+  Tag,
+  Gavel,
+  UserX,
+  UserCheck,
+  RefreshCw
 } from 'lucide-react';
 import api from '../../api';
 import SyncModal from './SyncModal';
@@ -31,8 +35,30 @@ function Moderation() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [successMsg, setSuccessMsg] = useState('');
   const [selectedRole, setSelectedRole] = useState('');
   const [syncOpen, setSyncOpen] = useState(false);
+
+  // Bans management state
+  const [bans, setBans] = useState([]);
+  const [bansLoading, setBansLoading] = useState(false);
+  const [banUserId, setBanUserId] = useState('');
+  const [banReason, setBanReason] = useState('');
+  const [banning, setBanning] = useState(false);
+  const [unbanningId, setUnbanningId] = useState('');
+  const [unbanAllLoading, setUnbanAllLoading] = useState(false);
+
+  const fetchBans = useCallback(async () => {
+    setBansLoading(true);
+    try {
+      const res = await api.get(`/guilds/${guildId}/moderation/bans`);
+      setBans(res.data.bans || []);
+    } catch (err) {
+      console.error('Failed to load server bans', err);
+    } finally {
+      setBansLoading(false);
+    }
+  }, [guildId]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -46,13 +72,14 @@ function Moderation() {
       if (rList.length > 0 && !selectedRole) {
         setSelectedRole(rList[0].id);
       }
+      await fetchBans();
     } catch (err) {
       console.error('Failed to load moderation settings', err);
       setError(err.response?.data?.error || 'Failed to load moderation settings');
     } finally {
       setLoading(false);
     }
-  }, [guildId, selectedRole]);
+  }, [guildId, selectedRole, fetchBans]);
 
   useEffect(() => {
     fetchData();
@@ -83,6 +110,64 @@ function Moderation() {
     }
   };
 
+  const handleBanUser = async (e) => {
+    if (e) e.preventDefault();
+    if (!banUserId.trim()) return;
+    setError('');
+    setSuccessMsg('');
+    setBanning(true);
+    try {
+      await api.post(`/guilds/${guildId}/moderation/ban`, {
+        user_id: banUserId.trim(),
+        reason: banReason.trim() || 'Banned via Web Dashboard',
+      });
+      setSuccessMsg(`Successfully banned user ${banUserId}`);
+      setBanUserId('');
+      setBanReason('');
+      await fetchBans();
+      setTimeout(() => setSuccessMsg(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to ban member');
+    } finally {
+      setBanning(false);
+    }
+  };
+
+  const handleUnbanUser = async (userId) => {
+    setError('');
+    setSuccessMsg('');
+    setUnbanningId(userId);
+    try {
+      await api.post(`/guilds/${guildId}/moderation/unban`, { user_id: userId });
+      setSuccessMsg(`Successfully unbanned user ${userId}`);
+      setBans(prev => prev.filter(b => b.user.id !== userId));
+      setTimeout(() => setSuccessMsg(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to unban user');
+    } finally {
+      setUnbanningId('');
+    }
+  };
+
+  const handleUnbanAll = async () => {
+    if (!window.confirm('Are you ABSOLUTELY sure you want to UNBAN ALL members from this server? This action cannot be undone.')) {
+      return;
+    }
+    setError('');
+    setSuccessMsg('');
+    setUnbanAllLoading(true);
+    try {
+      const res = await api.post(`/guilds/${guildId}/moderation/unbanall`);
+      setSuccessMsg(`Mass unban complete! Unbanned ${res.data.count || 0} user(s).`);
+      await fetchBans();
+      setTimeout(() => setSuccessMsg(''), 4000);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to execute mass unban');
+    } finally {
+      setUnbanAllLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -103,20 +188,23 @@ function Moderation() {
   }));
 
   const commandsList = [
-    { cmd: '/mute <user> <duration> [reason]', desc: 'Timeouts a member with rich infraction logging.' },
-    { cmd: '/unmute <user> [reason]', desc: 'Lifts an active timeout from a server member.' },
-    { cmd: '/mutelist', desc: 'Lists all currently timed-out or muted server members.' },
-    { cmd: '/warn <user> <reason>', desc: 'Issues an official warning and advances the punishment ladder.' },
-    { cmd: '/warnings <user>', desc: 'Shows complete warning history and active disciplinary records.' },
-    { cmd: '/saye <message> /sayt', desc: 'Broadcasts official announcements as rich embeds or plaintext.' },
+    { cmd: '/mod ban <user> [reason]', desc: 'Bans a member with optional purge and security logging.' },
+    { cmd: '/mod unban <user_id> [reason]', desc: 'Removes an active ban by Discord user ID.' },
+    { cmd: '/mod unbanall', desc: 'Administrative mass unban across the entire server.' },
+    { cmd: '/mod banlist', desc: 'Displays currently banned members and ban reasons.' },
+    { cmd: '/mod kick <user> [reason]', desc: 'Kicks a member from the server.' },
+    { cmd: '/mod timeout <user> <duration> [reason]', desc: 'Applies Discord communication timeout (mute).' },
+    { cmd: '/mod untimeout <user>', desc: 'Removes timeout from a muted member.' },
+    { cmd: '/warn <user> <reason>', desc: 'Issues an official warning and advances punishment ladder.' },
+    { cmd: '/warnings <user>', desc: 'Shows complete warning history and active records.' },
   ];
 
   return (
     <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <PageHeader
         icon={ShieldAlert}
-        title="Moderation & Staff Roles"
-        subtitle="Authorize specific moderator roles to execute bot discipline commands without granting full server admin rights."
+        title="Moderation & Server Discipline"
+        subtitle="Authorize specific moderator roles, manage server bans, execute mass unbans, and manage disciplinary enforcement."
         actions={
           <Button
             variant="outline"
@@ -128,6 +216,31 @@ function Moderation() {
           </Button>
         }
       />
+
+      {successMsg && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '12px 16px',
+          borderRadius: 'var(--radius-md)',
+          background: 'rgba(34, 197, 94, 0.1)',
+          border: '1px solid rgba(34, 197, 94, 0.25)',
+          color: '#4ade80',
+          fontSize: '13.5px'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <CheckCircle2 size={17} />
+            <span>{successMsg}</span>
+          </div>
+          <button
+            onClick={() => setSuccessMsg('')}
+            style={{ background: 'transparent', border: 'none', color: '#4ade80', cursor: 'pointer', fontSize: '16px' }}
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {error && (
         <div style={{
@@ -258,6 +371,184 @@ function Moderation() {
                     </div>
                   );
                 })}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Server Bans & Mass Unban Card */}
+      <Card>
+        <CardHeader>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Gavel size={20} color="#ef4444" />
+              <div>
+                <CardTitle style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  Server Bans & Punishments
+                  <Badge variant={bans.length > 0 ? 'warning' : 'neutral'} size="sm">
+                    {bans.length} Active {bans.length === 1 ? 'Ban' : 'Bans'}
+                  </Badge>
+                </CardTitle>
+                <CardDescription>
+                  View and manage banned users, execute targeted unbans, or perform server mass-unbans.
+                </CardDescription>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={fetchBans}
+                loading={bansLoading}
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <RefreshCw size={14} /> Refresh Bans
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleUnbanAll}
+                loading={unbanAllLoading}
+                style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)' }}
+              >
+                <UserCheck size={14} /> Unban All Members
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          {/* Quick Ban Form */}
+          <form onSubmit={handleBanUser} style={{
+            display: 'flex',
+            gap: '12px',
+            flexWrap: 'wrap',
+            alignItems: 'flex-end',
+            padding: '16px',
+            background: 'var(--bg-surface)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--border)'
+          }}>
+            <div style={{ flex: '1', minWidth: '220px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Ban Discord User ID
+              </label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Enter User ID (e.g. 936219932461510667)..."
+                value={banUserId}
+                onChange={e => setBanUserId(e.target.value)}
+              />
+            </div>
+
+            <div style={{ flex: '2', minWidth: '260px' }}>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
+                Reason for Ban
+              </label>
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Violation of server rules, raid attempt, etc..."
+                value={banReason}
+                onChange={e => setBanReason(e.target.value)}
+              />
+            </div>
+
+            <Button
+              type="submit"
+              variant="primary"
+              loading={banning}
+              style={{ background: '#ef4444', borderColor: '#dc2626', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <UserX size={15} /> Ban Member
+            </Button>
+          </form>
+
+          {/* Active Bans List */}
+          <div>
+            <h4 style={{ margin: '0 0 12px', fontSize: '14px', fontWeight: 600, color: 'var(--text-main)' }}>
+              Active Server Bans ({bans.length})
+            </h4>
+
+            {bansLoading ? (
+              <Skeleton height="100px" />
+            ) : bans.length === 0 ? (
+              <EmptyState
+                icon={CheckCircle2}
+                title="Clean Record — No Active Bans"
+                description="There are currently no members banned from this Discord server."
+              />
+            ) : (
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                maxHeight: '360px',
+                overflowY: 'auto',
+                paddingRight: '4px'
+              }}>
+                {bans.map((b) => (
+                  <div
+                    key={b.user.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '12px 16px',
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius-md)',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
+                      {b.user.avatar ? (
+                        <img
+                          src={b.user.avatar}
+                          alt=""
+                          style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        <div style={{
+                          width: '36px',
+                          height: '36px',
+                          borderRadius: '50%',
+                          background: 'rgba(239, 68, 68, 0.2)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: '#ef4444'
+                        }}>
+                          <UserX size={18} />
+                        </div>
+                      )}
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontWeight: 600, fontSize: '13.5px', color: 'var(--text-main)' }}>
+                            {b.user.name}
+                          </span>
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                            ID: {b.user.id}
+                          </span>
+                        </div>
+                        <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          Reason: {b.reason}
+                        </p>
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleUnbanUser(b.user.id)}
+                      loading={unbanningId === b.user.id}
+                      style={{ color: '#22c55e', borderColor: 'rgba(34, 197, 94, 0.3)', whiteSpace: 'nowrap' }}
+                    >
+                      <UserCheck size={14} /> Unban
+                    </Button>
+                  </div>
+                ))}
               </div>
             )}
           </div>

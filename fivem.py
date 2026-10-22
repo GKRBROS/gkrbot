@@ -6,7 +6,7 @@
 # from typing import Dict, Optional
 
 # # FiveM player names storage
-# FIVEM_NAMES_FILE = os.path.join(os.path.dirname(__file__), 'fivem_names.json')
+# FIVEM_NAMES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fivem_names.json')
 # FIVEM_API_KEY = os.getenv('FIVEM_API_KEY', 'default_key_change_this')  # Add this to your .env file
 
 # def load_fivem_names() -> Dict[str, str]:

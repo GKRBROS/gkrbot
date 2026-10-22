@@ -12,7 +12,7 @@ import zoneinfo
 import holidays
 from gkr_ui import embed_success, embed_error, embed_info, C
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "festivals.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "festivals.sqlite3")
 IST = zoneinfo.ZoneInfo("Asia/Kolkata")
 
 class FestivalsDB:

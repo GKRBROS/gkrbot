@@ -15,7 +15,7 @@ from discord.ext import commands
 from gkr_ui import C, embed_error, embed_success, embed_info, embed_warning, embed_action  # noqa: E402
 
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "tickets.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tickets.sqlite3")
 
 # ---------------------------------------------------------------------------
 # Database Models

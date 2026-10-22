@@ -35,7 +35,7 @@ MAX_QUEUE = 100
 MAX_SEARCH_RESULTS = 5
 SPOTIFY_METADATA_API = os.getenv("SPOTIFY_METADATA_API", "").strip().rstrip("/")
 
-COMBINED_VISUALIZER_GIF_PATH = os.path.join(os.path.dirname(__file__), "combined_music_visualizer.gif")
+COMBINED_VISUALIZER_GIF_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "combined_music_visualizer.gif")
 MUSIC_VISUALIZER_GIF_FILENAME = "combined_music_visualizer.gif"
 MUSIC_VISUALIZER_GIF_URL = os.getenv(
     "MUSIC_VISUALIZER_GIF_URL",

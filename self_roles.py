@@ -16,7 +16,7 @@ import sqlite3
 import os
 from typing import Optional
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "self_roles.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "self_roles.sqlite3")
 
 # ─── Database ─────────────────────────────────────────────────────────────────
 

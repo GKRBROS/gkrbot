@@ -13,7 +13,7 @@ import datetime
 from collections import defaultdict
 import asyncio
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "anti_hacked.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "anti_hacked.sqlite3")
 
 # Roles with any of these permissions are considered "Powerful"
 POWERFUL_PERMS = [

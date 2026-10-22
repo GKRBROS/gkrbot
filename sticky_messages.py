@@ -21,7 +21,7 @@ import os
 from typing import Optional
 from gkr_ui import C, embed_error, embed_success, embed_info
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "sticky_messages.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sticky_messages.sqlite3")
 
 # Per-channel cooldown to avoid spam-deleting/reposting (seconds)
 STICKY_COOLDOWN = 2.0

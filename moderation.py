@@ -2,6 +2,8 @@
 moderation.py — Advanced Moderation & Administration System.
 
 Structured with the GKR Centralized Design System:
+  • /ban, /unban, /unbanall, /banlist — Server ban management
+  • /kick — Member kick with permission safety
   • /mute, /unmute, /mutelist — Clean moderation infraction cards
   • /staffrole — Add/remove/list staff roles
   • /saye, /sayt — Official announcements
@@ -10,12 +12,13 @@ Structured with the GKR Centralized Design System:
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import os
 import platform
 import re
 import sqlite3
-from typing import Optional, List
+from typing import Optional, List, Union
 
 import discord
 from discord import app_commands
@@ -34,7 +37,7 @@ from gkr_ui import (
     fmt_ts,
 )
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "moderation.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "moderation.sqlite3")
 
 
 # ---------------------------------------------------------------------------
@@ -117,26 +120,387 @@ def parse_duration(raw: str) -> Optional[datetime.timedelta]:
 
 
 # ---------------------------------------------------------------------------
+# Autocomplete & Views
+# ---------------------------------------------------------------------------
+
+async def banned_user_autocomplete(
+    interaction: discord.Interaction, current: str
+) -> List[app_commands.Choice[str]]:
+    """Autocomplete currently banned users so staff can select directly."""
+    choices = []
+    if not interaction.guild:
+        return choices
+    try:
+        low = current.lower().strip()
+        async for ban in interaction.guild.bans(limit=100):
+            u = ban.user
+            tag = f"{u.name}#{u.discriminator}" if u.discriminator != "0" else u.name
+            display = f"{tag} ({u.id})"
+            if not low or low in tag.lower() or low in str(u.id):
+                choices.append(app_commands.Choice(name=display[:100], value=str(u.id)))
+                if len(choices) >= 25:
+                    break
+    except Exception:
+        pass
+    return choices
+
+
+class ConfirmUnbanAllView(discord.ui.View):
+    """Confirmation modal view before mass unbanning."""
+    def __init__(self, author_id: int):
+        super().__init__(timeout=60.0)
+        self.author_id = author_id
+        self.value: Optional[bool] = None
+
+    @discord.ui.button(label="Confirm Unban All", style=discord.ButtonStyle.danger, emoji="⚠️")
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Only the command runner can confirm this.", ephemeral=True)
+            return
+        self.value = True
+        self.stop()
+        await interaction.response.defer()
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("Only the command runner can cancel this.", ephemeral=True)
+            return
+        self.value = False
+        self.stop()
+        await interaction.response.edit_message(
+            embed=embed_info("Cancelled", "Unban all operation was cancelled."),
+            view=None,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Moderation Cog
 # ---------------------------------------------------------------------------
 
-class ModerationCog(commands.GroupCog, group_name="mod"):
+class ModerationCog(commands.Cog):
+    mod = app_commands.Group(name="mod", description="Advanced Moderation & Administration System")
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.db = ModerationDatabase()
         self.db.initialize()
         self._start_time = discord.utils.utcnow()
 
-    # ── /mod mute ─────────────────────────────────────────────────────────────
+    # ── Core Implementations ──────────────────────────────────────────────────
 
-    @app_commands.command(name="mute", description="Timeout (mute) a member")
-    @app_commands.describe(
-        user="The member to timeout",
-        duration="Duration e.g. 10m, 2h, 7d (default: 1h, max: 28d)",
-        reason="Reason for the timeout",
-    )
-    @app_commands.default_permissions(moderate_members=True)
-    async def mute(
+    async def _ban_impl(
+        self,
+        interaction: discord.Interaction,
+        user: discord.User,
+        reason: str = "No reason provided",
+        delete_days: int = 0,
+    ) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(embed=embed_error("This command can only be used in a server."), ephemeral=True)
+            return
+
+        if user.id == interaction.user.id:
+            await interaction.response.send_message(embed=embed_error("You cannot ban yourself."), ephemeral=True)
+            return
+        if user.id == self.bot.user.id:
+            await interaction.response.send_message(embed=embed_error("I cannot ban myself."), ephemeral=True)
+            return
+        if user.id == interaction.guild.owner_id:
+            await interaction.response.send_message(embed=embed_error("You cannot ban the server owner."), ephemeral=True)
+            return
+
+        member = interaction.guild.get_member(user.id)
+        if member:
+            if member.top_role >= interaction.user.top_role and interaction.user.id != interaction.guild.owner_id:
+                await interaction.response.send_message(embed=embed_error("You cannot ban a member with an equal or higher role."), ephemeral=True)
+                return
+            if member.top_role >= interaction.guild.me.top_role:
+                await interaction.response.send_message(embed=embed_error("I cannot ban this member because their highest role is equal to or higher than mine."), ephemeral=True)
+                return
+
+        delete_days = max(0, min(7, delete_days))
+        delete_seconds = delete_days * 86400
+
+        try:
+            await interaction.guild.ban(
+                user,
+                reason=f"[{interaction.user}] {reason}",
+                delete_message_seconds=delete_seconds,
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(embed=embed_error("Missing permissions to ban this user."), ephemeral=True)
+            return
+        except discord.HTTPException as e:
+            await interaction.response.send_message(embed=embed_error(f"Discord API error: {e}"), ephemeral=True)
+            return
+
+        embed = create_moderation_embed(
+            action_title="🔨  Member Banned",
+            user=user,
+            moderator=interaction.user,
+            reason=reason,
+            color=C.DANGER,
+        )
+        if delete_days > 0:
+            embed.add_field(name="Messages Purged", value=f"Previous {delete_days} day{'s' if delete_days != 1 else ''}", inline=True)
+        await interaction.response.send_message(embed=embed)
+
+    async def _unban_impl(
+        self,
+        interaction: discord.Interaction,
+        user_input: str,
+        reason: str = "No reason provided",
+    ) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(embed=embed_error("This command can only be used in a server."), ephemeral=True)
+            return
+
+        if not interaction.guild.me.guild_permissions.ban_members:
+            await interaction.response.send_message(embed=embed_error("Bot lacks `Ban Members` permission to unban."), ephemeral=True)
+            return
+
+        clean_id = re.sub(r"[<@!>]", "", user_input.strip())
+        target_user: Optional[Union[discord.User, discord.Object]] = None
+
+        if clean_id.isdigit():
+            uid = int(clean_id)
+            try:
+                target_user = await self.bot.fetch_user(uid)
+            except Exception:
+                target_user = discord.Object(id=uid)
+        else:
+            try:
+                async for ban in interaction.guild.bans(limit=1000):
+                    tag = f"{ban.user.name}#{ban.user.discriminator}" if ban.user.discriminator != "0" else ban.user.name
+                    if user_input.lower() in (ban.user.name.lower(), tag.lower()):
+                        target_user = ban.user
+                        break
+            except Exception:
+                pass
+
+        if not target_user:
+            await interaction.response.send_message(
+                embed=embed_error("Could not find a banned user matching that name or ID.\nPlease provide a valid User ID or select from autocomplete."),
+                ephemeral=True
+            )
+            return
+
+        try:
+            await interaction.guild.unban(target_user, reason=f"[{interaction.user}] {reason}")
+        except discord.NotFound:
+            await interaction.response.send_message(
+                embed=embed_error("That user is not currently banned in this server."),
+                ephemeral=True
+            )
+            return
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                embed=embed_error("Bot lacks permission to unban this user."),
+                ephemeral=True
+            )
+            return
+        except Exception as e:
+            await interaction.response.send_message(
+                embed=embed_error(f"Failed to unban: {e}"),
+                ephemeral=True
+            )
+            return
+
+        if isinstance(target_user, discord.User):
+            embed = create_moderation_embed(
+                action_title="🔓  Member Unbanned",
+                user=target_user,
+                moderator=interaction.user,
+                reason=reason,
+                color=C.SUCCESS,
+            )
+        else:
+            embed = discord.Embed(
+                title="🔓  Member Unbanned",
+                description=f"**User:** <@{clean_id}> (`{clean_id}`)\n**Moderator:** {interaction.user.mention}\n**Reason:**\n> {reason}",
+                color=C.SUCCESS,
+                timestamp=discord.utils.utcnow()
+            )
+            embed.set_footer(text="Moderation Log")
+
+        await interaction.response.send_message(embed=embed)
+
+    async def _unbanall_impl(self, interaction: discord.Interaction, force: bool = False) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(embed=embed_error("This command can only be used in a server."), ephemeral=True)
+            return
+
+        if not interaction.guild.me.guild_permissions.ban_members:
+            await interaction.response.send_message(embed=embed_error("Bot lacks `Ban Members` permission to unban."), ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=False)
+
+        try:
+            bans = [b async for b in interaction.guild.bans(limit=2500)]
+        except discord.Forbidden:
+            await interaction.followup.send(embed=embed_error("Missing permissions to view server ban list."), ephemeral=True)
+            return
+        except Exception as e:
+            await interaction.followup.send(embed=embed_error(f"Failed to fetch ban list: {e}"), ephemeral=True)
+            return
+
+        total = len(bans)
+        if total == 0:
+            await interaction.followup.send(embed=embed_info("No Active Bans", "There are currently no banned users in this server."))
+            return
+
+        if not force:
+            view = ConfirmUnbanAllView(author_id=interaction.user.id)
+            confirm_embed = discord.Embed(
+                title="⚠️ Confirm Unban All",
+                description=f"Are you sure you want to unban all **{total:,}** banned member{'s' if total != 1 else ''}?\nThis action cannot be undone.",
+                color=C.WARNING,
+            )
+            confirm_embed.set_footer(text="Click 'Confirm Unban All' within 60 seconds")
+            msg = await interaction.followup.send(embed=confirm_embed, view=view)
+            await view.wait()
+
+            if view.value is not True:
+                if view.value is None:
+                    await msg.edit(embed=embed_info("Timed Out", "Unban all confirmation timed out."), view=None)
+                return
+
+            progress_msg = msg
+        else:
+            progress_msg = await interaction.followup.send(
+                embed=embed_info("Starting Unban All", f"Beginning unban process for **{total:,}** members...")
+            )
+
+        unbanned_count = 0
+        failed_count = 0
+
+        status_embed = discord.Embed(
+            title="🔄  Unbanning Members in Progress...",
+            description=f"Progress: `0 / {total:,}` unbanned\nPlease wait...",
+            color=C.BRAND,
+        )
+        await progress_msg.edit(embed=status_embed, view=None)
+
+        last_edit = discord.utils.utcnow()
+
+        for idx, ban in enumerate(bans, start=1):
+            try:
+                await interaction.guild.unban(ban.user, reason=f"Bulk Unban by [{interaction.user}]")
+                unbanned_count += 1
+            except Exception:
+                failed_count += 1
+
+            await asyncio.sleep(0.35)
+
+            now = discord.utils.utcnow()
+            if (idx % 10 == 0 or idx == total) and (now - last_edit).total_seconds() >= 3.0:
+                status_embed.description = f"Progress: `{unbanned_count:,} / {total:,}` unbanned" + (f" ({failed_count} failed)" if failed_count else "")
+                try:
+                    await progress_msg.edit(embed=status_embed)
+                    last_edit = now
+                except Exception:
+                    pass
+
+        result_embed = discord.Embed(
+            title="✅  Bulk Unban Completed",
+            description=f"Successfully unbanned **{unbanned_count:,}** member{'s' if unbanned_count != 1 else ''}." + (f"\nFailed to unban: **{failed_count:,}**" if failed_count else ""),
+            color=C.SUCCESS,
+            timestamp=discord.utils.utcnow(),
+        )
+        result_embed.add_field(name="Moderator", value=interaction.user.mention, inline=True)
+        result_embed.add_field(name="Total Processed", value=f"`{total:,}`", inline=True)
+        result_embed.set_footer(text="Moderation Log · Unban All")
+        await progress_msg.edit(embed=result_embed, view=None)
+
+    async def _banlist_impl(self, interaction: discord.Interaction) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(embed=embed_error("This command can only be used in a server."), ephemeral=True)
+            return
+
+        if not interaction.guild.me.guild_permissions.ban_members:
+            await interaction.response.send_message(embed=embed_error("Bot lacks `Ban Members` permission."), ephemeral=True)
+            return
+
+        await interaction.response.defer(ephemeral=True)
+        try:
+            bans = [b async for b in interaction.guild.bans(limit=100)]
+        except Exception as e:
+            await interaction.followup.send(embed=embed_error(f"Failed to fetch ban list: {e}"), ephemeral=True)
+            return
+
+        if not bans:
+            await interaction.followup.send(embed=embed_success("No Active Bans", "No members are currently banned in this server."), ephemeral=True)
+            return
+
+        lines = []
+        for b in bans[:25]:
+            u = b.user
+            tag = f"{u.name}#{u.discriminator}" if u.discriminator != "0" else u.name
+            reason = b.reason or "No reason provided"
+            if len(reason) > 40:
+                reason = reason[:37] + "..."
+            lines.append(f"• **{tag}** (`{u.id}`) — *{reason}*")
+
+        embed = discord.Embed(
+            title=f"🔨  Server Ban List ({len(bans):,})",
+            description="\n".join(lines),
+            color=C.DANGER,
+            timestamp=discord.utils.utcnow()
+        )
+        if len(bans) > 25:
+            embed.set_footer(text=f"Showing latest 25 of {len(bans):,} bans")
+        else:
+            embed.set_footer(text=f"Total: {len(bans):,} bans")
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
+    async def _kick_impl(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        reason: str = "No reason provided",
+    ) -> None:
+        if not interaction.guild:
+            await interaction.response.send_message(embed=embed_error("This command can only be used in a server."), ephemeral=True)
+            return
+
+        if user.id == interaction.user.id:
+            await interaction.response.send_message(embed=embed_error("You cannot kick yourself."), ephemeral=True)
+            return
+        if user.id == self.bot.user.id:
+            await interaction.response.send_message(embed=embed_error("I cannot kick myself."), ephemeral=True)
+            return
+        if user.id == interaction.guild.owner_id:
+            await interaction.response.send_message(embed=embed_error("You cannot kick the server owner."), ephemeral=True)
+            return
+
+        if user.top_role >= interaction.user.top_role and interaction.user.id != interaction.guild.owner_id:
+            await interaction.response.send_message(embed=embed_error("You cannot kick a member with an equal or higher role."), ephemeral=True)
+            return
+        if user.top_role >= interaction.guild.me.top_role:
+            await interaction.response.send_message(embed=embed_error("I cannot kick this member because their highest role is equal to or higher than mine."), ephemeral=True)
+            return
+
+        try:
+            await user.kick(reason=f"[{interaction.user}] {reason}")
+        except discord.Forbidden:
+            await interaction.response.send_message(embed=embed_error("Missing permissions to kick this member."), ephemeral=True)
+            return
+        except Exception as e:
+            await interaction.response.send_message(embed=embed_error(f"Failed to kick: {e}"), ephemeral=True)
+            return
+
+        embed = create_moderation_embed(
+            action_title="👢  Member Kicked",
+            user=user,
+            moderator=interaction.user,
+            reason=reason,
+            color=C.WARNING,
+        )
+        await interaction.response.send_message(embed=embed)
+
+    async def _mute_impl(
         self,
         interaction: discord.Interaction,
         user: discord.Member,
@@ -177,12 +541,7 @@ class ModerationCog(commands.GroupCog, group_name="mod"):
         )
         await interaction.response.send_message(embed=embed)
 
-    # ── /unmute ───────────────────────────────────────────────────────────────
-
-    @app_commands.command(name="unmute", description="Remove timeout from a member")
-    @app_commands.describe(user="The member to unmute", reason="Reason for removal")
-    @app_commands.default_permissions(moderate_members=True)
-    async def unmute(
+    async def _unmute_impl(
         self,
         interaction: discord.Interaction,
         user: discord.Member,
@@ -206,11 +565,7 @@ class ModerationCog(commands.GroupCog, group_name="mod"):
         )
         await interaction.response.send_message(embed=embed)
 
-    # ── /mutelist ─────────────────────────────────────────────────────────────
-
-    @app_commands.command(name="mutelist", description="List all currently timed-out members")
-    @app_commands.default_permissions(moderate_members=True)
-    async def mutelist(self, interaction: discord.Interaction) -> None:
+    async def _mutelist_impl(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
         muted = [m for m in interaction.guild.members if m.is_timed_out() and not m.bot]
         if not muted:
@@ -232,9 +587,92 @@ class ModerationCog(commands.GroupCog, group_name="mod"):
             embed.set_footer(text=f"Showing latest 20 of {len(muted):,} timed-out members")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    # ── /staffrole ────────────────────────────────────────────────────────────
+    # ── /mod Group Commands ───────────────────────────────────────────────────
 
-    @app_commands.command(name="staffrole", description="Manage administrative staff roles")
+    @mod.command(name="unban", description="Unban a member from the server")
+    @app_commands.describe(user="The member to unban (select from list, type username, or paste User ID)", reason="Reason for unbanning")
+    @app_commands.autocomplete(user=banned_user_autocomplete)
+    @app_commands.default_permissions(ban_members=True)
+    async def mod_unban(self, interaction: discord.Interaction, user: str, reason: str = "No reason provided") -> None:
+        await self._unban_impl(interaction, user, reason)
+
+    @mod.command(name="unbanall", description="Unban all banned members in this server")
+    @app_commands.describe(force="Skip the confirmation prompt and immediately unban all")
+    @app_commands.default_permissions(administrator=True)
+    async def mod_unbanall(self, interaction: discord.Interaction, force: bool = False) -> None:
+        await self._unbanall_impl(interaction, force)
+
+    @mod.command(name="banlist", description="List all currently banned members in the server")
+    @app_commands.default_permissions(ban_members=True)
+    async def mod_banlist(self, interaction: discord.Interaction) -> None:
+        await self._banlist_impl(interaction)
+
+    @mod.command(name="ban", description="Ban a member or user from the server")
+    @app_commands.describe(
+        user="The user or member to ban",
+        reason="Reason for the ban",
+        delete_days="Number of days of messages to delete (0-7)"
+    )
+    @app_commands.choices(delete_days=[
+        app_commands.Choice(name="Don't delete any messages", value=0),
+        app_commands.Choice(name="Previous 24 Hours (1 day)", value=1),
+        app_commands.Choice(name="Previous 3 Days", value=3),
+        app_commands.Choice(name="Previous 7 Days", value=7),
+    ])
+    @app_commands.default_permissions(ban_members=True)
+    async def mod_ban(
+        self,
+        interaction: discord.Interaction,
+        user: discord.User,
+        reason: str = "No reason provided",
+        delete_days: int = 0
+    ) -> None:
+        await self._ban_impl(interaction, user, reason, delete_days)
+
+    @mod.command(name="kick", description="Kick a member from the server")
+    @app_commands.describe(user="The member to kick", reason="Reason for kicking")
+    @app_commands.default_permissions(kick_members=True)
+    async def mod_kick(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        reason: str = "No reason provided"
+    ) -> None:
+        await self._kick_impl(interaction, user, reason)
+
+    @mod.command(name="mute", description="Timeout (mute) a member")
+    @app_commands.describe(
+        user="The member to timeout",
+        duration="Duration e.g. 10m, 2h, 7d (default: 1h, max: 28d)",
+        reason="Reason for the timeout",
+    )
+    @app_commands.default_permissions(moderate_members=True)
+    async def mod_mute(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        duration: str = "1h",
+        reason: str = "No reason provided",
+    ) -> None:
+        await self._mute_impl(interaction, user, duration, reason)
+
+    @mod.command(name="unmute", description="Remove timeout from a member")
+    @app_commands.describe(user="The member to unmute", reason="Reason for removal")
+    @app_commands.default_permissions(moderate_members=True)
+    async def mod_unmute(
+        self,
+        interaction: discord.Interaction,
+        user: discord.Member,
+        reason: str = "No reason provided",
+    ) -> None:
+        await self._unmute_impl(interaction, user, reason)
+
+    @mod.command(name="mutelist", description="List all currently timed-out members")
+    @app_commands.default_permissions(moderate_members=True)
+    async def mod_mutelist(self, interaction: discord.Interaction) -> None:
+        await self._mutelist_impl(interaction)
+
+    @mod.command(name="staffrole", description="Manage administrative staff roles")
     @app_commands.describe(action="Action to perform", role="The target role")
     @app_commands.choices(action=[
         app_commands.Choice(name="Add",    value="add"),
@@ -279,9 +717,7 @@ class ModerationCog(commands.GroupCog, group_name="mod"):
             else:
                 await interaction.response.send_message(embed=embed_info("Not Found", f"{role.mention} was not configured as a staff role."), ephemeral=True)
 
-    # ── /saye & /sayt ─────────────────────────────────────────────────────────
-
-    @app_commands.command(name="saye", description="Send a formatted embed announcement as the bot")
+    @mod.command(name="saye", description="Send a formatted embed announcement as the bot")
     @app_commands.describe(channel="Target channel", title="Embed title", message="Body content", color="Hex color code (e.g. #5865F2)")
     @app_commands.default_permissions(manage_messages=True)
     async def saye(self, interaction: discord.Interaction, channel: discord.TextChannel, title: str, message: str, color: str = "#5865F2") -> None:
@@ -300,7 +736,7 @@ class ModerationCog(commands.GroupCog, group_name="mod"):
             return
         await interaction.response.send_message(embed=embed_success("Embed Dispatched", f"Sent to {channel.mention}."), ephemeral=True)
 
-    @app_commands.command(name="sayt", description="Send a plain text message as the bot")
+    @mod.command(name="sayt", description="Send a plain text message as the bot")
     @app_commands.describe(channel="Target channel", message="Message content")
     @app_commands.default_permissions(manage_messages=True)
     async def sayt(self, interaction: discord.Interaction, channel: discord.TextChannel, message: str) -> None:
@@ -311,9 +747,7 @@ class ModerationCog(commands.GroupCog, group_name="mod"):
             return
         await interaction.response.send_message(embed=embed_success("Message Dispatched", f"Sent to {channel.mention}."), ephemeral=True)
 
-    # ── /config & /status ─────────────────────────────────────────────────────
-
-    @app_commands.command(name="config", description="View server configuration overview")
+    @mod.command(name="config", description="View server configuration overview")
     @app_commands.default_permissions(manage_guild=True)
     async def config_cmd(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer(ephemeral=True)
@@ -338,7 +772,7 @@ class ModerationCog(commands.GroupCog, group_name="mod"):
             embed.set_thumbnail(url=guild.icon.url)
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="status", description="Show bot health, uptime, and system performance")
+    @mod.command(name="status", description="Show bot health, uptime, and system performance")
     async def status(self, interaction: discord.Interaction) -> None:
         uptime = discord.utils.utcnow() - self._start_time
         uptime_str = fmt_duration(uptime.total_seconds())
@@ -375,7 +809,7 @@ class ModerationCog(commands.GroupCog, group_name="mod"):
 
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="devmessage", description="Set or clear the global developer status message (Dev only)")
+    @mod.command(name="devmessage", description="Set or clear the global developer status message (Dev only)")
     @app_commands.describe(message="The notice to broadcast (leave blank to clear)", active="Whether the notice is active")
     async def devmessage(self, interaction: discord.Interaction, message: Optional[str] = None, active: bool = True) -> None:
         from bot_status_msg import set_status_message, clear_status_message
@@ -411,7 +845,5 @@ class ModerationCog(commands.GroupCog, group_name="mod"):
             color=C.SUCCESS
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
-
-
 async def setup(bot: commands.Bot):
     await bot.add_cog(ModerationCog(bot))

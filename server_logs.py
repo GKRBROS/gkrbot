@@ -42,7 +42,7 @@ from gkr_ui import (
 
 # ─── Database Path ────────────────────────────────────────────────────────────
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "font_sync.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "font_sync.sqlite3")
 
 # ─── Small Caps Converter Helper ──────────────────────────────────────────────
 

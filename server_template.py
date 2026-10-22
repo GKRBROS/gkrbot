@@ -43,7 +43,7 @@ load_dotenv()
 # Database
 # ---------------------------------------------------------------------------
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "server_templates.sqlite3")
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server_templates.sqlite3")
 
 
 def _db() -> sqlite3.Connection:
