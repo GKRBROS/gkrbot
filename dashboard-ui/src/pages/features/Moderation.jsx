@@ -62,15 +62,19 @@ function Moderation() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [modRes, rolesRes] = await Promise.all([
+      const [modRes, rolesRes] = await Promise.allSettled([
         api.get(`/guilds/${guildId}/moderation`),
         api.get(`/guilds/${guildId}/roles`),
       ]);
-      setStaffRoleIds(modRes.data.staff_roles || []);
-      const rList = rolesRes.data.roles || [];
-      setRoles(rList);
-      if (rList.length > 0 && !selectedRole) {
-        setSelectedRole(rList[0].id);
+      if (modRes.status === 'fulfilled' && modRes.value.data?.staff_roles) {
+        setStaffRoleIds(modRes.value.data.staff_roles || []);
+      }
+      if (rolesRes.status === 'fulfilled' && rolesRes.value.data?.roles) {
+        const rList = rolesRes.value.data.roles || [];
+        setRoles(rList);
+        if (rList.length > 0 && !selectedRole) {
+          setSelectedRole(rList[0].id);
+        }
       }
       await fetchBans();
     } catch (err) {

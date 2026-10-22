@@ -66,26 +66,29 @@ function Security() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [secRes, chanRes, anRes] = await Promise.all([
+      const [secRes, chanRes, anRes] = await Promise.allSettled([
         api.get(`/guilds/${guildId}/security`),
         api.get(`/guilds/${guildId}/channels`),
         api.get(`/guilds/${guildId}/antinuke`),
       ]);
-      if (secRes.data.config) {
-        setConfig(secRes.data.config);
+      if (secRes.status === 'fulfilled' && secRes.value.data?.config) {
+        setConfig(secRes.value.data.config);
       }
-      if (anRes.data.config) {
+      if (chanRes.status === 'fulfilled' && chanRes.value.data?.channels) {
+        setChannels(chanRes.value.data.channels || []);
+      }
+      if (anRes.status === 'fulfilled' && anRes.value.data?.config) {
+        const c = anRes.value.data.config;
         setAntinuke({
-          ...anRes.data.config,
-          enabled: Boolean(anRes.data.config.enabled),
-          strict_mode: Boolean(anRes.data.config.strict_mode ?? 1),
-          anti_bot: Boolean(anRes.data.config.anti_bot),
+          ...c,
+          enabled: Boolean(c.enabled),
+          strict_mode: Boolean(c.strict_mode ?? 1),
+          anti_bot: Boolean(c.anti_bot),
         });
+        if (anRes.value.data.whitelist) {
+          setWhitelist(anRes.value.data.whitelist);
+        }
       }
-      if (anRes.data.whitelist) {
-        setWhitelist(anRes.data.whitelist);
-      }
-      setChannels(chanRes.data.channels || []);
     } catch (err) {
       console.error('Failed to load security config', err);
       setError(err.response?.data?.error || 'Failed to load security config');

@@ -1869,6 +1869,19 @@ async def handle_antinuke_whitelist_post(request: web.Request):
     db.initialize()
     added_by = sess.get("user_id", 0)
     db.add_antinuke_whitelist(guild_id, int(target_id), int(added_by))
+
+    # If member is in guild, remove any active timeout
+    bot: commands.Bot = request.app.get("bot")
+    if bot:
+        guild = bot.get_guild(guild_id)
+        if guild:
+            member = guild.get_member(int(target_id))
+            if member and member.timed_out_until and member.timed_out_until > discord.utils.utcnow():
+                try:
+                    await member.timeout(None, reason="Whitelisted via Web Dashboard")
+                except Exception:
+                    pass
+
     await _log_dashboard_action(
         request,
         guild_id,
@@ -1888,11 +1901,31 @@ async def handle_antinuke_whitelist_delete(request: web.Request):
     db = security.SecurityDatabase()
     db.initialize()
     db.remove_antinuke_whitelist(guild_id, target_id)
+
+    # Immediately strip all power/removable roles from unwhitelisted user/bot
+    stripped_count = 0
+    bot: commands.Bot = request.app.get("bot")
+    if bot:
+        guild = bot.get_guild(guild_id)
+        if guild and target_id != guild.owner_id:
+            member = guild.get_member(target_id)
+            if member:
+                roles_to_remove = [
+                    r for r in member.roles
+                    if not r.is_default() and not r.managed and r < guild.me.top_role
+                ]
+                if roles_to_remove:
+                    try:
+                        await member.remove_roles(*roles_to_remove, reason="Unwhitelisted via Web Dashboard: Stripping power roles")
+                        stripped_count = len(roles_to_remove)
+                    except Exception:
+                        pass
+
     await _log_dashboard_action(
         request,
         guild_id,
         "Anti-Nuke Whitelist Removed",
-        f"Removed entity <@{target_id}> from Anti-Nuke whitelist",
+        f"Removed entity <@{target_id}> from Anti-Nuke whitelist (Stripped {stripped_count} roles)",
         category="security",
         color=0xED4245,
     )

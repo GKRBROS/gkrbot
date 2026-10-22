@@ -198,9 +198,27 @@
     "module": "main"
   },
   {
+    "command": "/antihacked logchannel",
+    "name": "logchannel",
+    "description": "Set the channel where protection logs will be sent",
+    "module": "anti_hacked"
+  },
+  {
+    "command": "/antihacked status",
+    "name": "status",
+    "description": "Show the Anti-Hacked Protection status",
+    "module": "anti_hacked"
+  },
+  {
+    "command": "/antihacked toggle",
+    "name": "toggle",
+    "description": "Manage the Anti-Hacked Account Protection system",
+    "module": "anti_hacked"
+  },
+  {
     "command": "/antinuke action",
     "name": "action",
-    "description": "Set the punishment executed against nukers (strip_roles/ban/kick)",
+    "description": "Set the punishment executed against nukers",
     "module": "security"
   },
   {
@@ -218,7 +236,13 @@
   {
     "command": "/antinuke status",
     "name": "status",
-    "description": "Show current Anti-Nuke defense status, thresholds, and whitelisted staff",
+    "description": "🛡️ Anti-Nuke Server Protection & Raid Prevention",
+    "module": "security"
+  },
+  {
+    "command": "/antinuke strict",
+    "name": "strict",
+    "description": "Toggle Strict Mode (Instant Quarantine on 1 channel/role deletion)",
     "module": "security"
   },
   {
@@ -232,24 +256,6 @@
     "name": "whitelist",
     "description": "Manage trusted admins/bots immune to Anti-Nuke",
     "module": "security"
-  },
-  {
-    "command": "/antihacked logchannel",
-    "name": "logchannel",
-    "description": "Set the channel where protection logs will be sent",
-    "module": "anti_hacked"
-  },
-  {
-    "command": "/antihacked status",
-    "name": "status",
-    "description": "Show the Anti-Hacked Protection status",
-    "module": "anti_hacked"
-  },
-  {
-    "command": "/antihacked toggle",
-    "name": "toggle",
-    "description": "Manage the Anti-Hacked Account Protection system",
-    "module": "anti_hacked"
   },
   {
     "command": "/autoreact add",
@@ -448,6 +454,12 @@
     "name": "checkrole",
     "description": "No description provided.",
     "module": "main"
+  },
+  {
+    "command": "/clear",
+    "name": "clear",
+    "description": "Clear the entire queue.",
+    "module": "music"
   },
   {
     "command": "/clearwarns",
@@ -650,7 +662,7 @@
   {
     "command": "/filter",
     "name": "filter",
-    "description": "🎛️ Set an audio filter preset",
+    "description": "Open the audio filter control panel.",
     "module": "music"
   },
   {
@@ -840,9 +852,9 @@
     "module": "server_logs"
   },
   {
-    "command": "/lyrics",
-    "name": "lyrics",
-    "description": "🎤 Search lyrics for the current or specified song",
+    "command": "/loop",
+    "name": "loop",
+    "description": "Toggle loop mode (single → queue → off).",
     "module": "music"
   },
   {
@@ -858,27 +870,15 @@
     "module": "moderation"
   },
   {
-    "command": "/mod kick",
-    "name": "kick",
-    "description": "Kick a member from the server",
-    "module": "moderation"
-  },
-  {
-    "command": "/mod unban",
-    "name": "unban",
-    "description": "Unban a member from the server",
-    "module": "moderation"
-  },
-  {
-    "command": "/mod unbanall",
-    "name": "unbanall",
-    "description": "Unban all banned members in this server",
-    "module": "moderation"
-  },
-  {
     "command": "/mod config",
     "name": "config",
     "description": "View server configuration overview",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod kick",
+    "name": "kick",
+    "description": "Kick a member from the server",
     "module": "moderation"
   },
   {
@@ -918,6 +918,18 @@
     "module": "moderation"
   },
   {
+    "command": "/mod unban",
+    "name": "unban",
+    "description": "Unban a member from the server",
+    "module": "moderation"
+  },
+  {
+    "command": "/mod unbanall",
+    "name": "unbanall",
+    "description": "Unban all banned members in this server",
+    "module": "moderation"
+  },
+  {
     "command": "/mod unmute",
     "name": "unmute",
     "description": "Remove timeout from a member",
@@ -950,13 +962,13 @@
   {
     "command": "/nowplaying",
     "name": "nowplaying",
-    "description": "🎶 Display the current interactive music player",
+    "description": "Show the now playing panel with controls.",
     "module": "music"
   },
   {
     "command": "/pause",
     "name": "pause",
-    "description": "⏸️ Pause audio playback",
+    "description": "Pause the current track.",
     "module": "music"
   },
   {
@@ -1022,7 +1034,7 @@
   {
     "command": "/play",
     "name": "play",
-    "description": "🎵 Play a song or playlist (YouTube, Spotify, SoundCloud)",
+    "description": "Play a song or playlist from YouTube, Spotify, or SoundCloud.",
     "module": "music"
   },
   {
@@ -1064,7 +1076,7 @@
   {
     "command": "/queue",
     "name": "queue",
-    "description": "📜 View the upcoming songs in the server queue",
+    "description": "Show the music queue.",
     "module": "music"
   },
   {
@@ -1120,6 +1132,12 @@
     "name": "volume",
     "description": "🔊 Adjust the radio volume level (1-150%).",
     "module": "radio"
+  },
+  {
+    "command": "/random",
+    "name": "random",
+    "description": "Play a random trending song.",
+    "module": "music"
   },
   {
     "command": "/reactionroles",
@@ -1188,9 +1206,15 @@
     "module": "registration"
   },
   {
+    "command": "/remove",
+    "name": "remove",
+    "description": "Remove a track from the queue by position.",
+    "module": "music"
+  },
+  {
     "command": "/resume",
     "name": "resume",
-    "description": "▶️ Resume paused playback",
+    "description": "Resume playback.",
     "module": "music"
   },
   {
@@ -1254,6 +1278,12 @@
     "module": "main"
   },
   {
+    "command": "/security antinuke",
+    "name": "antinuke",
+    "description": "Quick shortcut to check Anti-Nuke protection status",
+    "module": "security"
+  },
+  {
     "command": "/security logchannel",
     "name": "logchannel",
     "description": "Security and Anti-Nuke management commands",
@@ -1296,6 +1326,12 @@
     "module": "festivals"
   },
   {
+    "command": "/shuffle",
+    "name": "shuffle",
+    "description": "Shuffle the queue.",
+    "module": "music"
+  },
+  {
     "command": "/si mood",
     "name": "mood",
     "description": "🧠  AI System Controls & Mood (/si mood)",
@@ -1310,7 +1346,7 @@
   {
     "command": "/skip",
     "name": "skip",
-    "description": "⏭️ Skip the current song",
+    "description": "Skip the current track.",
     "module": "music"
   },
   {
@@ -1358,7 +1394,7 @@
   {
     "command": "/stop",
     "name": "stop",
-    "description": "⏹️ Stop music, clear queue, and disconnect",
+    "description": "Stop music and disconnect.",
     "module": "music"
   },
   {
@@ -1616,7 +1652,7 @@
   {
     "command": "/toggle_247",
     "name": "toggle_247",
-    "description": "⚡ Toggle 24/7 mode (stay in voice channel forever)",
+    "description": "Toggle 24/7 mode (bot stays in VC forever).",
     "module": "music"
   },
   {
@@ -1630,6 +1666,12 @@
     "name": "server",
     "description": "Remove a server from the blacklist",
     "module": "blacklist"
+  },
+  {
+    "command": "/unwhitelist",
+    "name": "unwhitelist",
+    "description": "Remove a user or bot from whitelist and immediately strip all power roles",
+    "module": "security"
   },
   {
     "command": "/valo",
@@ -1670,7 +1712,7 @@
   {
     "command": "/volume",
     "name": "volume",
-    "description": "🔊 Change playback volume (1% - 150%)",
+    "description": "Set the volume (0–100).",
     "module": "music"
   },
   {
@@ -1690,5 +1732,11 @@
     "name": "webhook_embed",
     "description": "Create an embed via Webhook. Allows file uploads for images and pasting text.",
     "module": "webhook_messages"
+  },
+  {
+    "command": "/whitelist",
+    "name": "whitelist",
+    "description": "Whitelist a user or bot for Anti-Nuke immunity and assign power role",
+    "module": "security"
   }
 ]

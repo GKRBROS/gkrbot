@@ -681,8 +681,8 @@ class SecurityCog(commands.Cog):
         cache_ttl: float = 1.5
     ) -> list[discord.AuditLogEntry]:
         """
-        Fetch audit log entries with thread-safe caching to completely prevent
-        Discord HTTP 429 rate limit drops during rapid bursts (e.g. mass channel deletions).
+        Fetch audit log entries with caching. Lock is NOT held during HTTP
+        to avoid serializing hundreds of concurrent events.
         """
         if not guild or not guild.me:
             return []
@@ -692,26 +692,31 @@ class SecurityCog(commands.Cog):
 
         now = time.time()
         key = (guild.id, action)
+
+        # Fast path: return cached under lock
         async with self._audit_lock:
             cached = self._audit_cache.get(key)
             if cached and (now - cached[0] < cache_ttl):
                 return cached[1]
 
-            entries: list[discord.AuditLogEntry] = []
-            try:
-                async for entry in guild.audit_logs(limit=limit, action=action):
-                    entries.append(entry)
-            except discord.HTTPException:
-                if cached:
-                    return cached[1]
-                return []
-            except Exception:
-                if cached:
-                    return cached[1]
-                return []
+        # Slow path: fetch OUTSIDE lock to avoid blocking concurrent events
+        entries: list[discord.AuditLogEntry] = []
+        try:
+            async for entry in guild.audit_logs(limit=limit, action=action):
+                entries.append(entry)
+        except discord.HTTPException:
+            async with self._audit_lock:
+                cached = self._audit_cache.get(key)
+            return cached[1] if cached else []
+        except Exception:
+            async with self._audit_lock:
+                cached = self._audit_cache.get(key)
+            return cached[1] if cached else []
 
+        # Store under lock
+        async with self._audit_lock:
             self._audit_cache[key] = (now, entries)
-            return entries
+        return entries
 
     async def _get_audit_entry(
         self,
@@ -753,18 +758,30 @@ class SecurityCog(commands.Cog):
             return
 
         strict = bool(cfg.get("strict_mode", 1))
-        # In strict mode, channel or role deletions trigger immediately at limit=1
         if strict and limit_key in ("channel_delete_limit", "role_delete_limit"):
             limit = 1
         else:
             limit = cfg.get(limit_key, 2 if strict else 3)
 
         window = cfg.get("time_window_sec", 20)
+        now_ts = time.time()
 
-        # Retrieve audit logs via high-speed burst cache (immune to 429 rate limits)
-        entries = await self._fetch_audit_entries(guild, audit_action, limit=25, cache_ttl=1.5)
-        if not entries:
+        # STEP 1: Increment in-memory counter IMMEDIATELY (no audit log wait)
+        # Use guild-level key first so we can detect mass action before knowing executor
+        guild_tracker_key = (guild.id, 0, action_name)  # 0 = unknown executor
+        async with self._antinuke_lock:
+            guild_history = self._antinuke_tracker[guild_tracker_key]
+            guild_history = [t for t in guild_history if now_ts - t <= window]
+            guild_history.append(now_ts)
+            self._antinuke_tracker[guild_tracker_key] = guild_history
+            guild_count = len(guild_history)
+
+        # Not at limit yet, skip audit log fetch entirely
+        if guild_count < limit:
             return
+
+        # STEP 2: Limit reached — now fetch audit logs to identify executor
+        entries = await self._fetch_audit_entries(guild, audit_action, limit=25, cache_ttl=1.5)
 
         now = discord.utils.utcnow()
         matching_entry = None
@@ -789,43 +806,39 @@ class SecurityCog(commands.Cog):
         if self.db.is_antinuke_whitelisted(guild.id, executor.id):
             return
 
-        # Tally all actions by this executor in the recent audit batch
-        audit_count = sum(
-            1 for e in entries
-            if e.user and e.user.id == executor.id and (now - e.created_at).total_seconds() <= window
-        )
-
-        now_ts = time.time()
-        tracker_key = (guild.id, executor.id, action_name)
-
+        # Deduplicate: track per-executor to avoid punishing same person multiple times
+        executor_key = (guild.id, executor.id, action_name)
+        should_punish = False
         async with self._antinuke_lock:
-            history = self._antinuke_tracker[tracker_key]
-            history = [t for t in history if now_ts - t <= window]
-            history.append(now_ts)
-            self._antinuke_tracker[tracker_key] = history
-            mem_count = len(history)
+            exec_history = self._antinuke_tracker[executor_key]
+            exec_history = [t for t in exec_history if now_ts - t <= window]
+            exec_history.append(now_ts)
+            self._antinuke_tracker[executor_key] = exec_history
+            count = len(exec_history)
+            if count >= limit:
+                # Clear both trackers to avoid re-triggering
+                self._antinuke_tracker[executor_key] = []
+                self._antinuke_tracker[guild_tracker_key] = []
+                should_punish = True
 
-        count = max(audit_count, mem_count)
+        if not should_punish:
+            return
 
-        if count >= limit:
-            async with self._antinuke_lock:
-                self._antinuke_tracker[tracker_key] = []
+        member = guild.get_member(executor.id)
+        if not member:
+            try:
+                member = await guild.fetch_member(executor.id)
+            except Exception:
+                member = None
 
-            member = guild.get_member(executor.id)
-            if not member:
-                try:
-                    member = await guild.fetch_member(executor.id)
-                except Exception:
-                    member = None
-
-            await self._punish_nuker(
-                guild=guild,
-                executor=member or executor,
-                action_name=action_name,
-                count=count,
-                limit=limit,
-                punishment=cfg.get("action", "strip_roles"),
-            )
+        await self._punish_nuker(
+            guild=guild,
+            executor=member or executor,
+            action_name=action_name,
+            count=count,
+            limit=limit,
+            punishment=cfg.get("action", "strip_roles"),
+        )
 
     async def _punish_nuker(
         self,
@@ -989,35 +1002,58 @@ class SecurityCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member) -> None:
-        """Anti-Bot defense: kick unauthorized bots."""
+        """Anti-Bot defense: allow bots to be added, but strip all roles and power if unwhitelisted."""
         if not member.bot:
             return
         cfg = self.db.get_antinuke_config(member.guild.id)
-        if not cfg.get("enabled") or not cfg.get("anti_bot"):
+        if not cfg.get("enabled"):
             return
         if self.db.is_antinuke_whitelisted(member.guild.id, member.id):
             return
 
         entry = await self._get_audit_entry(member.guild, discord.AuditLogAction.bot_add, target_id=member.id, max_age_seconds=20.0)
         inviter = entry.user if entry else None
+        inviter_str = inviter.mention if inviter else "*Unknown*"
 
-        kicked = False
+        async def _strip_bot_power(target: discord.Member) -> None:
+            """Strip all roles and neuter managed roles for an unwhitelisted bot."""
+            # Strip all removable non-managed roles
+            roles_to_strip = [r for r in target.roles if not r.is_default() and not r.managed and r < target.guild.me.top_role]
+            if roles_to_strip:
+                try:
+                    await target.remove_roles(*roles_to_strip, reason="[Anti-Nuke] Unwhitelisted bot: All roles stripped, power denied")
+                except Exception:
+                    pass
+            # Neuter managed integration roles with dangerous perms
+            for r in target.roles:
+                if r.managed and r < target.guild.me.top_role:
+                    try:
+                        perms = r.permissions
+                        if perms.administrator or perms.manage_guild or perms.manage_channels or perms.manage_roles or perms.ban_members or perms.kick_members or perms.mention_everyone:
+                            safe_perms = discord.Permissions(send_messages=True, read_messages=True, view_channel=True)
+                            await r.edit(permissions=safe_perms, reason="[Anti-Nuke] Stripped dangerous power from unwhitelisted bot")
+                    except Exception:
+                        pass
+
+        # Immediate strip
+        await _strip_bot_power(member)
+
+        # Wait for Discord to assign the managed integration role, then strip again
+        await asyncio.sleep(3)
         try:
-            await member.kick(reason="[Anti-Nuke] Unauthorized Bot Added")
-            kicked = True
+            refreshed = member.guild.get_member(member.id)
+            if refreshed:
+                await _strip_bot_power(refreshed)
         except Exception:
             pass
 
-        inviter_str = inviter.mention if inviter else "*Unknown*"
         await self.log_security_action(
             member.guild,
-            "🤖 Unauthorized Bot Blocked",
-            f"**Bot:** {member.mention} (`{member}`)\n**Added By:** {inviter_str}\n**Result:** {'👢 Kicked' if kicked else '⚠️ Failed to kick'}",
-            color=0xFF0000,
-            event="security_auto_kick"
+            "🤖 Unwhitelisted Bot Joined — Power Stripped",
+            f"**Bot:** {member.mention} (`{member}`)\n**Added By:** {inviter_str}\n**Status:** Bot allowed to join, but ALL roles and administrative powers were stripped.\n**Action:** Use `/whitelist` to grant this bot power.",
+            color=0xFAA61A,
+            event="security_warn"
         )
-        if inviter and isinstance(inviter, discord.Member) and inviter.id != member.guild.owner_id and not self.db.is_antinuke_whitelisted(member.guild.id, inviter.id):
-            await self._punish_nuker(member.guild, inviter, "Unauthorized Bot Invite", 1, 1, cfg.get("action", "strip_roles"))
 
     @commands.Cog.listener()
     async def on_member_update(self, before: discord.Member, after: discord.Member) -> None:
@@ -1054,6 +1090,51 @@ class SecurityCog(commands.Cog):
                     thumbnail_url=after.display_avatar.url,
                     event="security_warn"
                 )
+
+        # Check role assignments: if unwhitelisted member or bot gained dangerous permissions, strip them!
+        if before.roles != after.roles and after.id != after.guild.owner_id and after.id != self.bot.user.id:
+            added_roles = [r for r in after.roles if r not in before.roles]
+            if added_roles:
+                cfg = self.db.get_antinuke_config(after.guild.id)
+                if cfg.get("enabled"):
+                    is_wl = self.db.is_antinuke_whitelisted(after.guild.id, after.id)
+                    if not is_wl:
+                        dangerous_removable = []
+                        dangerous_managed = []
+                        for r in added_roles:
+                            perms = r.permissions
+                            if (perms.administrator or perms.manage_guild or perms.manage_channels or 
+                                perms.manage_roles or perms.ban_members or perms.kick_members or perms.mention_everyone):
+                                if r < after.guild.me.top_role:
+                                    if r.managed:
+                                        dangerous_managed.append(r)
+                                    else:
+                                        dangerous_removable.append(r)
+                        # Remove non-managed dangerous roles
+                        if dangerous_removable:
+                            try:
+                                await after.remove_roles(*dangerous_removable, reason="[Anti-Nuke] Power roles denied: Member/bot is not whitelisted!")
+                            except Exception:
+                                pass
+                        # Neuter managed roles (bot integration roles) — can't remove, so strip perms
+                        for r in dangerous_managed:
+                            try:
+                                safe_perms = discord.Permissions(send_messages=True, read_messages=True, view_channel=True)
+                                await r.edit(permissions=safe_perms, reason="[Anti-Nuke] Stripped dangerous power from unwhitelisted bot role")
+                            except Exception:
+                                pass
+                        all_dangerous = dangerous_removable + dangerous_managed
+                        if all_dangerous:
+                            try:
+                                await self.log_security_action(
+                                    after.guild,
+                                    "🛡️ Unauthorized Power Role Revoked",
+                                    f"**Target:** {after.mention} (`{after}`)\n**Roles Revoked/Neutered:** {', '.join(r.name for r in all_dangerous)}\n**Reason:** Not on Anti-Nuke Whitelist. Use `/whitelist` to grant power.",
+                                    color=0xFF0000,
+                                    event="security_warn"
+                                )
+                            except Exception:
+                                pass
 
     # ── Listeners ───────────────────────────────────────────────────────────
 
@@ -1421,11 +1502,33 @@ class SecurityCog(commands.Cog):
 
     # ── Anti-Nuke Command Group ───────────────────────────────────────────────
 
+    async def _safe_defer(self, interaction: discord.Interaction, ephemeral: bool = True) -> None:
+        """Immediately acknowledge interaction to prevent Discord 3-second 10062 timeout."""
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.defer(ephemeral=ephemeral)
+        except Exception:
+            pass
+
+    async def _safe_respond(self, interaction: discord.Interaction, embed: discord.Embed, ephemeral: bool = True) -> None:
+        """Send embed response safely via followup or send_message, catching 10062 gracefully."""
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(embed=embed, ephemeral=ephemeral)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=ephemeral)
+        except (discord.NotFound, discord.HTTPException):
+            try:
+                await interaction.followup.send(embed=embed, ephemeral=ephemeral)
+            except Exception:
+                pass
+
     antinuke_group = app_commands.Group(name="antinuke", description="🛡️ Anti-Nuke Server Protection & Raid Prevention")
 
     @antinuke_group.command(name="status", description="Show current Anti-Nuke defense status, thresholds, and whitelisted staff")
     @app_commands.default_permissions(administrator=True)
     async def antinuke_status(self, interaction: discord.Interaction) -> None:
+        await self._safe_defer(interaction, ephemeral=True)
         cfg = self.db.get_antinuke_config(interaction.guild.id)
         wl = self.db.get_antinuke_whitelist(interaction.guild.id)
 
@@ -1469,7 +1572,7 @@ class SecurityCog(commands.Cog):
             timestamp=discord.utils.utcnow()
         )
         embed.set_footer(text=f"{BOT_NAME} Anti-Nuke Engine")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await self._safe_respond(interaction, embed, ephemeral=True)
 
     @antinuke_group.command(name="toggle", description="Enable or disable the Anti-Nuke defense engine")
     @app_commands.describe(enabled="Turn Anti-Nuke protection ON or OFF")
@@ -1479,10 +1582,11 @@ class SecurityCog(commands.Cog):
     ])
     @app_commands.default_permissions(administrator=True)
     async def antinuke_toggle(self, interaction: discord.Interaction, enabled: int) -> None:
+        await self._safe_defer(interaction, ephemeral=True)
         self.db.update_antinuke_config(interaction.guild.id, enabled=enabled)
         state_str = "Enabled" if enabled else "Disabled"
         embed = embed_success("Anti-Nuke Updated", f"Anti-Nuke protection is now **{state_str}** for this server.") if enabled else embed_warning(f"Anti-Nuke protection is now **{state_str}**.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await self._safe_respond(interaction, embed, ephemeral=True)
 
     @antinuke_group.command(name="strict", description="Toggle Strict Mode (Instant Quarantine on 1 channel/role deletion)")
     @app_commands.describe(enabled="Strict Mode ON (Max security) or OFF (Standard thresholds)")
@@ -1492,10 +1596,11 @@ class SecurityCog(commands.Cog):
     ])
     @app_commands.default_permissions(administrator=True)
     async def antinuke_strict(self, interaction: discord.Interaction, enabled: int) -> None:
+        await self._safe_defer(interaction, ephemeral=True)
         self.db.update_antinuke_config(interaction.guild.id, strict_mode=enabled)
         mode_str = "Strict (Instant 1-delete quarantine)" if enabled else "Standard"
         embed = embed_success("Strict Mode Updated", f"Anti-Nuke strict mode is now **{mode_str}**.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await self._safe_respond(interaction, embed, ephemeral=True)
 
     @antinuke_group.command(name="action", description="Set the punishment executed against nukers")
     @app_commands.describe(action="Penalty type")
@@ -1506,11 +1611,10 @@ class SecurityCog(commands.Cog):
     ])
     @app_commands.default_permissions(administrator=True)
     async def antinuke_action(self, interaction: discord.Interaction, action: str) -> None:
+        await self._safe_defer(interaction, ephemeral=True)
         self.db.update_antinuke_config(interaction.guild.id, action=action)
-        await interaction.response.send_message(
-            embed=embed_success("Punishment Updated", f"Anti-Nuke punishment action set to: **{action}**."),
-            ephemeral=True
-        )
+        embed = embed_success("Punishment Updated", f"Anti-Nuke punishment action set to: **{action}**.")
+        await self._safe_respond(interaction, embed, ephemeral=True)
 
     @antinuke_group.command(name="limits", description="Configure trigger thresholds for Anti-Nuke actions")
     @app_commands.describe(
@@ -1530,6 +1634,7 @@ class SecurityCog(commands.Cog):
         role_delete_limit: Optional[int] = None,
         time_window: Optional[int] = None
     ) -> None:
+        await self._safe_defer(interaction, ephemeral=True)
         updates = {}
         if ban_limit is not None and ban_limit >= 1:
             updates["ban_limit"] = ban_limit
@@ -1543,13 +1648,14 @@ class SecurityCog(commands.Cog):
             updates["time_window_sec"] = min(60, time_window)
 
         if not updates:
-            await interaction.response.send_message(embed=embed_error("Please specify at least one valid threshold to update."), ephemeral=True)
+            await self._safe_respond(interaction, embed_error("Please specify at least one valid threshold to update."), ephemeral=True)
             return
 
         self.db.update_antinuke_config(interaction.guild.id, **updates)
         summary = "\n".join(f"• **{k}:** `{v}`" for k, v in updates.items())
-        await interaction.response.send_message(
-            embed=embed_success("Anti-Nuke Thresholds Updated", f"Updated settings:\n{summary}"),
+        await self._safe_respond(
+            interaction,
+            embed_success("Anti-Nuke Thresholds Updated", f"Updated settings:\n{summary}"),
             ephemeral=True
         )
 
@@ -1561,10 +1667,12 @@ class SecurityCog(commands.Cog):
     ])
     @app_commands.default_permissions(administrator=True)
     async def antinuke_antibot(self, interaction: discord.Interaction, enabled: int) -> None:
+        await self._safe_defer(interaction, ephemeral=True)
         self.db.update_antinuke_config(interaction.guild.id, anti_bot=enabled)
         state_str = "Enabled" if enabled else "Disabled"
-        await interaction.response.send_message(
-            embed=embed_success("Anti-Bot Setting Updated", f"Anti-Bot protection is now **{state_str}**."),
+        await self._safe_respond(
+            interaction,
+            embed_success("Anti-Bot Setting Updated", f"Anti-Bot protection is now **{state_str}**."),
             ephemeral=True
         )
 
@@ -1582,10 +1690,11 @@ class SecurityCog(commands.Cog):
         action: str,
         target: Optional[Union[discord.Member, discord.User]] = None
     ) -> None:
+        await self._safe_defer(interaction, ephemeral=True)
         if action == "list":
             wl = self.db.get_antinuke_whitelist(interaction.guild.id)
             if not wl:
-                await interaction.response.send_message(embed=embed_info("Anti-Nuke Whitelist", "No members or bots are currently whitelisted (Server Owner is always immune)."), ephemeral=True)
+                await self._safe_respond(interaction, embed_info("Anti-Nuke Whitelist", "No members or bots are currently whitelisted (Server Owner is always immune)."), ephemeral=True)
                 return
             lines = [f"• <@{r['target_id']}> (`{r['target_id']}`) — *Added by <@{r['added_by']}>*" for r in wl]
             embed = discord.Embed(
@@ -1593,25 +1702,132 @@ class SecurityCog(commands.Cog):
                 description="\n".join(lines),
                 color=C.BRAND
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await self._safe_respond(interaction, embed, ephemeral=True)
             return
 
         if not target:
-            await interaction.response.send_message(embed=embed_error("Please specify a member or bot to add/remove."), ephemeral=True)
+            await self._safe_respond(interaction, embed_error("Please specify a member or bot to add/remove."), ephemeral=True)
             return
 
         if action == "add":
             added = self.db.add_antinuke_whitelist(interaction.guild.id, target.id, interaction.user.id)
             if added:
-                await interaction.response.send_message(embed=embed_success("Whitelist Added", f"{target.mention} is now whitelisted and immune to Anti-Nuke."), ephemeral=True)
+                await self._safe_respond(interaction, embed_success("Whitelist Added", f"{target.mention} is now whitelisted and immune to Anti-Nuke."), ephemeral=True)
             else:
-                await interaction.response.send_message(embed=embed_info("Already Whitelisted", f"{target.mention} is already on the Anti-Nuke whitelist."), ephemeral=True)
+                await self._safe_respond(interaction, embed_info("Already Whitelisted", f"{target.mention} is already on the Anti-Nuke whitelist."), ephemeral=True)
         else:
             removed = self.db.remove_antinuke_whitelist(interaction.guild.id, target.id)
             if removed:
-                await interaction.response.send_message(embed=embed_success("Whitelist Removed", f"{target.mention} was removed from the Anti-Nuke whitelist."), ephemeral=True)
+                await self._safe_respond(interaction, embed_success("Whitelist Removed", f"{target.mention} was removed from the Anti-Nuke whitelist."), ephemeral=True)
             else:
-                await interaction.response.send_message(embed=embed_info("Not Found", f"{target.mention} is not in the Anti-Nuke whitelist."), ephemeral=True)
+                await self._safe_respond(interaction, embed_info("Not Found", f"{target.mention} is not in the Anti-Nuke whitelist."), ephemeral=True)
+
+    # ── Top-Level /whitelist and /unwhitelist Commands ─────────────────────────
+
+    @app_commands.command(name="whitelist", description="Whitelist a user or bot for Anti-Nuke immunity and assign power role")
+    @app_commands.describe(target="The member, user, or bot to whitelist", role="Optional power role to grant them")
+    @app_commands.default_permissions(administrator=True)
+    async def whitelist(
+        self,
+        interaction: discord.Interaction,
+        target: discord.User,
+        role: Optional[discord.Role] = None
+    ) -> None:
+        if not interaction.guild:
+            return
+
+        await self._safe_defer(interaction, ephemeral=False)
+        self.db.add_antinuke_whitelist(interaction.guild.id, target.id, interaction.user.id)
+        actions = ["🛡️ Added to Anti-Nuke Whitelist (Full Immunity)"]
+
+        # If member is in the guild, manage timeout and roles
+        member = interaction.guild.get_member(target.id)
+        if member:
+            if member.timed_out_until and member.timed_out_until > discord.utils.utcnow():
+                try:
+                    await member.timeout(None, reason=f"Whitelisted & empowered by {interaction.user}")
+                    actions.append("🔊 Removed quarantine timeout")
+                except Exception:
+                    pass
+
+            if role:
+                if role >= interaction.guild.me.top_role:
+                    actions.append(f"⚠️ Cannot grant {role.mention}: Role hierarchy equal/above bot role")
+                elif role.managed:
+                    actions.append(f"⚠️ Cannot grant {role.mention}: Integration/managed role")
+                else:
+                    try:
+                        await member.add_roles(role, reason=f"Whitelisted & empowered by {interaction.user}")
+                        actions.append(f"⚡ Granted power role: {role.mention}")
+                    except Exception as e:
+                        actions.append(f"⚠️ Failed to add role: {e}")
+
+        await self.log_security_action(
+            interaction.guild,
+            "✅ Member / Bot Whitelisted",
+            f"**Target:** {target.mention} (`{target}`)\n**Executor:** {interaction.user.mention}\n" + "\n".join(f"• {a}" for a in actions),
+            color=0x57F287,
+            event="security_warn"
+        )
+
+        embed = embed_success(
+            "Target Whitelisted & Empowered",
+            f"**Target:** {target.mention} (`{target}`)\n" + "\n".join(f"• {a}" for a in actions)
+        )
+        await self._safe_respond(interaction, embed, ephemeral=False)
+
+    @app_commands.command(name="unwhitelist", description="Remove a user or bot from whitelist and immediately strip all power roles")
+    @app_commands.describe(target="The member, user, or bot to unwhitelist")
+    @app_commands.default_permissions(administrator=True)
+    async def unwhitelist(
+        self,
+        interaction: discord.Interaction,
+        target: discord.User
+    ) -> None:
+        if not interaction.guild:
+            return
+
+        if target.id == interaction.guild.owner_id:
+            await self._safe_respond(
+                interaction,
+                embed_error("Cannot unwhitelist the server owner."),
+                ephemeral=True
+            )
+            return
+
+        await self._safe_defer(interaction, ephemeral=False)
+        removed = self.db.remove_antinuke_whitelist(interaction.guild.id, target.id)
+        actions = ["❌ Removed from Anti-Nuke Whitelist (Vulnerable to Anti-Nuke triggers)"]
+
+        # Strip all removable roles if present in guild
+        member = interaction.guild.get_member(target.id)
+        if member:
+            roles_to_remove = [
+                r for r in member.roles
+                if not r.is_default() and not r.managed and r < interaction.guild.me.top_role
+            ]
+            if roles_to_remove:
+                try:
+                    await member.remove_roles(*roles_to_remove, reason=f"Unwhitelisted by {interaction.user}: Stripping all power roles")
+                    actions.append(f"🛡️ Stripped `{len(roles_to_remove)}` power role(s) ({', '.join(r.name for r in roles_to_remove[:5])})")
+                except Exception as e:
+                    actions.append(f"⚠️ Role strip error: {e}")
+            else:
+                actions.append("ℹ️ No removable power roles found")
+
+        await self.log_security_action(
+            interaction.guild,
+            "❌ Member / Bot Unwhitelisted",
+            f"**Target:** {target.mention} (`{target}`)\n**Executor:** {interaction.user.mention}\n" + "\n".join(f"• {a}" for a in actions),
+            color=0xED4245,
+            event="security_auto_kick"
+        )
+
+        embed = embed_warning(
+            "Target Unwhitelisted & Stripped",
+            f"**Target:** {target.mention} (`{target}`)\n" + "\n".join(f"• {a}" for a in actions)
+        )
+        await self._safe_respond(interaction, embed, ephemeral=False)
 
 
 
