@@ -626,7 +626,7 @@ class BotStatusCog(commands.Cog):
 
         if msg:
             try:
-                await msg.edit(embed=embed)
+                await msg.edit(embed=embed, view=BotStatusView())
                 print(f"[OwnerStatus] ✅ Edited status message ({msg.id}) in #{ch.name}")
                 return True, f"Updated existing status embed in {ch.mention}"
             except Exception as e:
@@ -634,7 +634,7 @@ class BotStatusCog(commands.Cog):
 
         if state != "offline":
             try:
-                new_msg = await ch.send(embed=embed)
+                new_msg = await ch.send(embed=embed, view=BotStatusView())
                 _save_owner_msg_id(ch_id, new_msg.id)
                 print(f"[OwnerStatus] ✅ Posted new status message ({new_msg.id}) in #{ch.name}")
                 return True, f"Posted new status embed in {ch.mention}"
