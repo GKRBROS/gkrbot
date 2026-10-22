@@ -617,12 +617,9 @@ class GuildPlayer:
             )
             embed.description = desc
             embed.set_footer(text=f"Queue: 0 tracks · {BOT_NAME} Studio Audio")
-            visual_file = get_visualizer_file()
-            if visual_file:
-                embed.set_image(url=f"attachment://{MUSIC_VISUALIZER_GIF_FILENAME}")
-            elif MUSIC_VISUALIZER_GIF_URL:
+            if MUSIC_VISUALIZER_GIF_URL:
                 embed.set_image(url=MUSIC_VISUALIZER_GIF_URL)
-            return embed, visual_file
+            return embed, None
 
         loop_str = {"single": "🔂 Single", "queue": "🔁 Queue"}.get(self.loop_mode, "Off")
         status_badge = "⏸️ **Paused**" if vc.is_paused() else "🟢 **Playing**"
@@ -653,26 +650,27 @@ class GuildPlayer:
         if thumb:
             embed.set_thumbnail(url=thumb)
 
-        visual_file = get_visualizer_file()
-        if visual_file:
-            embed.set_image(url=f"attachment://{MUSIC_VISUALIZER_GIF_FILENAME}")
-        elif MUSIC_VISUALIZER_GIF_URL:
+        if MUSIC_VISUALIZER_GIF_URL:
             embed.set_image(url=MUSIC_VISUALIZER_GIF_URL)
 
         embed.set_footer(text=f"Queue · {len(self.queue)} tracks   |   Source · {BOT_NAME} Studio Audio")
-        return embed, visual_file
+        return embed, None
 
     async def update_panel(self):
         msg = self.panel_message
         if not msg:
             return
-        embed, gif_file = self.build_embed()
+        embed, _ = self.build_embed()
         view = MusicControlView(self)
-        kwargs = {"embed": embed, "view": view}
-        if gif_file:
-            kwargs["attachments"] = [gif_file]
         try:
-            await msg.edit(**kwargs)
+            await msg.edit(embed=embed, view=view)
+        except (discord.NotFound, discord.HTTPException):
+            # Stale message — post a fresh panel in the same channel
+            try:
+                new_msg = await msg.channel.send(embed=embed, view=view)
+                self.panel_message = new_msg
+            except Exception:
+                self.panel_message = None
         except Exception:
             pass
 
@@ -829,19 +827,20 @@ class MusicCog(commands.Cog):
         return True
 
     async def send_panel(self, interaction: discord.Interaction, player: GuildPlayer, *, followup: bool = False):
-        embed, gif_file = player.build_embed()
+        embed, _ = player.build_embed()
         view = MusicControlView(player)
+        # Delete stale panel if one exists
+        if player.panel_message:
+            try:
+                await player.panel_message.delete()
+            except Exception:
+                pass
+            player.panel_message = None
 
         if followup:
-            kwargs = {"embed": embed, "view": view}
-            if gif_file:
-                kwargs["files"] = [gif_file]
-            msg = await interaction.followup.send(**kwargs, wait=True)
+            msg = await interaction.followup.send(embed=embed, view=view, wait=True)
         else:
-            kwargs = {"embed": embed, "view": view}
-            if gif_file:
-                kwargs["file"] = gif_file
-            await interaction.response.send_message(**kwargs)
+            await interaction.response.send_message(embed=embed, view=view)
             msg = await interaction.original_response()
         player.panel_message = msg
         return msg
