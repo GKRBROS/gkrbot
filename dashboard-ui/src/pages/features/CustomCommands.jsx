@@ -22,7 +22,6 @@ import Button from '../../components/Button';
 import Badge from '../../components/Badge';
 import EmptyState from '../../components/EmptyState';
 import { useToast } from '../../components/ToastContext';
-import Loader from '../../components/Loader';
 
 export function CustomCommands() {
   const { guildId } = useParams();
@@ -155,10 +154,6 @@ export function CustomCommands() {
     const q = search.trim().toLowerCase();
     return commands.filter(c => c.name.toLowerCase().includes(q) || (c.response || '').toLowerCase().includes(q));
   }, [commands, search]);
-
-  if (loading) {
-    return <Loader label="Loading Custom Commands Studio..." />;
-  }
 
   return (
     <div className="space-y-6">

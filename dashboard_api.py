@@ -4489,11 +4489,12 @@ async def handle_server_logs_post(request: web.Request):
     import server_logs
     db = server_logs.LogsDB()
     db.initialize()
+    enabled_events = data["enabled_events"] if "enabled_events" in data and data["enabled_events"] is not None else server_logs.ALL_EVENTS
     cfg = {
         "guild_id": guild_id,
         "log_channel_id": int(data["log_channel_id"]) if data.get("log_channel_id") else None,
         "enabled": bool(data.get("enabled", True)),
-        "enabled_events": data.get("enabled_events", server_logs.ALL_EVENTS),
+        "enabled_events": enabled_events,
         "category_channels": data.get("category_channels", {}),
     }
     db.save(cfg)

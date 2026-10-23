@@ -178,14 +178,17 @@ class LogsDB:
                 "enabled_events": list(ALL_EVENTS),
                 "category_channels": {},
             }
-        raw_events = json.loads(row["enabled_events"] or "[]")
+        if row["enabled_events"] is not None:
+            raw_events = json.loads(row["enabled_events"])
+        else:
+            raw_events = list(ALL_EVENTS)
         cat_data = row["category_channels"] if "category_channels" in row.keys() else "{}"
         raw_cats = json.loads(cat_data or "{}")
         return {
             "guild_id": guild_id,
             "log_channel_id": int(row["log_channel_id"]) if row["log_channel_id"] else None,
             "enabled": bool(row["enabled"]),
-            "enabled_events": raw_events if raw_events else list(ALL_EVENTS),
+            "enabled_events": raw_events,
             "category_channels": raw_cats,
         }
 

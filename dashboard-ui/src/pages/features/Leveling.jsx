@@ -23,7 +23,6 @@ import Toggle from '../../components/Toggle';
 import { ChannelSelect } from '../../components/ChannelSelect';
 import { RoleSelect } from '../../components/RoleSelect';
 import { useToast } from '../../components/ToastContext';
-import Loader from '../../components/Loader';
 
 export function Leveling() {
   const { guildId } = useParams();
@@ -136,10 +135,6 @@ export function Leveling() {
       return { ...prev, channel_blacklist: next };
     });
   };
-
-  if (loading) {
-    return <Loader label="Loading Leveling & XP System..." />;
-  }
 
   return (
     <div className="space-y-6">

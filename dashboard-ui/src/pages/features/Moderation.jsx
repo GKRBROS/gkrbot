@@ -33,7 +33,6 @@ import Badge from '../../components/Badge';
 import EmptyState from '../../components/EmptyState';
 import Toggle from '../../components/Toggle';
 import { useToast } from '../../components/ToastContext';
-import Loader from '../../components/Loader';
 
 function Moderation() {
   const { guildId } = useParams();
@@ -259,10 +258,6 @@ function Moderation() {
   };
 
   const getRole = (id) => roles.find(r => String(r.id) === String(id)) || { name: `Role ${id}`, color: '#99aab5' };
-
-  if (loading) {
-    return <Loader label="Loading Moderation & AutoMod..." />;
-  }
 
   return (
     <div className="space-y-6">
