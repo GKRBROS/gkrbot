@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import {
   ShieldAlert,
@@ -9,35 +9,60 @@ import {
   Terminal,
   CheckCircle2,
   AlertCircle,
-  BookOpen,
   Shield,
-  Tag,
   Gavel,
   UserX,
   UserCheck,
-  RefreshCw
+  RefreshCw,
+  Sliders,
+  Ban,
+  X,
+  Save,
+  Clock,
+  EyeOff
 } from 'lucide-react';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync, syncParams } from '../../sync';
-import { Select } from '../../components/Select';
+import { RoleSelect } from '../../components/RoleSelect';
+import { ChannelSelect } from '../../components/ChannelSelect';
 import PageHeader from '../../components/PageHeader';
 import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
 import Button from '../../components/Button';
 import Badge from '../../components/Badge';
 import EmptyState from '../../components/EmptyState';
-import Skeleton from '../../components/Skeleton';
+import Toggle from '../../components/Toggle';
+import { useToast } from '../../components/ToastContext';
+import Loader from '../../components/Loader';
 
 function Moderation() {
   const { guildId } = useParams();
+  const toast = useToast();
+
   const [roles, setRoles] = useState([]);
+  const [channels, setChannels] = useState([]);
   const [staffRoleIds, setStaffRoleIds] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
   const [selectedRole, setSelectedRole] = useState('');
   const [syncOpen, setSyncOpen] = useState(false);
+  const [savingAutomod, setSavingAutomod] = useState(false);
+
+  // Automod state
+  const [automod, setAutomod] = useState({
+    enabled: 1,
+    log_channel_id: '',
+    anti_invites: 1,
+    anti_links: 0,
+    anti_badwords: 1,
+    keyword_blacklist: [],
+    action: 'delete'
+  });
+  const [newKeyword, setNewKeyword] = useState('');
+
+  // Infractions state
+  const [infractions, setInfractions] = useState([]);
+  const [infractionsLoading, setInfractionsLoading] = useState(false);
+  const [revokingId, setRevokingId] = useState(null);
 
   // Bans management state
   const [bans, setBans] = useState([]);
@@ -60,30 +85,52 @@ function Moderation() {
     }
   }, [guildId]);
 
+  const fetchInfractions = useCallback(async () => {
+    setInfractionsLoading(true);
+    try {
+      const res = await api.get(`/guilds/${guildId}/moderation/infractions`);
+      setInfractions(res.data.infractions || []);
+    } catch (err) {
+      console.error('Failed to load infractions', err);
+    } finally {
+      setInfractionsLoading(false);
+    }
+  }, [guildId]);
+
   const fetchData = useCallback(async () => {
     try {
-      const [modRes, rolesRes] = await Promise.allSettled([
+      const [modRes, rolesRes, channelsRes, automodRes] = await Promise.allSettled([
         api.get(`/guilds/${guildId}/moderation`),
         api.get(`/guilds/${guildId}/roles`),
+        api.get(`/guilds/${guildId}/channels`),
+        api.get(`/guilds/${guildId}/moderation/automod`),
       ]);
+
       if (modRes.status === 'fulfilled' && modRes.value.data?.staff_roles) {
         setStaffRoleIds(modRes.value.data.staff_roles || []);
       }
       if (rolesRes.status === 'fulfilled' && rolesRes.value.data?.roles) {
-        const rList = rolesRes.value.data.roles || [];
-        setRoles(rList);
-        if (rList.length > 0 && !selectedRole) {
-          setSelectedRole(rList[0].id);
-        }
+        setRoles(rolesRes.value.data.roles || []);
       }
-      await fetchBans();
+      if (channelsRes.status === 'fulfilled' && channelsRes.value.data?.channels) {
+        setChannels(channelsRes.value.data.channels || []);
+      }
+      if (automodRes.status === 'fulfilled' && automodRes.value.data?.automod) {
+        setAutomod(prev => ({
+          ...prev,
+          ...automodRes.value.data.automod,
+          log_channel_id: automodRes.value.data.automod.log_channel_id || ''
+        }));
+      }
+
+      await Promise.all([fetchBans(), fetchInfractions()]);
     } catch (err) {
       console.error('Failed to load moderation settings', err);
-      setError(err.response?.data?.error || 'Failed to load moderation settings');
+      if (toast) toast('Failed to load moderation data', 'error');
     } finally {
       setLoading(false);
     }
-  }, [guildId, selectedRole, fetchBans]);
+  }, [guildId, fetchBans, fetchInfractions, toast]);
 
   useEffect(() => {
     fetchData();
@@ -92,15 +139,13 @@ function Moderation() {
   const handleAddRole = async (e) => {
     e.preventDefault();
     if (!selectedRole) return;
-    setError('');
-    setSubmitting(true);
     try {
       await api.post(`/guilds/${guildId}/moderation/staff-roles`, withSync({ role_id: selectedRole }));
-      await fetchData();
+      setStaffRoleIds(prev => [...prev.filter(id => id !== selectedRole), selectedRole]);
+      setSelectedRole('');
+      if (toast) toast('Designated staff role successfully', 'success');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to designate staff role');
-    } finally {
-      setSubmitting(false);
+      if (toast) toast(err.response?.data?.error || 'Failed to designate staff role', 'error');
     }
   };
 
@@ -108,500 +153,446 @@ function Moderation() {
     try {
       await api.delete(`/guilds/${guildId}/moderation/staff-roles/${roleId}`, { params: syncParams() });
       setStaffRoleIds(prev => prev.filter(id => id !== roleId));
+      if (toast) toast('Removed staff role assignment', 'success');
     } catch (err) {
-      console.error('Failed to remove staff role', err);
-      setError(err.response?.data?.error || 'Failed to remove staff role');
+      if (toast) toast('Failed to remove staff role', 'error');
+    }
+  };
+
+  const handleSaveAutomod = async () => {
+    setSavingAutomod(true);
+    try {
+      await api.post(`/guilds/${guildId}/moderation/automod`, automod);
+      if (toast) toast('AutoMod rules and keyword blacklist saved!', 'success');
+    } catch (err) {
+      if (toast) toast(err.response?.data?.error || 'Failed to save automod rules', 'error');
+    } finally {
+      setSavingAutomod(false);
+    }
+  };
+
+  const handleAddKeyword = (e) => {
+    e.preventDefault();
+    const word = newKeyword.trim().toLowerCase();
+    if (!word) return;
+    if (automod.keyword_blacklist.includes(word)) {
+      if (toast) toast('Keyword already exists in blacklist', 'warning');
+      return;
+    }
+    setAutomod(prev => ({
+      ...prev,
+      keyword_blacklist: [...prev.keyword_blacklist, word]
+    }));
+    setNewKeyword('');
+  };
+
+  const handleRemoveKeyword = (word) => {
+    setAutomod(prev => ({
+      ...prev,
+      keyword_blacklist: prev.keyword_blacklist.filter(w => w !== word)
+    }));
+  };
+
+  const handleRevokeInfraction = async (infractionId) => {
+    setRevokingId(infractionId);
+    try {
+      await api.post(`/guilds/${guildId}/moderation/infractions/${infractionId}/revoke`);
+      setInfractions(prev =>
+        prev.map(inf => inf.id === infractionId ? { ...inf, status: 'revoked' } : inf)
+      );
+      if (toast) toast(`Revoked infraction #${infractionId}`, 'success');
+    } catch (err) {
+      if (toast) toast('Failed to revoke infraction', 'error');
+    } finally {
+      setRevokingId(null);
     }
   };
 
   const handleBanUser = async (e) => {
-    if (e) e.preventDefault();
-    if (!banUserId.trim()) return;
-    setError('');
-    setSuccessMsg('');
+    e.preventDefault();
+    if (!banUserId.trim()) {
+      if (toast) toast('Please provide a Discord User ID', 'error');
+      return;
+    }
     setBanning(true);
     try {
       await api.post(`/guilds/${guildId}/moderation/ban`, {
         user_id: banUserId.trim(),
-        reason: banReason.trim() || 'Banned via Web Dashboard',
+        reason: banReason.trim() || 'Banned via web dashboard'
       });
-      setSuccessMsg(`Successfully banned user ${banUserId}`);
       setBanUserId('');
       setBanReason('');
+      if (toast) toast('User banned successfully', 'success');
       await fetchBans();
-      setTimeout(() => setSuccessMsg(''), 3000);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to ban member');
+      if (toast) toast(err.response?.data?.error || 'Failed to ban user', 'error');
     } finally {
       setBanning(false);
     }
   };
 
   const handleUnbanUser = async (userId) => {
-    setError('');
-    setSuccessMsg('');
     setUnbanningId(userId);
     try {
       await api.post(`/guilds/${guildId}/moderation/unban`, { user_id: userId });
-      setSuccessMsg(`Successfully unbanned user ${userId}`);
       setBans(prev => prev.filter(b => b.user.id !== userId));
-      setTimeout(() => setSuccessMsg(''), 3000);
+      if (toast) toast('User unbanned successfully', 'success');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to unban user');
+      if (toast) toast('Failed to unban user', 'error');
     } finally {
       setUnbanningId('');
     }
   };
 
   const handleUnbanAll = async () => {
-    if (!window.confirm('Are you ABSOLUTELY sure you want to UNBAN ALL members from this server? This action cannot be undone.')) {
-      return;
-    }
-    setError('');
-    setSuccessMsg('');
+    if (!window.confirm('Are you sure you want to unban ALL users? This action cannot be reversed.')) return;
     setUnbanAllLoading(true);
     try {
       const res = await api.post(`/guilds/${guildId}/moderation/unbanall`);
-      setSuccessMsg(`Mass unban complete! Unbanned ${res.data.count || 0} user(s).`);
-      await fetchBans();
-      setTimeout(() => setSuccessMsg(''), 4000);
+      if (toast) toast(`Successfully unbanned ${res.data.count} users!`, 'success');
+      setBans([]);
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to execute mass unban');
+      if (toast) toast('Failed to unban all members', 'error');
     } finally {
       setUnbanAllLoading(false);
     }
   };
 
+  const getRole = (id) => roles.find(r => String(r.id) === String(id)) || { name: `Role ${id}`, color: '#99aab5' };
+
   if (loading) {
-    return (
-      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        <Skeleton height="70px" />
-        <Skeleton height="240px" />
-        <Skeleton height="200px" />
-      </div>
-    );
+    return <Loader label="Loading Moderation & AutoMod..." />;
   }
 
-  const getRole = (id) => {
-    return roles.find(r => String(r.id) === String(id)) || { id, name: `Role ${id}`, color: '#99aab5' };
-  };
-
-  const roleOptions = roles.map(r => ({
-    value: r.id,
-    label: `@${r.name}`
-  }));
-
-  const commandsList = [
-    { cmd: '/mod ban <user> [reason]', desc: 'Bans a member with optional purge and security logging.' },
-    { cmd: '/mod unban <user_id> [reason]', desc: 'Removes an active ban by Discord user ID.' },
-    { cmd: '/mod unbanall', desc: 'Administrative mass unban across the entire server.' },
-    { cmd: '/mod banlist', desc: 'Displays currently banned members and ban reasons.' },
-    { cmd: '/mod kick <user> [reason]', desc: 'Kicks a member from the server.' },
-    { cmd: '/mod timeout <user> <duration> [reason]', desc: 'Applies Discord communication timeout (mute).' },
-    { cmd: '/mod untimeout <user>', desc: 'Removes timeout from a muted member.' },
-    { cmd: '/warn <user> <reason>', desc: 'Issues an official warning and advances punishment ladder.' },
-    { cmd: '/warnings <user>', desc: 'Shows complete warning history and active records.' },
-  ];
-
   return (
-    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <div className="space-y-6">
       <PageHeader
+        title="Moderation & AutoMod Engine"
+        description="Automated content moderation rules, keyword filters, infraction tracking, bans, and staff roles."
         icon={ShieldAlert}
-        title="Moderation & Server Discipline"
-        subtitle="Authorize specific moderator roles, manage server bans, execute mass unbans, and manage disciplinary enforcement."
+        badge="Security Suite"
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            icon={Share2}
-            onClick={() => setSyncOpen(true)}
-          >
-            Sync to Servers
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" icon={Share2} onClick={() => setSyncOpen(true)}>
+              Sync Config
+            </Button>
+            <Button variant="primary" icon={Save} onClick={handleSaveAutomod} loading={savingAutomod}>
+              Save AutoMod
+            </Button>
+          </div>
         }
       />
 
-      {successMsg && (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '12px 16px',
-          borderRadius: 'var(--radius-md)',
-          background: 'rgba(34, 197, 94, 0.1)',
-          border: '1px solid rgba(34, 197, 94, 0.25)',
-          color: '#4ade80',
-          fontSize: '13.5px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <CheckCircle2 size={17} />
-            <span>{successMsg}</span>
-          </div>
-          <button
-            onClick={() => setSuccessMsg('')}
-            style={{ background: 'transparent', border: 'none', color: '#4ade80', cursor: 'pointer', fontSize: '16px' }}
-          >
-            ✕
-          </button>
-        </div>
-      )}
+      {/* AutoMod Rules & Keyword Blacklist */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <CardTitle icon={Sliders}>AutoMod Shield & Filter Rules</CardTitle>
+            <CardDescription>Instant automated enforcement against spam, invites, and unauthorized content.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <Toggle
+              checked={Boolean(automod.enabled)}
+              onChange={val => setAutomod({ ...automod, enabled: val ? 1 : 0 })}
+              label="Enable AutoMod Filter Engine"
+              description="Actively monitor and filter chat messages in real time"
+            />
 
-      {error && (
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          padding: '12px 16px',
-          borderRadius: 'var(--radius-md)',
-          background: 'rgba(239, 68, 68, 0.1)',
-          border: '1px solid rgba(239, 68, 68, 0.25)',
-          color: '#f87171',
-          fontSize: '13.5px'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <AlertCircle size={17} />
-            <span>{error}</span>
-          </div>
-          <button
-            onClick={() => setError('')}
-            style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '16px' }}
-          >
-            ✕
-          </button>
-        </div>
-      )}
-
-      {/* Designated Staff Roles Card */}
-      <Card>
-        <CardHeader>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <div>
-              <CardTitle>Designated Staff Roles</CardTitle>
-              <CardDescription>
-                Members holding any of these roles gain permission to use bot moderation commands (/warn, /mute, /unmute).
-              </CardDescription>
-            </div>
-            <Badge variant="primary" size="sm">{staffRoleIds.length} Active Roles</Badge>
-          </div>
-        </CardHeader>
-        <CardContent style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {/* Add Staff Role Form */}
-          <form onSubmit={handleAddRole} style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div style={{ flex: '1', minWidth: '260px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
-                Select Server Role
-              </label>
-              <Select
-                value={selectedRole}
-                onChange={setSelectedRole}
-                options={roleOptions}
-                placeholder="Choose a role to grant staff access..."
-                searchable
+            <div className="space-y-4 pt-4 border-t border-border">
+              <Toggle
+                checked={Boolean(automod.anti_invites)}
+                onChange={val => setAutomod({ ...automod, anti_invites: val ? 1 : 0 })}
+                label="Block Discord Server Invites"
+                description="Automatically removes unauthorized discord.gg links"
+              />
+              <Toggle
+                checked={Boolean(automod.anti_links)}
+                onChange={val => setAutomod({ ...automod, anti_links: val ? 1 : 0 })}
+                label="Block All External Links"
+                description="Restricts URL sharing for non-staff members"
+              />
+              <Toggle
+                checked={Boolean(automod.anti_badwords)}
+                onChange={val => setAutomod({ ...automod, anti_badwords: val ? 1 : 0 })}
+                label="Enforce Keyword Blacklist"
+                description="Scans and blocks messages containing blacklisted terms"
               />
             </div>
-            <Button
-              type="submit"
-              variant="primary"
-              icon={Plus}
-              loading={submitting}
-              disabled={!selectedRole}
-            >
-              Add Staff Role
-            </Button>
-          </form>
 
-          {/* Active Staff Roles Badges */}
-          <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
-            <span style={{ display: 'block', fontSize: '12.5px', fontWeight: 600, color: 'var(--text-muted)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-              Assigned Moderator Roles
-            </span>
-
-            {staffRoleIds.length === 0 ? (
-              <div style={{
-                padding: '16px',
-                borderRadius: 'var(--radius-md)',
-                background: 'var(--bg-surface)',
-                border: '1px solid var(--border)',
-                color: 'var(--text-muted)',
-                fontSize: '13px'
-              }}>
-                No specific roles assigned yet. Currently only server members with native Discord Administrator permissions can invoke moderation commands.
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-border">
+              <div className="form-group">
+                <label className="form-label">AutoMod Violation Action</label>
+                <select
+                  className="form-input"
+                  value={automod.action || 'delete'}
+                  onChange={e => setAutomod({ ...automod, action: e.target.value })}
+                >
+                  <option value="delete">Delete Message Only</option>
+                  <option value="warn">Delete & Issue Warning</option>
+                  <option value="mute">Delete & Timeout (10m)</option>
+                </select>
               </div>
-            ) : (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-                {staffRoleIds.map(id => {
-                  const role = getRole(id);
-                  return (
-                    <div
-                      key={id}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        background: 'var(--bg-surface)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-md)',
-                        padding: '7px 12px'
-                      }}
+
+              <div className="form-group">
+                <label className="form-label">Moderation Log Channel</label>
+                <ChannelSelect
+                  value={automod.log_channel_id}
+                  onChange={chId => setAutomod({ ...automod, log_channel_id: chId })}
+                  channels={channels}
+                  allowedTypes={['text', 'news']}
+                  placeholder="Select mod log channel..."
+                />
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Keyword Blacklist Manager */}
+        <Card>
+          <CardHeader>
+            <CardTitle icon={Ban}>Keyword Blacklist</CardTitle>
+            <CardDescription>Messages matching these terms or phrases are automatically blocked.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <form onSubmit={handleAddKeyword} className="flex gap-2">
+              <input
+                type="text"
+                className="form-input"
+                placeholder="Enter word or phrase to block..."
+                value={newKeyword}
+                onChange={e => setNewKeyword(e.target.value)}
+              />
+              <Button type="submit" variant="primary" icon={Plus}>
+                Add
+              </Button>
+            </form>
+
+            <div className="p-3 rounded-lg border border-border bg-surface-card min-h-[140px] max-h-56 overflow-y-auto">
+              {automod.keyword_blacklist.length === 0 ? (
+                <div className="text-center py-8 text-xs text-muted">
+                  No keywords blacklisted. Type a word above to add.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {automod.keyword_blacklist.map(word => (
+                    <span
+                      key={word}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-danger/15 text-danger border border-danger/25"
                     >
-                      <span
-                        style={{
-                          width: '10px',
-                          height: '10px',
-                          borderRadius: '50%',
-                          background: role.color && role.color !== '#000000' ? role.color : 'var(--primary)'
-                        }}
-                      />
-                      <span style={{ fontWeight: 600, fontSize: '13px', color: 'var(--text-main)' }}>
-                        @{role.name}
-                      </span>
+                      {word}
                       <button
                         type="button"
-                        onClick={() => handleRemoveRole(id)}
-                        style={{
-                          background: 'transparent',
-                          border: 'none',
-                          color: '#f87171',
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          padding: '2px',
-                          marginLeft: '2px'
-                        }}
-                        title="Remove staff role"
+                        onClick={() => handleRemoveKeyword(word)}
+                        className="hover:text-white"
+                        title="Remove word"
                       >
-                        <Trash2 size={14} />
+                        <X size={12} />
                       </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <span className="text-[11px] text-muted block">
+              AutoMod checks full and partial word matches case-insensitively.
+            </span>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Infractions & Warns Table */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <CardTitle icon={Clock}>Active Infractions & Warnings</CardTitle>
+              <CardDescription>Track member infractions, timeouts, and revoke active punishments.</CardDescription>
+            </div>
+            <Button variant="secondary" size="sm" icon={RefreshCw} onClick={fetchInfractions} loading={infractionsLoading}>
+              Refresh Infractions
+            </Button>
           </div>
+        </CardHeader>
+        <CardContent>
+          {infractions.length === 0 ? (
+            <div className="py-8 text-center text-muted text-sm border border-dashed border-border rounded-lg">
+              No active infractions logged in this server.
+            </div>
+          ) : (
+            <div className="overflow-x-auto border border-border rounded-lg">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-surface-card text-muted text-xs uppercase border-b border-border">
+                  <tr>
+                    <th className="px-4 py-3 font-semibold">Infraction</th>
+                    <th className="px-4 py-3 font-semibold">User ID</th>
+                    <th className="px-4 py-3 font-semibold">Action</th>
+                    <th className="px-4 py-3 font-semibold">Reason</th>
+                    <th className="px-4 py-3 font-semibold">Status</th>
+                    <th className="px-4 py-3 font-semibold text-right">Revoke</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {infractions.map(inf => {
+                    const isRevoked = inf.status === 'revoked';
+                    return (
+                      <tr key={inf.id} className="hover:bg-surface-hover/30 transition">
+                        <td className="px-4 py-3 font-bold text-main">#{inf.id}</td>
+                        <td className="px-4 py-3 font-mono text-xs">{inf.user_id}</td>
+                        <td className="px-4 py-3">
+                          <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded ${
+                            inf.action === 'ban' ? 'bg-danger/20 text-danger' :
+                            inf.action === 'mute' ? 'bg-warning/20 text-warning' :
+                            'bg-primary/20 text-primary'
+                          }`}>
+                            {inf.action}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-muted max-w-xs truncate">{inf.reason || 'No reason specified'}</td>
+                        <td className="px-4 py-3">
+                          <span className={`text-xs font-semibold ${isRevoked ? 'text-muted' : 'text-success'}`}>
+                            {isRevoked ? 'Revoked' : 'Active'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {!isRevoked && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleRevokeInfraction(inf.id)}
+                              loading={revokingId === inf.id}
+                              className="text-xs"
+                            >
+                              Revoke
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* Server Bans & Mass Unban Card */}
-      <Card>
-        <CardHeader>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px', width: '100%' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <Gavel size={20} color="#ef4444" />
+      {/* Staff Roles & Bans Cards */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
               <div>
-                <CardTitle style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  Server Bans & Punishments
-                  <Badge variant={bans.length > 0 ? 'warning' : 'neutral'} size="sm">
-                    {bans.length} Active {bans.length === 1 ? 'Ban' : 'Bans'}
-                  </Badge>
-                </CardTitle>
-                <CardDescription>
-                  View and manage banned users, execute targeted unbans, or perform server mass-unbans.
-                </CardDescription>
+                <CardTitle icon={Users}>Staff Roles</CardTitle>
+                <CardDescription>Members with these roles can use moderation commands.</CardDescription>
+              </div>
+              <Badge variant="primary" size="sm">{staffRoleIds.length} Roles</Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <form onSubmit={handleAddRole} className="flex gap-2">
+              <div className="flex-1">
+                <RoleSelect
+                  value={selectedRole}
+                  onChange={setSelectedRole}
+                  roles={roles}
+                  manageableOnly={true}
+                  placeholder="Designate a staff role..."
+                />
+              </div>
+              <Button type="submit" variant="primary" icon={Plus} disabled={!selectedRole}>
+                Assign
+              </Button>
+            </form>
+
+            <div className="flex flex-wrap gap-2 pt-2">
+              {staffRoleIds.map(id => {
+                const r = getRole(id);
+                return (
+                  <div
+                    key={id}
+                    className="inline-flex items-center gap-2 px-3 py-1 rounded-lg border border-border bg-surface-card"
+                  >
+                    <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: r.color || '#99aab5' }} />
+                    <span className="text-xs font-semibold text-main">@{r.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveRole(id)}
+                      className="text-danger hover:text-white"
+                      title="Remove staff role"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Server Bans Card */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <CardTitle icon={Gavel}>Server Bans ({bans.length})</CardTitle>
+                <CardDescription>Manage banned users and execute targeted unbans.</CardDescription>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="secondary" size="sm" icon={RefreshCw} onClick={fetchBans} loading={bansLoading} />
+                <Button variant="outline" size="sm" onClick={handleUnbanAll} loading={unbanAllLoading} className="text-danger">
+                  Unban All
+                </Button>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={fetchBans}
-                loading={bansLoading}
-                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-              >
-                <RefreshCw size={14} /> Refresh Bans
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleUnbanAll}
-                loading={unbanAllLoading}
-                style={{ color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)' }}
-              >
-                <UserCheck size={14} /> Unban All Members
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          {/* Quick Ban Form */}
-          <form onSubmit={handleBanUser} style={{
-            display: 'flex',
-            gap: '12px',
-            flexWrap: 'wrap',
-            alignItems: 'flex-end',
-            padding: '16px',
-            background: 'var(--bg-surface)',
-            borderRadius: 'var(--radius-md)',
-            border: '1px solid var(--border)'
-          }}>
-            <div style={{ flex: '1', minWidth: '220px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
-                Ban Discord User ID
-              </label>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <form onSubmit={handleBanUser} className="flex flex-wrap gap-2">
               <input
                 type="text"
-                className="form-input"
-                placeholder="Enter User ID (e.g. 936219932461510667)..."
+                className="form-input flex-1 min-w-[140px]"
+                placeholder="User ID..."
                 value={banUserId}
                 onChange={e => setBanUserId(e.target.value)}
               />
-            </div>
-
-            <div style={{ flex: '2', minWidth: '260px' }}>
-              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' }}>
-                Reason for Ban
-              </label>
               <input
                 type="text"
-                className="form-input"
-                placeholder="Violation of server rules, raid attempt, etc..."
+                className="form-input flex-2 min-w-[160px]"
+                placeholder="Reason..."
                 value={banReason}
                 onChange={e => setBanReason(e.target.value)}
               />
-            </div>
+              <Button type="submit" variant="primary" icon={UserX} loading={banning} className="bg-danger border-danger">
+                Ban
+              </Button>
+            </form>
 
-            <Button
-              type="submit"
-              variant="primary"
-              loading={banning}
-              style={{ background: '#ef4444', borderColor: '#dc2626', display: 'flex', alignItems: 'center', gap: '6px' }}
-            >
-              <UserX size={15} /> Ban Member
-            </Button>
-          </form>
-
-          {/* Active Bans List */}
-          <div>
-            <h4 style={{ margin: '0 0 12px', fontSize: '14px', fontWeight: 600, color: 'var(--text-main)' }}>
-              Active Server Bans ({bans.length})
-            </h4>
-
-            {bansLoading ? (
-              <Skeleton height="100px" />
-            ) : bans.length === 0 ? (
-              <EmptyState
-                icon={CheckCircle2}
-                title="Clean Record — No Active Bans"
-                description="There are currently no members banned from this Discord server."
-              />
-            ) : (
-              <div style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '8px',
-                maxHeight: '360px',
-                overflowY: 'auto',
-                paddingRight: '4px'
-              }}>
-                {bans.map((b) => (
-                  <div
-                    key={b.user.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '12px 16px',
-                      background: 'var(--bg-surface)',
-                      border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius-md)',
-                      gap: '12px'
-                    }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0 }}>
-                      {b.user.avatar ? (
-                        <img
-                          src={b.user.avatar}
-                          alt=""
-                          style={{ width: '36px', height: '36px', borderRadius: '50%', objectFit: 'cover' }}
-                        />
-                      ) : (
-                        <div style={{
-                          width: '36px',
-                          height: '36px',
-                          borderRadius: '50%',
-                          background: 'rgba(239, 68, 68, 0.2)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          color: '#ef4444'
-                        }}>
-                          <UserX size={18} />
-                        </div>
-                      )}
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <span style={{ fontWeight: 600, fontSize: '13.5px', color: 'var(--text-main)' }}>
-                            {b.user.name}
-                          </span>
-                          <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
-                            ID: {b.user.id}
-                          </span>
-                        </div>
-                        <p style={{ margin: '2px 0 0', fontSize: '12.5px', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          Reason: {b.reason}
-                        </p>
-                      </div>
+            <div className="max-h-56 overflow-y-auto space-y-2">
+              {bans.length === 0 ? (
+                <div className="text-center py-6 text-xs text-muted">No members currently banned.</div>
+              ) : (
+                bans.map(b => (
+                  <div key={b.user.id} className="flex items-center justify-between p-2.5 rounded-lg border border-border bg-surface-card">
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="font-semibold text-xs text-main">{b.user.name}</span>
+                      <span className="font-mono text-[10px] text-muted">({b.user.id})</span>
                     </div>
-
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={() => handleUnbanUser(b.user.id)}
                       loading={unbanningId === b.user.id}
-                      style={{ color: '#22c55e', borderColor: 'rgba(34, 197, 94, 0.3)', whiteSpace: 'nowrap' }}
+                      className="text-success text-xs"
                     >
-                      <UserCheck size={14} /> Unban
+                      Unban
                     </Button>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Moderation Command Reference Card */}
-      <Card>
-        <CardHeader>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Terminal size={19} color="var(--primary)" />
-            <div>
-              <CardTitle>Moderation Command Reference</CardTitle>
-              <CardDescription>Slash commands accessible to members with designated staff roles.</CardDescription>
+                ))
+              )}
             </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '14px' }}>
-            {commandsList.map(c => (
-              <div
-                key={c.cmd}
-                style={{
-                  background: 'var(--bg-surface)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius-md)',
-                  padding: '14px 16px'
-                }}
-              >
-                <code style={{
-                  color: 'var(--primary)',
-                  fontWeight: 600,
-                  fontSize: '13px',
-                  display: 'block',
-                  marginBottom: '4px',
-                  fontFamily: 'monospace'
-                }}>
-                  {c.cmd}
-                </code>
-                <span style={{ fontSize: '12.5px', color: 'var(--text-muted)' }}>
-                  {c.desc}
-                </span>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
 
-      {/* Cross Server Sync Modal */}
       <SyncModal
         isOpen={syncOpen}
         onClose={() => setSyncOpen(false)}

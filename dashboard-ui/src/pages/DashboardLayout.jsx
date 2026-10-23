@@ -38,7 +38,9 @@ import {
   LogOut,
   Server,
   ChevronDown,
-  Megaphone
+  Megaphone,
+  ShieldCheck,
+  BadgeCheck
 } from 'lucide-react';
 
 const PAGE_DEFINITIONS = [
@@ -60,7 +62,9 @@ const PAGE_DEFINITIONS = [
   {
     label: 'Security & Moderation',
     items: [
-      { id: 'security', name: 'Security & Anti-Spam', path: 'security', icon: ShieldAlert },
+      { id: 'security', name: 'Security & Anti-Nuke', path: 'security', icon: ShieldAlert },
+      { id: 'protection', name: 'Protection Suite', path: 'protection', icon: ShieldCheck },
+      { id: 'verification', name: 'Member Verification', path: 'verification', icon: BadgeCheck },
       { id: 'moderation', name: 'Staff Roles & Mod', path: 'moderation', icon: Scale },
       { id: 'server-logs', name: 'Server Logs', path: 'server-logs', icon: ScrollText },
     ]
@@ -68,6 +72,9 @@ const PAGE_DEFINITIONS = [
   {
     label: 'Community',
     items: [
+      { id: 'invites', name: 'Invite Tracker', path: 'invites', icon: Users },
+      { id: 'server-stats', name: 'Server Stats Channels', path: 'server-stats', icon: BarChart3 },
+      { id: 'leveling', name: 'Leveling & XP Engine', path: 'leveling', icon: Trophy },
       { id: 'giveaways', name: 'Giveaways', path: 'giveaways', icon: Gift },
       { id: 'polls', name: 'Polls', path: 'polls', icon: BarChart3 },
       { id: 'community', name: 'Community & Suggestions', path: 'community', icon: Users },

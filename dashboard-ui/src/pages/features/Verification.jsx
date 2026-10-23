@@ -1,45 +1,38 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { BadgeCheck, CheckCircle2, AlertCircle, Send, ExternalLink } from 'lucide-react';
+import { BadgeCheck, CheckCircle2, AlertCircle, Send, ExternalLink, ShieldCheck } from 'lucide-react';
 import api from '../../api';
-import { Select } from '../../components/Select';
+import RoleSelect from '../../components/RoleSelect';
+import ChannelSelect from '../../components/ChannelSelect';
 import PageHeader from '../../components/PageHeader';
 import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
 import Button from '../../components/Button';
 import Skeleton from '../../components/Skeleton';
+import { useToast } from '../../components/ToastContext';
 
-const label = { display: 'block', fontSize: '13px', fontWeight: 600, color: 'var(--text-main)', marginBottom: '6px' };
-const note = { margin: '5px 0 0', fontSize: '12px', color: 'var(--text-muted)' };
-
-function Verification() {
+export default function Verification() {
   const { guildId } = useParams();
-  const [roles, setRoles] = useState([]);
-  const [channels, setChannels] = useState([]);
+  const toast = useToast();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState('');
 
   const [config, setConfig] = useState({ verified_role_id: '', log_channel_id: '', min_account_days: 0 });
-  const [savedRole, setSavedRole] = useState(''); // role the bot is actually using right now
+  const [savedRole, setSavedRole] = useState('');
 
   const [panelChannel, setPanelChannel] = useState('');
   const [panelTitle, setPanelTitle] = useState('');
   const [panelDesc, setPanelDesc] = useState('');
   const [posting, setPosting] = useState(false);
-  const [posted, setPosted] = useState(null); // message url
+  const [posted, setPosted] = useState(null);
 
   const fetchData = useCallback(async () => {
     try {
-      const [v, r, c] = await Promise.all([
-        api.get(`/guilds/${guildId}/verification`),
-        api.get(`/guilds/${guildId}/roles`),
-        api.get(`/guilds/${guildId}/channels`),
-      ]);
-      setConfig(v.data.config);
-      setSavedRole(v.data.config.verified_role_id || '');
-      setRoles(r.data.roles || []);
-      setChannels(c.data.channels || []);
+      const res = await api.get(`/guilds/${guildId}/verification`);
+      const cfg = res.data.config || {};
+      setConfig(cfg);
+      setSavedRole(cfg.verified_role_id || '');
+      setError('');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load verification settings');
     } finally {
@@ -47,7 +40,9 @@ function Verification() {
     }
   }, [guildId]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   const handleSave = async () => {
     setError('');
@@ -55,10 +50,11 @@ function Verification() {
     try {
       await api.post(`/guilds/${guildId}/verification`, config);
       setSavedRole(config.verified_role_id || '');
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
+      toast('Verification rules saved!', 'success');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save verification settings');
+      const msg = err.response?.data?.error || 'Failed to save verification settings';
+      setError(msg);
+      toast(msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -67,15 +63,23 @@ function Verification() {
   const handlePost = async () => {
     setError('');
     setPosted(null);
-    if (!panelChannel) { setError('Choose a channel to post the panel in.'); return; }
+    if (!panelChannel) {
+      setError('Please choose a channel to send the verification embed.');
+      return;
+    }
     setPosting(true);
     try {
       const res = await api.post(`/guilds/${guildId}/verification/panel`, {
-        channel_id: panelChannel, title: panelTitle.trim(), description: panelDesc.trim(),
+        channel_id: panelChannel,
+        title: panelTitle.trim(),
+        description: panelDesc.trim(),
       });
       setPosted(res.data.message_url || true);
+      toast('Verification panel published to Discord!', 'success');
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to post the verification panel');
+      const msg = err.response?.data?.error || 'Failed to post verification panel';
+      setError(msg);
+      toast(msg, 'error');
     } finally {
       setPosting(false);
     }
@@ -83,137 +87,199 @@ function Verification() {
 
   if (loading) {
     return (
-      <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        <Skeleton height="70px" /><Skeleton height="240px" /><Skeleton height="240px" />
+      <div className="max-w-6xl mx-auto space-y-6">
+        <Skeleton height="80px" />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Skeleton height="340px" />
+          <Skeleton height="340px" />
+        </div>
       </div>
     );
   }
 
-  const roleOptions = [{ value: '', label: 'No verified role' }, ...roles.map(r => ({ value: r.id, label: r.name }))];
-  const channelOptions = [{ value: '', label: 'No log channel' }, ...channels.map(c => ({ value: c.id, label: `#${c.name}` }))];
-  const panelChannelOptions = channels.map(c => ({ value: c.id, label: `#${c.name}` }));
-  const unsaved = (config.verified_role_id || '') !== savedRole;
+  const unsavedRoleChange = (config.verified_role_id || '') !== savedRole;
 
   return (
-    <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+    <div className="max-w-6xl mx-auto space-y-6">
       <PageHeader
         icon={BadgeCheck}
-        title="Verification"
-        subtitle="Gate your server behind a one-click “Verify Me” button that grants a role."
+        title="Member Verification"
+        subtitle="Gate server entry behind an interactive Discord button panel that grants member roles and blocks alt accounts."
         actions={
           <Button variant="primary" size="sm" icon={CheckCircle2} loading={saving} onClick={handleSave}>
-            {saved ? 'Saved!' : 'Save Verification'}
+            Save Rules
           </Button>
         }
       />
 
       {error && (
-        <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px',
-          borderRadius: 'var(--radius-md)', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.25)',
-          color: '#f87171', fontSize: '13.5px',
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><AlertCircle size={17} /><span>{error}</span></div>
-          <button onClick={() => setError('')} style={{ background: 'transparent', border: 'none', color: '#f87171', cursor: 'pointer', fontSize: '16px' }}>✕</button>
+        <div className="flex items-center justify-between p-4 rounded-xl bg-red-500/10 border border-red-500/25 text-red-400 text-sm">
+          <div className="flex items-center gap-3">
+            <AlertCircle size={18} className="shrink-0" />
+            <span>{error}</span>
+          </div>
+          <button onClick={() => setError('')} className="text-red-400 hover:text-red-300">✕</button>
         </div>
       )}
 
-      <Card>
-        <CardHeader>
-          <div>
-            <CardTitle>Verification Rules</CardTitle>
-            <CardDescription>Who gets which role, and how new an account is allowed to be.</CardDescription>
-          </div>
-        </CardHeader>
-        <CardContent style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '18px' }}>
-          <div>
-            <label style={label}>Verified Role</label>
-            <Select
-              value={config.verified_role_id || ''}
-              onChange={v => setConfig({ ...config, verified_role_id: v })}
-              options={roleOptions}
-              placeholder="Select the role members receive..."
-              searchable
-            />
-            <p style={note}>Must sit below the bot's top role, and can't have Administrator.</p>
-          </div>
-          <div>
-            <label style={label}>Minimum Account Age (days)</label>
-            <input
-              type="number" min="0" max="365" className="form-input"
-              value={config.min_account_days}
-              onChange={e => setConfig({ ...config, min_account_days: parseInt(e.target.value, 10) || 0 })}
-            />
-            <p style={note}>Newer Discord accounts are refused. 0 = no age requirement.</p>
-          </div>
-          <div>
-            <label style={label}>Verification Log Channel</label>
-            <Select
-              value={config.log_channel_id || ''}
-              onChange={v => setConfig({ ...config, log_channel_id: v })}
-              options={channelOptions}
-              placeholder="Select a log channel..."
-              searchable
-            />
-            <p style={note}>Each successful verification is logged here.</p>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Verification Rules Card */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-400 border border-emerald-500/20">
+                <ShieldCheck size={20} />
+              </div>
+              <div>
+                <CardTitle>Verification Criteria</CardTitle>
+                <CardDescription>Role awarded upon verification and account age checks.</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Verified Member Role
+              </label>
+              <RoleSelect
+                guildId={guildId}
+                value={config.verified_role_id || ''}
+                onChange={v => setConfig(prev => ({ ...prev, verified_role_id: v }))}
+                placeholder="Select role to assign upon verification..."
+              />
+              <p className="text-xs text-[var(--text-muted)]">
+                Role must be below the bot's highest role and cannot have Administrator.
+              </p>
+            </div>
 
-      <Card>
-        <CardHeader>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Send size={20} color="var(--primary)" />
-            <div>
-              <CardTitle>Post the Verification Panel</CardTitle>
-              <CardDescription>Sends the embed with the “✅ Verify Me” button into a channel — same as /verify setup.</CardDescription>
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Minimum Account Age (Days)
+              </label>
+              <input
+                type="number"
+                min="0"
+                max="365"
+                className="w-full bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm text-[var(--text-main)] focus:outline-none focus:border-[var(--primary)] transition-colors"
+                value={config.min_account_days}
+                onChange={e => setConfig(prev => ({ ...prev, min_account_days: parseInt(e.target.value, 10) || 0 }))}
+              />
+              <p className="text-xs text-[var(--text-muted)]">
+                Accounts created more recently than this will be rejected. 0 disables this check.
+              </p>
             </div>
-          </div>
-        </CardHeader>
-        <CardContent style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
-          {(!savedRole || unsaved) && (
-            <div style={{ padding: '12px 14px', borderRadius: 'var(--radius-md)', background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.25)', color: '#fcd34d', fontSize: '13px' }}>
-              {!savedRole ? 'Choose a verified role and click “Save Verification” before posting a panel.' : 'You changed the verified role — save first so the panel uses it.'}
+
+            <div className="space-y-1.5 pt-2">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Verification Audit Channel
+              </label>
+              <ChannelSelect
+                guildId={guildId}
+                value={config.log_channel_id || ''}
+                onChange={v => setConfig(prev => ({ ...prev, log_channel_id: v }))}
+                placeholder="Select a verification log channel..."
+                allowedTypes={['text', 'news']}
+              />
+              <p className="text-xs text-[var(--text-muted)]">
+                Records timestamps and user IDs for every verified member.
+              </p>
             </div>
-          )}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '18px' }}>
-            <div>
-              <label style={label}>Channel</label>
-              <Select value={panelChannel} onChange={setPanelChannel} options={panelChannelOptions} placeholder="Where should the panel go?" searchable />
+          </CardContent>
+        </Card>
+
+        {/* Panel Dispatcher Card */}
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-400 border border-indigo-500/20">
+                <Send size={20} />
+              </div>
+              <div>
+                <CardTitle>Deploy Verification Panel</CardTitle>
+                <CardDescription>Post the interactive Discord message with the verification button.</CardDescription>
+              </div>
             </div>
-            <div>
-              <label style={label}>Panel Title (optional)</label>
-              <input type="text" className="form-input" value={panelTitle} maxLength={100} placeholder="✅  Member Verification" onChange={e => setPanelTitle(e.target.value)} />
-            </div>
-          </div>
-          <div>
-            <label style={label}>Panel Message (optional)</label>
-            <textarea
-              className="form-input" rows={4} maxLength={1500} value={panelDesc}
-              placeholder="Leave blank to use the default welcome text."
-              onChange={e => setPanelDesc(e.target.value)}
-              style={{ resize: 'vertical' }}
-            />
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-            <Button variant="primary" size="sm" icon={Send} loading={posting} onClick={handlePost} disabled={!savedRole || unsaved}>
-              Post Panel
-            </Button>
-            {posted && (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#34d399', fontSize: 13.5, fontWeight: 600 }}>
-                <CheckCircle2 size={15} /> Panel posted!
-                {typeof posted === 'string' && (
-                  <a href={posted} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                    View <ExternalLink size={12} />
-                  </a>
-                )}
-              </span>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {(!savedRole || unsavedRoleChange) && (
+              <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs leading-relaxed">
+                {!savedRole
+                  ? 'Please select and save a verified role first before deploying the panel.'
+                  : 'You have unsaved role changes. Save rules first so the panel uses the new role.'}
+              </div>
             )}
-          </div>
-        </CardContent>
-      </Card>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Target Channel
+              </label>
+              <ChannelSelect
+                guildId={guildId}
+                value={panelChannel}
+                onChange={setPanelChannel}
+                placeholder="Choose channel for verification message..."
+                allowedTypes={['text', 'news']}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Embed Title
+              </label>
+              <input
+                type="text"
+                className="w-full bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm text-[var(--text-main)] focus:outline-none focus:border-[var(--primary)] transition-colors"
+                value={panelTitle}
+                maxLength={100}
+                placeholder="✅  Member Verification"
+                onChange={e => setPanelTitle(e.target.value)}
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                Embed Description
+              </label>
+              <textarea
+                className="w-full bg-[var(--bg-surface)] border border-[var(--border)] rounded-xl px-4 py-2.5 text-sm text-[var(--text-main)] focus:outline-none focus:border-[var(--primary)] transition-colors resize-y"
+                rows={3}
+                maxLength={1500}
+                value={panelDesc}
+                placeholder="Welcome! Click the button below to verify and access channels."
+                onChange={e => setPanelDesc(e.target.value)}
+              />
+            </div>
+
+            <div className="flex items-center gap-4 pt-2 flex-wrap">
+              <Button
+                variant="primary"
+                size="sm"
+                icon={Send}
+                loading={posting}
+                onClick={handlePost}
+                disabled={!savedRole || unsavedRoleChange}
+              >
+                Send Panel Message
+              </Button>
+              {posted && (
+                <span className="inline-flex items-center gap-1.5 text-emerald-400 text-xs font-semibold">
+                  <CheckCircle2 size={16} /> Dispatched!
+                  {typeof posted === 'string' && (
+                    <a
+                      href={posted}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline ml-1"
+                    >
+                      Jump to Message <ExternalLink size={12} />
+                    </a>
+                  )}
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
-
-export default Verification;

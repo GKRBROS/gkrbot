@@ -43,31 +43,44 @@ class CustomCommandDatabase:
                     guild_id TEXT NOT NULL,
                     name TEXT NOT NULL,
                     response TEXT NOT NULL,
+                    embed_json TEXT DEFAULT NULL,
+                    reply_type TEXT DEFAULT 'text',
                     created_by TEXT NOT NULL,
                     uses INTEGER DEFAULT 0,
                     UNIQUE(guild_id, name)
                 )
             """)
+            # Migration check for existing databases
+            try:
+                conn.execute("ALTER TABLE custom_commands ADD COLUMN embed_json TEXT DEFAULT NULL")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE custom_commands ADD COLUMN reply_type TEXT DEFAULT 'text'")
+            except Exception:
+                pass
             conn.commit()
 
-    def create(self, guild_id: int, name: str, response: str, created_by: int) -> bool:
+    def create(self, guild_id: int, name: str, response: str, created_by: int, embed_json: Optional[str] = None, reply_type: str = 'text') -> bool:
         try:
             with self._conn() as conn:
                 conn.execute(
-                    "INSERT INTO custom_commands (guild_id, name, response, created_by) VALUES (?, ?, ?, ?)",
-                    (str(guild_id), name.lower(), response, str(created_by))
+                    "INSERT INTO custom_commands (guild_id, name, response, embed_json, reply_type, created_by) VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(guild_id), name.lower(), response, embed_json, reply_type, str(created_by))
                 )
                 conn.commit()
             return True
         except sqlite3.IntegrityError:
             return False
 
-    def edit(self, guild_id: int, name: str, response: str) -> bool:
+    def edit(self, guild_id: int, name: str, response: str, embed_json: Optional[str] = None, reply_type: str = 'text') -> bool:
         with self._conn() as conn:
             cur = conn.execute(
-                "UPDATE custom_commands SET response=? WHERE guild_id=? AND name=?",
-                (response, str(guild_id), name.lower())
+                "UPDATE custom_commands SET response=?, embed_json=?, reply_type=? WHERE guild_id=? AND name=?",
+                (response, embed_json, reply_type, str(guild_id), name.lower())
             )
+            conn.commit()
+            return cur.rowcount > 0
             conn.commit()
             return cur.rowcount > 0
 
@@ -141,13 +154,33 @@ class CustomCommandsCog(commands.Cog):
         self.db.increment_uses(message.guild.id, name)
 
         # Interpolate variables in the response
-        response = cmd["response"]
+        response = cmd.get("response") or ""
         response = response.replace("{user}", message.author.mention)
         response = response.replace("{username}", message.author.display_name)
         response = response.replace("{server}", message.guild.name)
         response = response.replace("{membercount}", str(message.guild.member_count))
 
-        await message.channel.send(response)
+        embed = None
+        if cmd.get("embed_json"):
+            try:
+                import json
+                e_data = json.loads(cmd["embed_json"])
+                title = (e_data.get("title") or "").replace("{user}", message.author.display_name).replace("{server}", message.guild.name)
+                desc = (e_data.get("description") or "").replace("{user}", message.author.mention).replace("{server}", message.guild.name)
+                color = int(str(e_data.get("color", "#5865F2")).lstrip("#"), 16) if e_data.get("color") else 0x5865F2
+                embed = discord.Embed(title=title or None, description=desc or None, color=color)
+                if e_data.get("thumbnail"):
+                    embed.set_thumbnail(url=e_data["thumbnail"])
+                if e_data.get("image"):
+                    embed.set_image(url=e_data["image"])
+                if e_data.get("footer"):
+                    embed.set_footer(text=e_data["footer"])
+            except Exception as e:
+                print(f"[CustomCommands] Embed render error: {e}")
+
+        send_content = response.strip() if response and response.strip() else None
+        if send_content or embed:
+            await message.channel.send(content=send_content, embed=embed)
 
     # ── Slash Commands ────────────────────────────────────────────────────────
 

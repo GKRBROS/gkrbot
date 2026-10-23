@@ -62,6 +62,30 @@ class ModerationDatabase:
                     PRIMARY KEY (guild_id, role_id)
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS infractions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    guild_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    moderator_id TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    status TEXT DEFAULT 'active'
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS automod_config (
+                    guild_id TEXT PRIMARY KEY,
+                    enabled INTEGER DEFAULT 1,
+                    log_channel_id TEXT DEFAULT NULL,
+                    anti_invites INTEGER DEFAULT 1,
+                    anti_links INTEGER DEFAULT 0,
+                    anti_badwords INTEGER DEFAULT 1,
+                    keyword_blacklist TEXT DEFAULT '[]',
+                    action TEXT DEFAULT 'delete'
+                )
+            """)
             conn.commit()
 
     def add_staff_role(self, guild_id: int, role_id: int) -> bool:
@@ -91,6 +115,77 @@ class ModerationDatabase:
                 "SELECT role_id FROM staff_roles WHERE guild_id=?", (str(guild_id),)
             ).fetchall()
         return [int(r["role_id"]) for r in rows]
+
+    def add_infraction(self, guild_id: int, user_id: int, action: str, reason: str, moderator_id: int) -> int:
+        with self._conn() as conn:
+            cur = conn.execute("""
+                INSERT INTO infractions (guild_id, user_id, action, reason, moderator_id, created_at, status)
+                VALUES (?, ?, ?, ?, ?, ?, 'active')
+            """, (str(guild_id), str(user_id), action, reason, str(moderator_id), time.time()))
+            conn.commit()
+            return cur.lastrowid
+
+    def get_infractions(self, guild_id: int) -> List[Dict[str, Any]]:
+        with self._conn() as conn:
+            rows = conn.execute("""
+                SELECT id, user_id, action, reason, moderator_id, created_at, status
+                FROM infractions WHERE guild_id=? ORDER BY created_at DESC LIMIT 100
+            """, (str(guild_id),)).fetchall()
+        return [dict(r) for r in rows]
+
+    def revoke_infraction(self, guild_id: int, infraction_id: int) -> bool:
+        with self._conn() as conn:
+            cur = conn.execute("""
+                UPDATE infractions SET status='revoked' WHERE guild_id=? AND id=?
+            """, (str(guild_id), infraction_id))
+            conn.commit()
+        return cur.rowcount > 0
+
+    def get_automod_config(self, guild_id: int) -> Dict[str, Any]:
+        with self._conn() as conn:
+            row = conn.execute("SELECT * FROM automod_config WHERE guild_id=?", (str(guild_id),)).fetchone()
+            if not row:
+                return {
+                    "enabled": 1,
+                    "log_channel_id": None,
+                    "anti_invites": 1,
+                    "anti_links": 0,
+                    "anti_badwords": 1,
+                    "keyword_blacklist": [],
+                    "action": "delete"
+                }
+            d = dict(row)
+            try:
+                d["keyword_blacklist"] = json.loads(d.get("keyword_blacklist") or "[]")
+            except Exception:
+                d["keyword_blacklist"] = []
+            return d
+
+    def set_automod_config(self, guild_id: int, config: Dict[str, Any]) -> None:
+        with self._conn() as conn:
+            conn.execute("""
+                INSERT INTO automod_config (
+                    guild_id, enabled, log_channel_id, anti_invites, anti_links, anti_badwords, keyword_blacklist, action
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    enabled=excluded.enabled,
+                    log_channel_id=excluded.log_channel_id,
+                    anti_invites=excluded.anti_invites,
+                    anti_links=excluded.anti_links,
+                    anti_badwords=excluded.anti_badwords,
+                    keyword_blacklist=excluded.keyword_blacklist,
+                    action=excluded.action
+            """, (
+                str(guild_id),
+                int(config.get("enabled", 1)),
+                str(config.get("log_channel_id") or "") or None,
+                int(config.get("anti_invites", 1)),
+                int(config.get("anti_links", 0)),
+                int(config.get("anti_badwords", 1)),
+                json.dumps(config.get("keyword_blacklist", [])),
+                str(config.get("action", "delete"))
+            ))
+            conn.commit()
 
 
 # ---------------------------------------------------------------------------

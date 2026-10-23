@@ -432,6 +432,7 @@ async def setup_hook():
         "anti_hacked",
         "honeypot",
         "voice_analytics",   # V3: Voice XP, Coins, Levels, Achievements
+        "leveling",          # V3: Leveling & Text XP System, Multipliers, Role Rewards
         "moderation",        # V3: Mute, Unmute, Staff Roles, /config, /status
         "server_activity",   # V3: Text & Game Activity
         "security",          # V3: Advanced Security & Anti-Nuke

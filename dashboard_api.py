@@ -194,6 +194,34 @@ def _get_session(request: web.Request):
     return SESSIONS.get(token)
 
 
+async def _user_has_guild_access(request: web.Request, guild_id: int) -> bool:
+    """Validate authenticated session user has ADMINISTRATOR or MANAGE_GUILD perm for guild."""
+    sess = _get_session(request)
+    if not sess or not sess.get("user_id"):
+        return False
+    try:
+        user_id = int(sess["user_id"])
+        bot: commands.Bot = request.app.get("bot")
+        if not bot:
+            return False
+        guild = bot.get_guild(int(guild_id))
+        if not guild:
+            return False
+        if guild.owner_id == user_id:
+            return True
+        member = guild.get_member(user_id)
+        if member is None:
+            try:
+                member = await guild.fetch_member(user_id)
+            except Exception:
+                return False
+        if member.guild_permissions.administrator or member.guild_permissions.manage_guild:
+            return True
+        return False
+    except Exception:
+        return False
+
+
 async def _log_dashboard_action(
     request: web.Request,
     guild_id=None,
@@ -253,20 +281,27 @@ async def handle_me(request: web.Request):
     bot: commands.Bot = request.app["bot"]
     bot_guild_ids = {g.id for g in bot.guilds}
     
-    # Filter to guilds where bot is present AND user has Administrator (0x8) permission
-    mutual_admin_guilds = []
+    # Include all guilds where user has Administrator (0x8) OR Manage Server (0x20) OR is Owner
+    all_manageable_guilds = []
     for g in user_guilds:
-        if int(g["id"]) in bot_guild_ids:
-            # Check for Admin permission (bit 3)
-            perms = int(g.get("permissions", "0"))
-            is_admin = (perms & 0x8) == 0x8
-            is_owner = g.get("owner", False)
-            if is_admin or is_owner:
-                mutual_admin_guilds.append({
-                    "id": g["id"],
-                    "name": g["name"],
-                    "icon": f"https://cdn.discordapp.com/icons/{g['id']}/{g['icon']}.png" if g.get("icon") else None
-                })
+        perms = int(g.get("permissions", "0"))
+        is_admin = (perms & 0x8) == 0x8
+        is_manage_guild = (perms & 0x20) == 0x20
+        is_owner = bool(g.get("owner", False))
+        if is_admin or is_manage_guild or is_owner:
+            g_id = int(g["id"])
+            bot_present = g_id in bot_guild_ids
+            all_manageable_guilds.append({
+                "id": g["id"],
+                "name": g["name"],
+                "icon": f"https://cdn.discordapp.com/icons/{g['id']}/{g['icon']}.png" if g.get("icon") else None,
+                "bot_present": bot_present,
+                "owner": is_owner,
+                "permissions": perms
+            })
+
+    # Sort: servers with bot first, then alphabetical
+    all_manageable_guilds.sort(key=lambda x: (not x["bot_present"], x["name"].lower()))
 
     return web.json_response({
         "user": {
@@ -276,7 +311,7 @@ async def handle_me(request: web.Request):
         },
         "bot_name": BOT_NAME,
         "bot_client_id": _resolve_client_id(bot),
-        "guilds": mutual_admin_guilds
+        "guilds": all_manageable_guilds
     })
 
 async def handle_bot_info(request: web.Request):
@@ -836,8 +871,31 @@ async def handle_bot_channels(request: web.Request):
         return web.json_response({"error": "Guild not found"}, status=404)
     
     channels = []
-    for ch in guild.text_channels:
-        channels.append({"id": str(ch.id), "name": ch.name})
+    # Send all channels sorted by category and position with explicit type and capability flags
+    for ch in sorted(guild.channels, key=lambda c: (getattr(c.category, "position", -1) if getattr(c, "category", None) else -1, getattr(c, "position", 0))):
+        ch_type = "text"
+        if isinstance(ch, discord.TextChannel):
+            ch_type = "news" if ch.is_news() else "text"
+        elif isinstance(ch, discord.VoiceChannel):
+            ch_type = "voice"
+        elif isinstance(ch, discord.StageChannel):
+            ch_type = "stage"
+        elif isinstance(ch, discord.CategoryChannel):
+            ch_type = "category"
+        elif hasattr(discord, "ForumChannel") and isinstance(ch, discord.ForumChannel):
+            ch_type = "forum"
+        else:
+            ch_type = "other"
+
+        channels.append({
+            "id": str(ch.id),
+            "name": ch.name,
+            "type": ch_type,
+            "position": getattr(ch, "position", 0),
+            "category_id": str(ch.category_id) if getattr(ch, "category_id", None) else None,
+            "category_name": ch.category.name if getattr(ch, "category", None) else None,
+            "can_send_messages": ch_type in ("text", "news")
+        })
     return web.json_response({"channels": channels})
 
 # --- Tickets Endpoints ---
@@ -1723,15 +1781,25 @@ async def handle_bot_roles(request: web.Request):
     bot: commands.Bot = request.app["bot"]
     guild = bot.get_guild(guild_id)
     if not guild: return web.json_response({"error": "Guild not found"}, status=404)
+    bot_member = guild.me
+    bot_top_pos = bot_member.top_role.position if (bot_member and bot_member.top_role) else 0
     roles = []
     for r in sorted(guild.roles, key=lambda x: x.position, reverse=True):
         if r.is_default(): continue
+        can_manage = (r.position < bot_top_pos) and (not r.managed)
         roles.append({
             "id": str(r.id),
             "name": r.name,
-            "color": f"#{r.color.value:06x}" if r.color.value else "#99aab5"
+            "color": f"#{r.color.value:06x}" if r.color.value else "#99aab5",
+            "position": r.position,
+            "managed": r.managed,
+            "can_manage": can_manage,
+            "is_higher": r.position >= bot_top_pos
         })
-    return web.json_response({"roles": roles})
+    return web.json_response({
+        "roles": roles,
+        "bot_top_role_position": bot_top_pos
+    })
 
 # --- Security & Anti-Nuke Endpoints ---
 
@@ -2268,7 +2336,14 @@ async def handle_custom_commands_get(request: web.Request):
     db.initialize()
     cmds = db.list_all(guild_id)
     return web.json_response({"commands": [
-        {"id": c["id"], "name": c["name"], "response": c["response"], "uses": c.get("uses", 0)}
+        {
+            "id": c["id"],
+            "name": c["name"],
+            "response": c["response"],
+            "embed_json": c.get("embed_json"),
+            "reply_type": c.get("reply_type", "text"),
+            "uses": c.get("uses", 0)
+        }
         for c in cmds
     ]})
 
@@ -2276,19 +2351,25 @@ async def handle_custom_commands_post(request: web.Request):
     sess = _get_session(request)
     if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
     guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden: MANAGE_GUILD required"}, status=403)
     data = await request.json()
     name = data.get("name", "").strip().lower().lstrip("!")
     response = data.get("response", "").strip()
-    if not name or not response:
-        return web.json_response({"error": "Command name and response are required"}, status=400)
+    embed_json = data.get("embed_json")
+    reply_type = data.get("reply_type", "text")
+    if not name or (not response and not embed_json):
+        return web.json_response({"error": "Command name and response or embed are required"}, status=400)
     if len(name) > 30:
         return web.json_response({"error": "Command name must be 30 characters or fewer"}, status=400)
     if len(response) > 2000:
         return web.json_response({"error": "Response must be 2000 characters or fewer"}, status=400)
+    if isinstance(embed_json, (dict, list)):
+        embed_json = json.dumps(embed_json)
     import custom_commands
     db = custom_commands.CustomCommandDatabase()
     db.initialize()
-    ok = db.create(guild_id, name, response, created_by=0)
+    ok = db.create(guild_id, name, response, created_by=0, embed_json=embed_json, reply_type=reply_type)
     if not ok:
         return web.json_response({"error": f"A command named !{name} already exists"}, status=400)
 
@@ -2307,16 +2388,22 @@ async def handle_custom_commands_put(request: web.Request):
     sess = _get_session(request)
     if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
     guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden: MANAGE_GUILD required"}, status=403)
     name = request.match_info["name"].lower()
     data = await request.json()
     response = data.get("response", "").strip()
-    if not response:
-        return web.json_response({"error": "Response is required"}, status=400)
+    embed_json = data.get("embed_json")
+    reply_type = data.get("reply_type", "text")
+    if not response and not embed_json:
+        return web.json_response({"error": "Response or embed is required"}, status=400)
     if len(response) > 2000:
         return web.json_response({"error": "Response must be 2000 characters or fewer"}, status=400)
+    if isinstance(embed_json, (dict, list)):
+        embed_json = json.dumps(embed_json)
     import custom_commands
     db = custom_commands.CustomCommandDatabase()
-    ok = db.edit(guild_id, name, response)
+    ok = db.edit(guild_id, name, response, embed_json=embed_json, reply_type=reply_type)
     if not ok:
         return web.json_response({"error": "Command not found"}, status=404)
 
@@ -2335,6 +2422,8 @@ async def handle_custom_commands_delete(request: web.Request):
     sess = _get_session(request)
     if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
     guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden: MANAGE_GUILD required"}, status=403)
     name = request.match_info["name"].lower()
     import custom_commands
     db = custom_commands.CustomCommandDatabase()
@@ -2351,6 +2440,307 @@ async def handle_custom_commands_delete(request: web.Request):
         color=0xED4245,
     )
 
+    return web.json_response({"success": True})
+
+# --- Leveling & XP System Endpoints ---
+
+async def handle_leveling_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import leveling
+    db = leveling.LevelingDatabase()
+    db.initialize()
+    cfg = db.get_config(guild_id)
+    rewards = db.get_rewards(guild_id)
+    return web.json_response({
+        "config": cfg,
+        "rewards": rewards
+    })
+
+async def handle_leveling_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden: MANAGE_GUILD required"}, status=403)
+    data = await request.json()
+    import leveling
+    db = leveling.LevelingDatabase()
+    db.initialize()
+    db.set_config(guild_id, data)
+    bot = request.app.get("bot")
+    if bot:
+        cog = bot.get_cog("Leveling")
+        if cog:
+            cog.invalidate_cache(guild_id)
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Updated Leveling Config",
+        "Configured XP multipliers, announcement rules, and channel blacklists",
+        category="leveling",
+        color=0x5865F2
+    )
+    return web.json_response({"success": True})
+
+async def handle_leveling_rewards_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden"}, status=403)
+    data = await request.json()
+    level = int(data.get("level", 0))
+    role_id = int(data.get("role_id", 0))
+    if level <= 0 or not role_id:
+        return web.json_response({"error": "Valid level (>0) and role_id are required"}, status=400)
+    import leveling
+    db = leveling.LevelingDatabase()
+    db.initialize()
+    db.set_reward(guild_id, level, role_id)
+    return web.json_response({"success": True})
+
+async def handle_leveling_rewards_delete(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden"}, status=403)
+    level = int(request.match_info["level"])
+    import leveling
+    db = leveling.LevelingDatabase()
+    db.initialize()
+    ok = db.delete_reward(guild_id, level)
+    return web.json_response({"success": ok})
+
+# --- Moderation Automod & Infractions Endpoints ---
+
+async def handle_moderation_automod_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import moderation
+    db = moderation.ModerationDatabase()
+    db.initialize()
+    cfg = db.get_automod_config(guild_id)
+    return web.json_response({"automod": cfg})
+
+async def handle_moderation_automod_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden: MANAGE_GUILD required"}, status=403)
+    data = await request.json()
+    import moderation
+    db = moderation.ModerationDatabase()
+    db.initialize()
+    db.set_automod_config(guild_id, data)
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Updated AutoMod Rules",
+        "Saved automod keyword blacklist & protection filters",
+        category="moderation",
+        color=0xFEE75C
+    )
+    return web.json_response({"success": True})
+
+async def handle_moderation_infractions_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import moderation
+    db = moderation.ModerationDatabase()
+    db.initialize()
+    infractions = db.get_infractions(guild_id)
+    return web.json_response({"infractions": infractions})
+
+async def handle_moderation_infraction_revoke(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden: MANAGE_GUILD required"}, status=403)
+    infraction_id = int(request.match_info["infraction_id"])
+    import moderation
+    db = moderation.ModerationDatabase()
+    db.initialize()
+    ok = db.revoke_infraction(guild_id, infraction_id)
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Revoked Infraction",
+        f"Revoked warning/infraction #{infraction_id}",
+        category="moderation",
+        color=0x57F287
+    )
+    return web.json_response({"success": ok})
+
+# --- Role Restore Endpoints ---
+
+async def handle_role_restore_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import role_restore
+    db = role_restore.RoleRestoreDB()
+    enabled = db.is_enabled(guild_id)
+    with db._conn() as conn:
+        count = conn.execute("SELECT COUNT(*) as c FROM saved_roles WHERE guild_id = ?", (str(guild_id),)).fetchone()["c"]
+    return web.json_response({"enabled": bool(enabled), "saved_count": count})
+
+async def handle_role_restore_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden: MANAGE_GUILD required"}, status=403)
+    data = await request.json()
+    enabled = bool(data.get("enabled", True))
+    import role_restore
+    db = role_restore.RoleRestoreDB()
+    db.set_enabled(guild_id, enabled)
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Updated Role Restore",
+        f"Set role restore to {'Enabled' if enabled else 'Disabled'}",
+        category="roles",
+        color=0x5865F2
+    )
+    return web.json_response({"success": True, "enabled": enabled})
+
+# --- Invite Tracker Endpoints ---
+
+async def handle_invites_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import invite_tracker
+    invite_tracker._init_db()
+    ch_id = invite_tracker._get_channel(guild_id)
+    lb_rows = invite_tracker._get_leaderboard(guild_id, limit=20)
+    bot: commands.Bot = request.app.get("bot")
+    guild = bot.get_guild(guild_id) if bot else None
+    leaderboard = []
+    for r in lb_rows:
+        inv_id = r["inviter_id"]
+        member = guild.get_member(inv_id) if guild else None
+        username = member.display_name if member else f"User {inv_id}"
+        leaderboard.append({
+            "inviter_id": str(inv_id),
+            "username": username,
+            "joins": r["joins"],
+            "leaves": r["leaves"],
+            "fakes": r["fakes"],
+            "net": r["joins"] - r["leaves"] - r["fakes"]
+        })
+    return web.json_response({
+        "channel_id": str(ch_id) if ch_id else "",
+        "leaderboard": leaderboard
+    })
+
+async def handle_invites_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden: MANAGE_GUILD required"}, status=403)
+    data = await request.json()
+    ch_id_raw = data.get("channel_id")
+    import invite_tracker
+    invite_tracker._init_db()
+    if ch_id_raw:
+        invite_tracker._set_channel(guild_id, int(ch_id_raw))
+    else:
+        with invite_tracker._db() as conn:
+            conn.execute("DELETE FROM invite_config WHERE guild_id = ?", (guild_id,))
+            conn.commit()
+    await _log_dashboard_action(
+        request,
+        guild_id,
+        "Updated Invite Tracker",
+        f"Log channel set to {ch_id_raw or 'Disabled'}",
+        category="invites",
+        color=0x57F287
+    )
+    return web.json_response({"success": True})
+
+# --- Server Stats Endpoints ---
+
+async def handle_server_stats_get(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    import server_stats
+    db = server_stats.StatsDB()
+    cfg = db.get_config(guild_id)
+    return web.json_response({
+        "enabled": cfg is not None,
+        "config": cfg or {}
+    })
+
+async def handle_server_stats_setup_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden: MANAGE_GUILD required"}, status=403)
+    bot: commands.Bot = request.app.get("bot")
+    guild = bot.get_guild(guild_id) if bot else None
+    if not guild:
+        return web.json_response({"error": "Guild not found"}, status=404)
+    import server_stats
+    db = server_stats.StatsDB()
+    existing = db.get_config(guild_id)
+    if existing:
+        return web.json_response({"error": "Server stats already setup"}, status=400)
+    total = guild.member_count
+    bots = sum(1 for m in guild.members if m.bot)
+    humans = total - bots
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(connect=False, view_channel=True)
+    }
+    try:
+        category = await guild.create_category(name="📊 Server Stats", overwrites=overwrites)
+        total_ch = await guild.create_voice_channel(name=f"👥 Total Members: {total}", category=category)
+        humans_ch = await guild.create_voice_channel(name=f"🧑 Humans: {humans}", category=category)
+        bots_ch = await guild.create_voice_channel(name=f"🤖 Bots: {bots}", category=category)
+        db.set_config(guild.id, category.id, total_ch.id, humans_ch.id, bots_ch.id)
+        await _log_dashboard_action(request, guild_id, "Setup Server Stats", "Created voice channels for server stats", category="stats", color=0x57F287)
+        return web.json_response({"success": True})
+    except discord.Forbidden:
+        return web.json_response({"error": "Bot lacks Manage Channels permission"}, status=403)
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=500)
+
+async def handle_server_stats_remove_post(request: web.Request):
+    sess = _get_session(request)
+    if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
+    guild_id = int(request.match_info["guild_id"])
+    if not await _user_has_guild_access(request, guild_id):
+        return web.json_response({"error": "Forbidden: MANAGE_GUILD required"}, status=403)
+    bot: commands.Bot = request.app.get("bot")
+    guild = bot.get_guild(guild_id) if bot else None
+    import server_stats
+    db = server_stats.StatsDB()
+    cfg = db.get_config(guild_id)
+    if not cfg:
+        return web.json_response({"error": "Server stats not setup"}, status=400)
+    if guild:
+        for ch_key in ("total_channel_id", "humans_channel_id", "bots_channel_id", "category_id"):
+            cid = cfg.get(ch_key)
+            if cid:
+                ch = guild.get_channel(int(cid))
+                if ch:
+                    try:
+                        await ch.delete()
+                    except Exception:
+                        pass
+    db.remove_config(guild_id)
+    await _log_dashboard_action(request, guild_id, "Removed Server Stats", "Deleted server stats channels", category="stats", color=0xED4245)
     return web.json_response({"success": True})
 
 # --- Economy Endpoints ---
@@ -4865,6 +5255,13 @@ class DashboardAPI(commands.Cog):
             print(f"[Dashboard] FAILED to register Blacklist routes: {e!r}")
             print("[Dashboard] Check that blacklist.py and blacklist_api.py are uploaded next to dashboard_api.py and the bot was restarted.")
 
+        try:
+            from features_api import register_feature_routes
+            register_feature_routes(app, _get_session)
+            print("[Dashboard] Feature routes registered (protection, anti-hacked, verification)")
+        except Exception as e:
+            print(f"[Dashboard] FAILED to register feature routes: {e!r}")
+
         # Add routes
         app.add_routes([
             web.get("/api/auth/discord", handle_login),
@@ -4932,6 +5329,15 @@ class DashboardAPI(commands.Cog):
             web.post("/api/guilds/{guild_id}/moderation/unban", handle_moderation_unban_post),
             web.post("/api/guilds/{guild_id}/moderation/ban", handle_moderation_ban_post),
             web.post("/api/guilds/{guild_id}/moderation/unbanall", handle_moderation_unbanall_post),
+            web.get("/api/guilds/{guild_id}/moderation/automod", handle_moderation_automod_get),
+            web.post("/api/guilds/{guild_id}/moderation/automod", handle_moderation_automod_post),
+            web.get("/api/guilds/{guild_id}/moderation/infractions", handle_moderation_infractions_get),
+            web.post("/api/guilds/{guild_id}/moderation/infractions/{infraction_id}/revoke", handle_moderation_infraction_revoke),
+            # Leveling & XP System
+            web.get("/api/guilds/{guild_id}/leveling", handle_leveling_get),
+            web.post("/api/guilds/{guild_id}/leveling", handle_leveling_post),
+            web.post("/api/guilds/{guild_id}/leveling/rewards", handle_leveling_rewards_post),
+            web.delete("/api/guilds/{guild_id}/leveling/rewards/{level}", handle_leveling_rewards_delete),
             # Multi-Server Sync
             web.post("/api/guilds/{guild_id}/sync", handle_guild_sync),
             # Music
@@ -5029,6 +5435,19 @@ class DashboardAPI(commands.Cog):
             web.post("/api/guilds/{guild_id}/announce", handle_announce_post),
             web.get("/api/guilds/{guild_id}/announce/webhook", handle_announce_webhook_get),
             web.post("/api/guilds/{guild_id}/announce/webhook", handle_announce_webhook_post),
+
+            # Role Restore
+            web.get("/api/guilds/{guild_id}/role-restore", handle_role_restore_get),
+            web.post("/api/guilds/{guild_id}/role-restore", handle_role_restore_post),
+
+            # Invite Tracker
+            web.get("/api/guilds/{guild_id}/invites", handle_invites_get),
+            web.post("/api/guilds/{guild_id}/invites", handle_invites_post),
+
+            # Server Stats
+            web.get("/api/guilds/{guild_id}/server-stats", handle_server_stats_get),
+            web.post("/api/guilds/{guild_id}/server-stats/setup", handle_server_stats_setup_post),
+            web.post("/api/guilds/{guild_id}/server-stats/remove", handle_server_stats_remove_post),
 
         ])
         

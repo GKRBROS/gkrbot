@@ -38,13 +38,18 @@ export default function RoleSync() {
   const [backfill, setBackfill] = useState(true);
   const [saving, setSaving] = useState(false);
   const [backfillingId, setBackfillingId] = useState(null);
+  const [roleRestore, setRoleRestore] = useState({ enabled: true, saved_count: 0 });
 
   const fetchRoleSync = useCallback(async () => {
     try {
-      const res = await api.get(`/guilds/${guildId}/role-sync`);
+      const [res, rrRes] = await Promise.all([
+        api.get(`/guilds/${guildId}/role-sync`),
+        api.get(`/guilds/${guildId}/role-restore`),
+      ]);
       setRules(res.data.rules || []);
       setAvailableSources(res.data.available_sources || []);
       setTargetRoles(res.data.target_roles || []);
+      setRoleRestore(rrRes.data || { enabled: true, saved_count: 0 });
       setError('');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load role sync rules');
@@ -52,6 +57,17 @@ export default function RoleSync() {
       setLoading(false);
     }
   }, [guildId]);
+
+  const handleToggleRoleRestore = async (checked) => {
+    try {
+      setRoleRestore(prev => ({ ...prev, enabled: checked }));
+      await api.post(`/guilds/${guildId}/role-restore`, { enabled: checked });
+      setSuccess(`Role restore ${checked ? 'enabled' : 'disabled'} successfully.`);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to update role restore setting');
+      fetchRoleSync();
+    }
+  };
 
   useEffect(() => {
     fetchRoleSync();
@@ -206,6 +222,44 @@ export default function RoleSync() {
           </button>
         </div>
       )}
+
+      {/* Automatic Role Restore Card */}
+      <Card>
+        <CardHeader>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <Shield size={20} color="var(--primary)" />
+              <div>
+                <CardTitle>Member Role Restore on Rejoin</CardTitle>
+                <CardDescription>
+                  Automatically restore all previous roles when a member leaves and rejoins the server.
+                </CardDescription>
+              </div>
+            </div>
+            <Badge variant={roleRestore.enabled ? 'success' : 'default'}>
+              {roleRestore.enabled ? 'Active' : 'Disabled'}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px', borderRadius: 'var(--radius-md)', background: 'var(--bg-surface)', border: '1px solid var(--border)' }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '14px', color: 'var(--text-main)', marginBottom: '4px' }}>
+                Auto-Restore Member Roles
+              </div>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
+                {roleRestore.saved_count > 0
+                  ? `Currently tracking saved role profiles for ${roleRestore.saved_count} former member(s).`
+                  : 'Saves members’ roles when they leave so they do not lose permissions upon returning.'}
+              </div>
+            </div>
+            <Toggle
+              checked={!!roleRestore.enabled}
+              onChange={handleToggleRoleRestore}
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Add Role Sync Rule Form */}
       <Card>

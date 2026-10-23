@@ -43,6 +43,11 @@ import Leaderboard from './pages/features/Leaderboard';
 import Community from './pages/features/Community';
 import Pinger from './pages/features/Pinger';
 import Announce from './pages/features/Announce';
+import Leveling from './pages/features/Leveling';
+import Protection from './pages/features/Protection';
+import Verification from './pages/features/Verification';
+import InviteTracker from './pages/features/InviteTracker';
+import ServerStats from './pages/features/ServerStats';
 
 import { useToast } from './components/ToastContext';
 
@@ -183,6 +188,7 @@ function App() {
         <Route path="server-logs" element={<ServerLogs />} />
         <Route path="birthdays" element={<Birthdays />} />
         <Route path="leaderboard" element={<Leaderboard />} />
+        <Route path="leveling" element={<Leveling />} />
         <Route path="community" element={<Community />} />
         <Route path="ai" element={<AISystem />} />
         <Route path="voice-announce" element={<VoiceAnnounce />} />
@@ -190,6 +196,10 @@ function App() {
         <Route path="sync" element={<ServerSync />} />
         <Route path="pinger" element={<Pinger />} />
         <Route path="announce" element={<Announce />} />
+        <Route path="protection" element={<Protection />} />
+        <Route path="verification" element={<Verification />} />
+        <Route path="invites" element={<InviteTracker />} />
+        <Route path="server-stats" element={<ServerStats />} />
       </Route>
 
       {/* Fallback route for unknown paths */}

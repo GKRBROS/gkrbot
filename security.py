@@ -90,7 +90,7 @@ class SecurityDatabase:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS antinuke_config (
                     guild_id TEXT PRIMARY KEY,
-                    enabled INTEGER DEFAULT 1,
+                    enabled INTEGER DEFAULT 0,
                     strict_mode INTEGER DEFAULT 1,
                     ban_limit INTEGER DEFAULT 2,
                     kick_limit INTEGER DEFAULT 2,
@@ -217,7 +217,7 @@ class SecurityDatabase:
                 return d
             return {
                 "guild_id": str(guild_id),
-                "enabled": 1,
+                "enabled": 0,
                 "strict_mode": 1,
                 "ban_limit": 2,
                 "kick_limit": 2,
@@ -1017,8 +1017,25 @@ class SecurityCog(commands.Cog):
 
         async def _strip_bot_power(target: discord.Member) -> None:
             """Strip all roles and neuter managed roles for an unwhitelisted bot."""
-            # Strip all removable non-managed roles
-            roles_to_strip = [r for r in target.roles if not r.is_default() and not r.managed and r < target.guild.me.top_role]
+            # Get configured welcome bot auto-role to preserve it
+            protected_role_ids = set()
+            try:
+                welcome_cog = self.bot.get_cog("WelcomeCog")
+                if welcome_cog:
+                    wcfg = welcome_cog.db.get_config(target.guild.id)
+                    if wcfg and wcfg.bot_role_id:
+                        protected_role_ids.add(wcfg.bot_role_id)
+                    if wcfg and wcfg.welcome_role_id:
+                        protected_role_ids.add(wcfg.welcome_role_id)
+            except Exception:
+                pass
+
+            # Strip all removable non-managed roles EXCEPT protected welcome roles
+            roles_to_strip = [
+                r for r in target.roles
+                if not r.is_default() and not r.managed and r < target.guild.me.top_role
+                and r.id not in protected_role_ids
+            ]
             if roles_to_strip:
                 try:
                     await target.remove_roles(*roles_to_strip, reason="[Anti-Nuke] Unwhitelisted bot: All roles stripped, power denied")
@@ -1095,6 +1112,17 @@ class SecurityCog(commands.Cog):
         if before.roles != after.roles and after.id != after.guild.owner_id and after.id != self.bot.user.id:
             added_roles = [r for r in after.roles if r not in before.roles]
             if added_roles:
+                # Skip if the bot itself assigned the role (e.g. welcome auto-role)
+                try:
+                    entry = await self._get_audit_entry(
+                        after.guild, discord.AuditLogAction.member_role_update,
+                        target_id=after.id, max_age_seconds=5.0
+                    )
+                    if entry and entry.user and entry.user.id == self.bot.user.id:
+                        return  # Bot assigned this role — trusted, skip antinuke
+                except Exception:
+                    pass
+
                 cfg = self.db.get_antinuke_config(after.guild.id)
                 if cfg.get("enabled"):
                     is_wl = self.db.is_antinuke_whitelisted(after.guild.id, after.id)
@@ -1110,26 +1138,70 @@ class SecurityCog(commands.Cog):
                                         dangerous_managed.append(r)
                                     else:
                                         dangerous_removable.append(r)
-                        # Remove non-managed dangerous roles
-                        if dangerous_removable:
-                            try:
-                                await after.remove_roles(*dangerous_removable, reason="[Anti-Nuke] Power roles denied: Member/bot is not whitelisted!")
-                            except Exception:
-                                pass
-                        # Neuter managed roles (bot integration roles) — can't remove, so strip perms
-                        for r in dangerous_managed:
-                            try:
-                                safe_perms = discord.Permissions(send_messages=True, read_messages=True, view_channel=True)
-                                await r.edit(permissions=safe_perms, reason="[Anti-Nuke] Stripped dangerous power from unwhitelisted bot role")
-                            except Exception:
-                                pass
+
+                        if not dangerous_removable and not dangerous_managed:
+                            return
+
+                        # Check who assigned the role via audit log
+                        assigner = None
+                        try:
+                            role_entry = await self._get_audit_entry(
+                                after.guild, discord.AuditLogAction.member_role_update,
+                                target_id=after.id, max_age_seconds=5.0
+                            )
+                            if role_entry and role_entry.user:
+                                assigner = role_entry.user
+                        except Exception:
+                            pass
+
+                        # If assigner is owner, whitelisted, has higher/equal role, or has manage_roles perm → LOG ONLY, don't strip
+                        assigner_is_trusted = False
+                        if assigner:
+                            if assigner.id == after.guild.owner_id:
+                                assigner_is_trusted = True
+                            elif self.db.is_antinuke_whitelisted(after.guild.id, assigner.id):
+                                assigner_is_trusted = True
+                            else:
+                                assigner_member = after.guild.get_member(assigner.id)
+                                if assigner_member:
+                                    if assigner_member.top_role >= after.guild.me.top_role:
+                                        assigner_is_trusted = True
+                                    elif assigner_member.guild_permissions.manage_roles:
+                                        assigner_is_trusted = True
+
                         all_dangerous = dangerous_removable + dangerous_managed
-                        if all_dangerous:
+                        assigner_str = assigner.mention if assigner else "*Unknown*"
+
+                        if assigner_is_trusted:
+                            # Log-only notification — don't strip
+                            try:
+                                await self.log_security_action(
+                                    after.guild,
+                                    "⚠️ Power Role Assigned (Trusted Assigner)",
+                                    f"**Target:** {after.mention} (`{after}`)\n**Roles Given:** {', '.join(r.name for r in all_dangerous)}\n**Assigned By:** {assigner_str}\n**Note:** Target is NOT whitelisted. Role kept because assigner is trusted.",
+                                    color=0xFAA61A,
+                                    event="security_warn"
+                                )
+                            except Exception:
+                                pass
+                        else:
+                            # Untrusted assigner → strip roles
+                            if dangerous_removable:
+                                try:
+                                    await after.remove_roles(*dangerous_removable, reason="[Anti-Nuke] Power roles denied: Member/bot is not whitelisted!")
+                                except Exception:
+                                    pass
+                            for r in dangerous_managed:
+                                try:
+                                    safe_perms = discord.Permissions(send_messages=True, read_messages=True, view_channel=True)
+                                    await r.edit(permissions=safe_perms, reason="[Anti-Nuke] Stripped dangerous power from unwhitelisted bot role")
+                                except Exception:
+                                    pass
                             try:
                                 await self.log_security_action(
                                     after.guild,
                                     "🛡️ Unauthorized Power Role Revoked",
-                                    f"**Target:** {after.mention} (`{after}`)\n**Roles Revoked/Neutered:** {', '.join(r.name for r in all_dangerous)}\n**Reason:** Not on Anti-Nuke Whitelist. Use `/whitelist` to grant power.",
+                                    f"**Target:** {after.mention} (`{after}`)\n**Roles Revoked/Neutered:** {', '.join(r.name for r in all_dangerous)}\n**Assigned By:** {assigner_str}\n**Reason:** Neither target nor assigner is whitelisted. Use `/whitelist` to grant power.",
                                     color=0xFF0000,
                                     event="security_warn"
                                 )

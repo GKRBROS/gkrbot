@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import api from '../../api';
 import SyncModal from './SyncModal';
 import { withSync } from '../../sync';
-import { Select } from '../../components/Select';
+import { Select, ChannelSelect, RoleSelect } from '../../components/Select';
 import { Button } from '../../components/Button';
 import { Badge } from '../../components/Badge';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
@@ -1154,11 +1154,12 @@ export function Welcome() {
             <CardContent>
               <div className="form-group mb-4!">
                 <label className="form-label">Welcome Channel</label>
-                <Select
+                <ChannelSelect
                   value={config.channel_id}
                   onChange={v => setConfig({ ...config, channel_id: v })}
-                  options={channelOptions}
-                  searchable
+                  channels={channels}
+                  allowedTypes={['text', 'news']}
+                  placeholder="Select welcome channel..."
                 />
                 {channelsError && (
                   <div className="flex items-center justify-between gap-3 mt-2! text-xs text-danger">
@@ -1224,11 +1225,12 @@ export function Welcome() {
             <CardContent>
               <div className="form-group">
                 <label className="form-label">Member Role</label>
-                <Select
+                <RoleSelect
                   value={config.welcome_role_id}
                   onChange={v => setConfig({ ...config, welcome_role_id: v })}
-                  options={roleOptions}
-                  searchable
+                  roles={roles}
+                  manageableOnly={true}
+                  placeholder="Select member onboarding role..."
                 />
               </div>
               <p className="text-xs text-muted mt-2!">
@@ -1247,11 +1249,12 @@ export function Welcome() {
             <CardContent>
               <div className="form-group">
                 <label className="form-label">Bot Role</label>
-                <Select
+                <RoleSelect
                   value={config.bot_role_id}
                   onChange={v => setConfig({ ...config, bot_role_id: v })}
-                  options={roleOptions}
-                  searchable
+                  roles={roles}
+                  manageableOnly={true}
+                  placeholder="Select bot integration role..."
                 />
               </div>
               <p className="text-xs text-muted mt-2!">
@@ -1286,11 +1289,12 @@ export function Welcome() {
                 <div className="flex flex-col gap-4 pt-4! border-t border-border">
                   <div className="form-group">
                     <label className="form-label">Departure Log Channel</label>
-                    <Select
+                    <ChannelSelect
                       value={config.leave_channel_id}
                       onChange={v => setConfig({ ...config, leave_channel_id: v })}
-                      options={channelOptions}
-                      searchable
+                      channels={channels}
+                      allowedTypes={['text', 'news']}
+                      placeholder="Select departure channel..."
                     />
                     {channelsError && (
                       <div className="flex items-center justify-between gap-3 mt-2! text-xs text-danger">

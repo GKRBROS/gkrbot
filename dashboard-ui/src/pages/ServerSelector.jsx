@@ -4,7 +4,6 @@ import api from '../api';
 import { Button } from '../components/Button';
 import { Badge } from '../components/Badge';
 import { EmptyState } from '../components/EmptyState';
-import { Skeleton } from '../components/Skeleton';
 import { Loader } from '../components/Loader';
 import { useBotName } from '../BotContext';
 import {
@@ -15,9 +14,13 @@ import {
   ShieldCheck,
   LogOut,
   ExternalLink,
+  ChevronLeft,
+  ChevronRight,
   Sparkles,
   X
 } from 'lucide-react';
+
+const PAGE_SIZE = 18;
 
 export function ServerSelector() {
   const [guilds, setGuilds] = useState([]);
@@ -25,6 +28,8 @@ export function ServerSelector() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [activeTab, setActiveTab] = useState('all'); // 'all' | 'active' | 'uninvited'
+  const [page, setPage] = useState(1);
   const botName = useBotName();
   const navigate = useNavigate();
 
@@ -52,10 +57,31 @@ export function ServerSelector() {
   };
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return guilds;
+    let list = guilds;
+    if (activeTab === 'active') {
+      list = list.filter(g => g.bot_present !== false);
+    } else if (activeTab === 'uninvited') {
+      list = list.filter(g => g.bot_present === false);
+    }
+
+    if (!search.trim()) return list;
     const q = search.trim().toLowerCase();
-    return guilds.filter(g => g.name.toLowerCase().includes(q));
-  }, [guilds, search]);
+    return list.filter(g => g.name.toLowerCase().includes(q));
+  }, [guilds, search, activeTab]);
+
+  // Reset pagination when search or tab changes
+  useEffect(() => {
+    setPage(1);
+  }, [search, activeTab]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const paginatedGuilds = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filtered.slice(start, start + PAGE_SIZE);
+  }, [filtered, page]);
+
+  const activeCount = useMemo(() => guilds.filter(g => g.bot_present !== false).length, [guilds]);
+  const uninvitedCount = useMemo(() => guilds.filter(g => g.bot_present === false).length, [guilds]);
 
   const cleanName = (botName || '').trim();
   const displayBrandName = !cleanName || cleanName.toLowerCase() === 'bot'
@@ -128,8 +154,49 @@ export function ServerSelector() {
           </div>
           <h1 className="server-selector-title">Select a Server</h1>
           <p className="server-selector-subtitle">
-            Choose a Discord server below to configure automated greetings, ticket hubs, stream alerts, moderation, and community features.
+            Choose a Discord server below to configure moderation, automated greetings, embeds, tickets, and community features.
           </p>
+
+          {/* Filter Tabs */}
+          {!loading && guilds.length > 0 && (
+            <div className="flex items-center justify-center gap-2 mt-4 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setActiveTab('all')}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
+                  activeTab === 'all'
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'bg-surface-card text-muted hover:text-main'
+                }`}
+              >
+                All Servers ({guilds.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('active')}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
+                  activeTab === 'active'
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'bg-surface-card text-muted hover:text-main'
+                }`}
+              >
+                Ready to Manage ({activeCount})
+              </button>
+              {uninvitedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('uninvited')}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
+                    activeTab === 'uninvited'
+                      ? 'bg-warning text-black shadow-sm'
+                      : 'bg-surface-card text-muted hover:text-main'
+                  }`}
+                >
+                  Invite Required ({uninvitedCount})
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Responsive Search & Actions Toolbar */}
@@ -165,7 +232,7 @@ export function ServerSelector() {
               className="btn btn-primary server-invite-btn"
             >
               <Plus size={16} />
-              <span>Invite to Server</span>
+              <span>Invite to New Server</span>
             </a>
           )}
         </div>
@@ -193,8 +260,8 @@ export function ServerSelector() {
           <div className="server-empty-panel">
             <EmptyState
               icon={Server}
-              title="No Authorized Servers Found"
-              description="You do not appear to have Administrator or Manage Server permissions on any server where this bot is present."
+              title="No Manageable Servers Found"
+              description="You must have Administrator or Manage Server permissions on Discord to configure a server in this dashboard."
               action={
                 botClientId && (
                   <a
@@ -224,53 +291,129 @@ export function ServerSelector() {
             />
           </div>
         ) : (
-          <div className="server-grid">
-            {filtered.map(guild => (
-              <Link
-                key={guild.id}
-                to={`/dashboard/${guild.id}`}
-                className="server-card group"
-                title={`Manage ${guild.name}`}
-              >
-                {guild.icon && (
-                  <span
-                    className="server-card-glow"
-                    style={{ backgroundImage: `url(${guild.icon})` }}
-                    aria-hidden="true"
-                  />
-                )}
-                <div className="server-card-avatar-wrap">
-                  {guild.icon ? (
-                    <img
-                      src={guild.icon}
-                      alt={guild.name}
-                      className="server-card-avatar"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <div className="server-card-avatar-fallback">
-                      {guild.name.charAt(0).toUpperCase()}
+          <>
+            <div className="server-grid">
+              {paginatedGuilds.map(guild => {
+                const hasBot = guild.bot_present !== false;
+                const inviteUrl = `https://discord.com/api/oauth2/authorize?client_id=${botClientId}&permissions=8&scope=bot%20applications.commands&guild_id=${guild.id}`;
+
+                if (!hasBot) {
+                  return (
+                    <a
+                      key={guild.id}
+                      href={inviteUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="server-card server-card--uninvited group"
+                      title={`Invite ${displayBrandName} to ${guild.name}`}
+                    >
+                      <div className="server-card-avatar-wrap">
+                        {guild.icon ? (
+                          <img
+                            src={guild.icon}
+                            alt={guild.name}
+                            className="server-card-avatar grayscale group-hover:grayscale-0 transition"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="server-card-avatar-fallback">
+                            {guild.name.charAt(0).toUpperCase()}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="server-card-info">
+                        <h3 className="server-card-name" title={guild.name}>
+                          {guild.name}
+                        </h3>
+                        <div className="server-card-status text-warning">
+                          <span className="w-2 h-2 rounded-full bg-warning inline-block mr-1" />
+                          <span>Bot not invited</span>
+                        </div>
+                      </div>
+
+                      <div className="server-card-arrow text-warning">
+                        <ExternalLink size={15} />
+                      </div>
+                    </a>
+                  );
+                }
+
+                return (
+                  <Link
+                    key={guild.id}
+                    to={`/dashboard/${guild.id}`}
+                    className="server-card group"
+                    title={`Manage ${guild.name}`}
+                  >
+                    {guild.icon && (
+                      <span
+                        className="server-card-glow"
+                        style={{ backgroundImage: `url(${guild.icon})` }}
+                        aria-hidden="true"
+                      />
+                    )}
+                    <div className="server-card-avatar-wrap">
+                      {guild.icon ? (
+                        <img
+                          src={guild.icon}
+                          alt={guild.name}
+                          className="server-card-avatar"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <div className="server-card-avatar-fallback">
+                          {guild.name.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <span className="server-card-pulse" />
                     </div>
-                  )}
-                  <span className="server-card-pulse" />
-                </div>
 
-                <div className="server-card-info">
-                  <h3 className="server-card-name" title={guild.name}>
-                    {guild.name}
-                  </h3>
-                  <div className="server-card-status">
-                    <span className="server-card-dot" />
-                    <span>Ready to manage</span>
-                  </div>
-                </div>
+                    <div className="server-card-info">
+                      <h3 className="server-card-name" title={guild.name}>
+                        {guild.name}
+                      </h3>
+                      <div className="server-card-status">
+                        <span className="server-card-dot" />
+                        <span>Ready to manage</span>
+                      </div>
+                    </div>
 
-                <div className="server-card-arrow">
-                  <ArrowRight size={15} />
-                </div>
-              </Link>
-            ))}
-          </div>
+                    <div className="server-card-arrow">
+                      <ArrowRight size={15} />
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-3 mt-8">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                >
+                  <ChevronLeft size={16} />
+                  <span>Previous</span>
+                </Button>
+                <span className="text-xs font-semibold text-muted">
+                  Page {page} of {totalPages}
+                </span>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                >
+                  <span>Next</span>
+                  <ChevronRight size={16} />
+                </Button>
+              </div>
+            )}
+          </>
         )}
       </main>
     </div>
