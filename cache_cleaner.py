@@ -185,6 +185,19 @@ class CacheCleaner(commands.Cog):
         gc.collect()
         print(f"[CacheCleaner] Auto clean freed {_fmt(freed)}")
 
+    async def cog_load(self) -> None:
+        """Scope /clearcache to the owner/dev guild only — never global."""
+        _owner = (os.getenv("DISCORD_GUILD_ID") or os.getenv("DEV_GUILD_ID") or "").strip()
+        if _owner.isdigit():
+            g = discord.Object(id=int(_owner))
+            self.bot.tree.remove_command("clearcache")
+            self.bot.tree.add_command(self.clearcache, guild=g, override=True)
+
+    async def cog_unload(self) -> None:
+        _owner = (os.getenv("DISCORD_GUILD_ID") or os.getenv("DEV_GUILD_ID") or "").strip()
+        if _owner.isdigit():
+            self.bot.tree.remove_command("clearcache", guild=discord.Object(id=int(_owner)))
+
     @auto_clean.before_loop
     async def _before_auto(self):
         await self.bot.wait_until_ready()

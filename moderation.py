@@ -38,6 +38,7 @@ from gkr_ui import (
 )
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "moderation.sqlite3")
+DEV_GUILD_ID = int(os.getenv("DISCORD_GUILD_ID", "0"))
 
 
 # ---------------------------------------------------------------------------
@@ -281,6 +282,19 @@ class ModerationCog(commands.Cog):
         self.db = ModerationDatabase()
         self.db.initialize()
         self._start_time = discord.utils.utcnow()
+
+    async def cog_load(self) -> None:
+        """Move /mod devmessage out of the public tree; scope it to dev guild only."""
+        if DEV_GUILD_ID:
+            g = discord.Object(id=DEV_GUILD_ID)
+            # Remove from the global /mod group so it's never synced publicly
+            self.mod.remove_command("devmessage")
+            # Re-register as a standalone guild-scoped command
+            self.bot.tree.add_command(self.devmessage_standalone, guild=g, override=True)
+
+    async def cog_unload(self) -> None:
+        if DEV_GUILD_ID:
+            self.bot.tree.remove_command("devmessage", guild=discord.Object(id=DEV_GUILD_ID))
 
     # ── Core Implementations ──────────────────────────────────────────────────
 
@@ -940,5 +954,44 @@ class ModerationCog(commands.Cog):
             color=C.SUCCESS
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # Standalone guild-scoped copy used by cog_load
+    @app_commands.command(name="devmessage", description="[Dev only] Set or clear the global developer status message")
+    @app_commands.describe(message="The notice to broadcast (leave blank to clear)", active="Whether the notice is active")
+    async def devmessage_standalone(self, interaction: discord.Interaction, message: Optional[str] = None, active: bool = True) -> None:
+        from bot_status_msg import set_status_message, clear_status_message
+        # Guild check
+        if DEV_GUILD_ID and interaction.guild_id != DEV_GUILD_ID:
+            return await interaction.response.send_message(embed=embed_error("Dev guild only."), ephemeral=True)
+        # Owner check
+        is_allowed = False
+        try:
+            from blacklist import is_bot_staff
+            is_allowed = await is_bot_staff(interaction, self.bot)
+        except Exception:
+            try:
+                is_allowed = await self.bot.is_owner(interaction.user)
+            except Exception:
+                pass
+        if not is_allowed:
+            return await interaction.response.send_message(
+                embed=discord.Embed(title="❌ Access Denied", description="Bot owner only.", color=C.DANGER),
+                ephemeral=True
+            )
+        if not message or not message.strip():
+            clear_status_message()
+            return await interaction.response.send_message(
+                embed=discord.Embed(title="✅ Notice Cleared", description="Global developer status notice removed.", color=C.SUCCESS),
+                ephemeral=True
+            )
+        saved = set_status_message(message.strip(), author=interaction.user.display_name, active=active)
+        state_str = "🟢 Active" if active else "⏸️ Disabled"
+        embed = discord.Embed(
+            title="📢 Developer Notice Updated",
+            description=f"**Status:** {state_str}\n\n> {saved['message']}\n\n*Visible in `/status` and system panels.*",
+            color=C.SUCCESS
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(ModerationCog(bot))

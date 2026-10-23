@@ -469,6 +469,22 @@ class BotStatusCog(commands.Cog):
         self.bot         = bot
         self._configs: dict[int, dict] = {}
 
+    async def cog_load(self) -> None:
+        """Remove /system from the global tree so it never syncs globally."""
+        owner_guild_str = (os.getenv("DISCORD_GUILD_ID") or os.getenv("DEV_GUILD_ID") or "").strip()
+        if owner_guild_str.isdigit():
+            g_obj = discord.Object(id=int(owner_guild_str))
+            # Remove from global tree, add only to owner guild
+            self.bot.tree.remove_command("system")
+            self.bot.tree.add_command(self.system_group, guild=g_obj, override=True)
+
+    async def cog_unload(self) -> None:
+        owner_guild_str = (os.getenv("DISCORD_GUILD_ID") or os.getenv("DEV_GUILD_ID") or "").strip()
+        if owner_guild_str.isdigit():
+            g_obj = discord.Object(id=int(owner_guild_str))
+            self.bot.tree.remove_command("system", guild=g_obj)
+
+
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _get_channel(self, guild_id: int) -> discord.TextChannel | None:
@@ -663,8 +679,6 @@ class BotStatusCog(commands.Cog):
         if self.bot.owner_id and interaction.user.id == self.bot.owner_id:
             return True, ""
         if self.bot.owner_ids and interaction.user.id in self.bot.owner_ids:
-            return True, ""
-        if interaction.guild and interaction.guild.owner_id == interaction.user.id:
             return True, ""
         return False, "❌ Access restricted to the bot owner."
 

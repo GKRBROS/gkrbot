@@ -300,7 +300,17 @@ class LevelingCog(commands.Cog, name="Leveling"):
 
         # Send announcement
         announce_ch_id = cfg.get("announce_channel_id")
-        target_ch = guild.get_channel(int(announce_ch_id)) if announce_ch_id else message.channel
+        if announce_ch_id:
+            target_ch = guild.get_channel(int(announce_ch_id))
+        else:
+            # Fallback: system channel, then first writable text channel
+            target_ch = guild.system_channel
+            if not target_ch or not target_ch.permissions_for(guild.me).send_messages:
+                target_ch = next(
+                    (ch for ch in guild.text_channels
+                     if ch.permissions_for(guild.me).send_messages),
+                    None
+                )
         if target_ch and target_ch.permissions_for(guild.me).send_messages:
             msg_template = cfg.get("announce_message") or "Congratulations {user}, you leveled up to **Level {level}**!"
             msg_text = msg_template.replace("{user}", member.mention).replace("{level}", str(new_level))

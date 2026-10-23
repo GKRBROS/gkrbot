@@ -637,13 +637,15 @@ class DevLogsCog(commands.Cog):
         self.db = DevLogsDB()
 
     async def cog_load(self) -> None:
+        # Remove from global tree so it never syncs globally
+        self.bot.tree.remove_command("dev")
         if DEV_GUILD_ID:
             dev_guild_obj = discord.Object(id=DEV_GUILD_ID)
-            self.bot.tree.add_command(self.dev_group, guild=dev_guild_obj)
+            self.bot.tree.add_command(self.dev_group, guild=dev_guild_obj, override=True)
         try:
             loop = asyncio.get_running_loop()
             register_async_exception_handler(loop, self.bot)
-        except Exception as e:
+        except Exception:
             pass
 
     async def cog_unload(self) -> None:
@@ -744,6 +746,23 @@ class DevLogsCog(commands.Cog):
             except Exception as exc:
                 _safe_print(f"[DevLogs] Failed to forward to #{channel.name}: {exc}")
 
+    async def _require_owner(self, interaction: discord.Interaction) -> bool:
+        """Returns True if bot owner/staff; sends ephemeral denial and returns False otherwise."""
+        try:
+            from blacklist import is_bot_staff
+            if await is_bot_staff(interaction, self.bot):
+                return True
+        except Exception:
+            try:
+                if await self.bot.is_owner(interaction.user):
+                    return True
+            except Exception:
+                pass
+        await interaction.response.send_message(
+            embed=embed_error("Access denied. Bot owner only."), ephemeral=True
+        )
+        return False
+
     # ── Dev Command Group (Guild Only) ─────────────────────────────────────────
 
     dev_group = app_commands.Group(
@@ -755,6 +774,8 @@ class DevLogsCog(commands.Cog):
     @app_commands.describe(channel="The Discord channel where error and crash embeds will be posted")
     async def set_error_channel(self, interaction: discord.Interaction, channel: discord.TextChannel) -> None:
         """Assign any text channel as the dedicated error and crash log channel."""
+        if not await self._require_owner(interaction):
+            return
         if interaction.guild_id != DEV_GUILD_ID:
             await interaction.response.send_message(embed=embed_error("This command can only be used in the developer guild."), ephemeral=True)
             return
@@ -769,6 +790,8 @@ class DevLogsCog(commands.Cog):
 
     @dev_group.command(name="setup_logs", description="Create or configure the global dev log channels")
     async def setup_logs(self, interaction: discord.Interaction) -> None:
+        if not await self._require_owner(interaction):
+            return
         if interaction.guild_id != DEV_GUILD_ID:
             await interaction.response.send_message(embed=embed_error("This command can only be used in the developer guild."), ephemeral=True)
             return
@@ -871,6 +894,8 @@ class DevLogsCog(commands.Cog):
 
     @dev_group.command(name="status", description="Show all dev log channel assignments")
     async def status(self, interaction: discord.Interaction) -> None:
+        if not await self._require_owner(interaction):
+            return
         if interaction.guild_id != DEV_GUILD_ID:
             await interaction.response.send_message(embed=embed_error("Developer only."), ephemeral=True)
             return
@@ -888,6 +913,8 @@ class DevLogsCog(commands.Cog):
 
     @dev_group.command(name="guilds", description="List all guilds the bot is currently in")
     async def list_guilds(self, interaction: discord.Interaction) -> None:
+        if not await self._require_owner(interaction):
+            return
         if interaction.guild_id != DEV_GUILD_ID:
             await interaction.response.send_message(embed=embed_error("Developer only."), ephemeral=True)
             return
@@ -899,6 +926,8 @@ class DevLogsCog(commands.Cog):
     @dev_group.command(name="members", description="View members of any guild the bot is in")
     @app_commands.describe(guild_id="The server ID to inspect")
     async def list_members(self, interaction: discord.Interaction, guild_id: str = "") -> None:
+        if not await self._require_owner(interaction):
+            return
         if interaction.guild_id != DEV_GUILD_ID:
             await interaction.response.send_message(embed=embed_error("Developer only."), ephemeral=True)
             return
@@ -961,13 +990,10 @@ class DevLogsCog(commands.Cog):
         title="Short title describing the bug",
         description="Detailed description of what went wrong",
     )
-    async def bugreport(
-        self,
-        interaction: discord.Interaction,
-        title: str,
-        description: str,
-    ) -> None:
+    async def bugreport(self, interaction: discord.Interaction, title: str, description: str) -> None:
         """Submit a bug report — dev guild only."""
+        if not await self._require_owner(interaction):
+            return
         if interaction.guild_id != DEV_GUILD_ID:
             await interaction.response.send_message(
                 embed=embed_error("This command can only be used in the developer guild."),
@@ -1022,13 +1048,10 @@ class DevLogsCog(commands.Cog):
         title="Short crash description",
         traceback="Full error traceback or crash log (paste here)",
     )
-    async def crashreport(
-        self,
-        interaction: discord.Interaction,
-        title: str,
-        traceback: str,
-    ) -> None:
+    async def crashreport(self, interaction: discord.Interaction, title: str, traceback: str) -> None:
         """Submit a crash report — dev guild only."""
+        if not await self._require_owner(interaction):
+            return
         if interaction.guild_id != DEV_GUILD_ID:
             await interaction.response.send_message(
                 embed=embed_error("This command can only be used in the developer guild."),
