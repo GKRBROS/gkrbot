@@ -51,5 +51,10 @@ chat-exporter>=2.8.0
 edge-tts>=7.2.0
 imageio-ffmpeg>=0.6.0
 
+# AI providers — Groq / Gemini / OpenRouter all work via aiohttp (no extra SDK needed)
+# To use the built-in local CPU model instead (no API key), install:
+llama-cpp-python>=0.3.0   #(compiles C++; ~1 GB model auto-downloads on first start)
+# and set AI_LOCAL=1 in .env
+
 # Dev tools – static analysis / dead-code detection (https://github.com/duriantaco/skylos)
 skylos>=0.1.0

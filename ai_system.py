@@ -806,15 +806,21 @@ class TTSEngine:
             import edge_tts  # optional dependency: pip install edge-tts
             communicate = edge_tts.Communicate(clean_text, voice_id, rate=rate, pitch=pitch)
             buf = io.BytesIO()
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    buf.write(chunk["data"])
+            try:
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        buf.write(chunk["data"])
+            except (OSError, aiohttp.ClientConnectorError, aiohttp.ClientError) as net_err:
+                logger.warning(f"TTS network unavailable (DNS/connection failed): {net_err}")
+                return None
             if buf.tell() == 0:
                 return None
             buf.seek(0)
             return buf
         except ImportError:
             logger.warning("edge-tts not installed — run: pip install edge-tts")
+        except (OSError, aiohttp.ClientConnectorError, aiohttp.ClientError) as net_err:
+            logger.warning(f"TTS network unavailable: {net_err}")
         except Exception as e:
             logger.debug(f"TTS generation error: {e}")
         return None
