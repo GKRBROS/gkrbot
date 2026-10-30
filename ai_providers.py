@@ -272,8 +272,8 @@ def load_providers(guild_cfg: Optional[dict] = None, env: Optional[dict] = None)
         out.append(Provider("custom", "openai", g("AI_API_BASE").rstrip("/"), g("AI_API_KEY"),
                             g("AI_MODEL") or "gpt-4o-mini", g("AI_VISION_MODEL") or g("AI_MODEL") or "gpt-4o-mini"))
     presets = [
-        ("GROQ_API_KEY", "groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile",
-         "meta-llama/llama-4-scout-17b-16e-instruct"),
+        ("GROQ_API_KEY", "groq", "https://api.groq.com/openai/v1", "openai/gpt-oss-20b",
+         "openai/gpt-oss-120b"),
         ("OPENROUTER_API_KEY", "openrouter", "https://openrouter.ai/api/v1",
          "meta-llama/llama-3.3-70b-instruct:free", "google/gemini-2.0-flash-exp:free"),
         ("GEMINI_API_KEY", "gemini", "https://generativelanguage.googleapis.com/v1beta/openai",
