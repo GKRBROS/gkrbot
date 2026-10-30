@@ -1221,7 +1221,10 @@ class ConversationalHumanEngine:
 
     CREATOR_INQUIRIES = {
         "who made you", "who created you", "who is your creator", "who owns you", "ninne aara undakkiye",
-        "tujhe kisne banaya", "who is the owner", "aaranu bot undakkiye"
+        "tujhe kisne banaya", "who is the owner", "aaranu bot undakkiye", "bot owner", "owner details",
+        "who is bot owner", "who owns this bot", "owner aara", "owner kaun hai", "who is the creator",
+        "who developed you", "who is your developer", "developer details", "bot developer", "who coded you",
+        "creator details", "owner id", "who is owner", "who made bot", "who created bot"
     }
 
     @classmethod
@@ -1323,14 +1326,17 @@ class ConversationalHumanEngine:
             else:
                 return f"Appreciate you {user_name}! Big W! 🤝🔥"
 
-        # 10. Creator
-        if any(p in low for p in cls.CREATOR_INQUIRIES):
+        # 10. Creator & Bot Owner
+        if any(p in low for p in cls.CREATOR_INQUIRIES) or re.search(r"\b(who\s*(is|are|owns|made|created|developed|coded)\s*(the|this)?\s*(bot|you|owner)|bot\s*owner|owner\s*details|developer\s*details|creator\s*details|ninne\s*aara|aaranu\s*bot|owner\s*aara|owner\s*kaun)\b", low):
+            owner_id_env = (os.getenv("OWNER_DISCORD_ID") or "").strip()
+            owner_id = int(owner_id_env) if owner_id_env.isdigit() else 712371246226079764
+            mention = f"<@{owner_id}>"
             if dialect == "manglish":
-                return f"Enne develop cheythathu {BOT_NAME} Development Team aanu machane!"
+                return f"Ente creator and bot owner {mention} (ID: `{owner_id}`) aanu machane! {BOT_NAME}-nte lead developer and owner ivar aanu. 👑"
             elif dialect == "hinglish":
-                return f"Mujhe {BOT_NAME} Development Team ne develop kiya hai bhai!"
+                return f"Mere creator aur bot owner {mention} (ID: `{owner_id}`) hain bhai! Unhone hi {BOT_NAME} ko banaya aur develop kiya hai. 👑"
             else:
-                return f"I was created and engineered by the {BOT_NAME} Development Team!"
+                return f"My creator and bot owner is {mention} (ID: `{owner_id}`). They engineered and developed {BOT_NAME}! 👑"
 
         # 11. Goodbyes
         if re.search(r"\b(bye|tata|see\s*you|gn|good\s*night|pinne\s*kaanam|njan\s*pokunnu|alvida)\b", low):
@@ -1677,8 +1683,9 @@ class AIInferenceClient:
     OLLAMA_MAX_CONCURRENT = 2          # max simultaneous local LLM generations bot-wide
     OLLAMA_STATUS_CACHE_TTL = 20       # seconds to cache an Ollama /api/tags check
 
-    def __init__(self, session: aiohttp.ClientSession):
+    def __init__(self, session: aiohttp.ClientSession, bot: Optional[commands.Bot] = None):
         self.session = session
+        self.bot = bot
         self._ollama_semaphore = asyncio.Semaphore(self.OLLAMA_MAX_CONCURRENT)
         self._status_cache: dict[str, tuple[float, bool, List[str]]] = {}  # base_url -> (checked_at, online, models)
         # Real model layer (OpenAI-compatible APIs / Ollama / keyless) + tools. See ai_providers.py.
@@ -1687,6 +1694,32 @@ class AIInferenceClient:
         self.search = AP.WebSearch(session)
         self.images = AP.ImageGenerator(session)
         self.translator = AP.Translator(self.router, session)
+
+    def get_owner_info(self) -> dict:
+        """Resolve current bot owner identity, username, and mention tag."""
+        owner_id_env = (os.getenv("OWNER_DISCORD_ID") or "").strip()
+        owner_id = int(owner_id_env) if owner_id_env.isdigit() else 712371246226079764
+        owner_user = None
+        if self.bot:
+            if getattr(self.bot, "owner_id", None):
+                owner_id = self.bot.owner_id
+            elif getattr(self.bot, "owner_ids", None):
+                owner_id = next(iter(self.bot.owner_ids), owner_id)
+            owner_user = self.bot.get_user(owner_id)
+
+        if owner_user:
+            return {
+                "id": owner_id,
+                "name": owner_user.name,
+                "display_name": owner_user.display_name,
+                "mention": owner_user.mention,
+            }
+        return {
+            "id": owner_id,
+            "name": "UMRT | GKR",
+            "display_name": "UMRT | GKR",
+            "mention": f"<@{owner_id}>",
+        }
 
     async def check_ollama_status(self, base_url: str) -> Tuple[bool, List[str]]:
         """Check if self-hosted Ollama instance is online and return available models.
@@ -1785,9 +1818,24 @@ class AIInferenceClient:
             notes = (LearningMemoryEngine.get_user_profile(guild_id, user_id, user_name) or {}).get("user_notes", "")
         except Exception:
             notes = ""
+
+        owner = self.get_owner_info()
+        owner_fact = (
+            f"BOT IDENTITY & CREATOR KNOWLEDGE:\n"
+            f"- Bot Name: {BOT_NAME}\n"
+            f"- Bot Owner & Developer: {owner['display_name']} (@{owner['name']})\n"
+            f"- Owner Discord ID: {owner['id']}\n"
+            f"- Owner Mention: {owner['mention']}\n"
+            f"MANDATORY INSTRUCTION: If any user asks who made you, who created you, who owns you, "
+            f"or asks for the bot owner / developer details, YOU MUST state that your owner and creator is "
+            f"{owner['display_name']} (@{owner['name']}) and you MUST include their Discord mention tag {owner['mention']} "
+            f"and their User ID (`{owner['id']}`)."
+        )
+        combined_extra = f"{owner_fact}\n\n{extra}".strip() if extra else owner_fact
+
         return AP.build_system_prompt(
             persona, self.MOOD_PROMPTS.get(mood, self.MOOD_PROMPTS["normal"]), user_name, lang,
-            self.DIALECT_HINTS.get(dialect, ""), server_facts, notes, guild_config.get("system_prompt", "") or "", extra,
+            self.DIALECT_HINTS.get(dialect, ""), server_facts, notes, guild_config.get("system_prompt", "") or "", combined_extra,
         )
 
     # ------------------------------------------------------------------
@@ -2198,7 +2246,7 @@ class AICog(commands.Cog, name="AI System"):
     async def cog_load(self):
         """Initialize reusable HTTP session on cog load."""
         self.session = aiohttp.ClientSession()
-        self.client = AIInferenceClient(self.session)
+        self.client = AIInferenceClient(self.session, bot=self.bot)
         asyncio.create_task(self.client.router.preload_local())   # download/load the local model in the background
         self.background_research_loop.start()
 
@@ -2583,6 +2631,43 @@ class AICog(commands.Cog, name="AI System"):
             f"**User:** {interaction.user.mention} (`{interaction.user.name}`)\n**Category:** `{cat}`\n**Setup:** {setup}",
             color=C.GOLD
         )
+
+    # -----------------------------------------------------------------------
+    # Top-Level Slash Command: /owner
+    # -----------------------------------------------------------------------
+
+    @app_commands.command(name="owner", description=f"👑 View the bot owner and developer details for {BOT_NAME}")
+    async def owner_cmd(self, interaction: discord.Interaction):
+        """Displays bot owner details, username, mention, and ID."""
+        owner_id_env = (os.getenv("OWNER_DISCORD_ID") or "").strip()
+        owner_id = int(owner_id_env) if owner_id_env.isdigit() else 712371246226079764
+        if getattr(self.bot, "owner_id", None):
+            owner_id = self.bot.owner_id
+        elif getattr(self.bot, "owner_ids", None):
+            owner_id = next(iter(self.bot.owner_ids), owner_id)
+
+        owner_user = self.bot.get_user(owner_id)
+        if not owner_user:
+            try:
+                owner_user = await self.bot.fetch_user(owner_id)
+            except Exception:
+                pass
+
+        username = owner_user.name if owner_user else "UMRT | GKR"
+        display_name = owner_user.display_name if owner_user else "UMRT | GKR"
+        mention = owner_user.mention if owner_user else f"<@{owner_id}>"
+
+        embed = discord.Embed(
+            title=f"👑  {BOT_NAME} Bot Owner & Developer",
+            description=f"**Owner:** {mention} (`@{username}`)\n**Display Name:** `{display_name}`\n**User ID:** `{owner_id}`",
+            color=C.BRAND,
+            timestamp=discord.utils.utcnow()
+        )
+        if owner_user and owner_user.display_avatar:
+            embed.set_thumbnail(url=owner_user.display_avatar.url)
+        embed.add_field(name="🛠️ Lead Developer", value=f"{mention} is the primary developer and maintainer of {BOT_NAME}.", inline=False)
+        embed.set_footer(text=f"{BOT_NAME} System • Developed by {username}")
+        await interaction.response.send_message(embed=embed)
 
     # -----------------------------------------------------------------------
     # Slash Commands Group: /ai
