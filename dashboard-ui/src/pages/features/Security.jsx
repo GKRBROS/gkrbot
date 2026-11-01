@@ -37,24 +37,24 @@ function Security() {
   const [syncOpen, setSyncOpen] = useState(false);
 
   const [config, setConfig] = useState({
-    anti_spam_enabled: true,
+    anti_spam_enabled: false,
     spam_msg_limit: 5,
     spam_time_sec: 5,
     mass_mention_limit: 5,
     log_channel_id: '',
-    image_scan_enabled: true,
+    image_scan_enabled: false,
   });
 
   const [antinuke, setAntinuke] = useState({
-    enabled: true,
-    strict_mode: true,
+    enabled: false,
+    strict_mode: false,
     ban_limit: 2,
     kick_limit: 2,
     channel_delete_limit: 1,
     channel_create_limit: 3,
     role_delete_limit: 1,
     role_create_limit: 3,
-    anti_bot: true,
+    anti_bot: false,
     action: 'strip_roles',
     time_window_sec: 20,
   });
@@ -65,33 +65,43 @@ function Security() {
   const [antinukeSaved, setAntinukeSaved] = useState(false);
 
   const fetchData = useCallback(async () => {
+    setLoading(true);
+    setError('');
     try {
-      const [secRes, chanRes, anRes] = await Promise.allSettled([
+      const [secRes, chanRes, anRes] = await Promise.all([
         api.get(`/guilds/${guildId}/security`),
         api.get(`/guilds/${guildId}/channels`),
         api.get(`/guilds/${guildId}/antinuke`),
       ]);
-      if (secRes.status === 'fulfilled' && secRes.value.data?.config) {
-        setConfig(secRes.value.data.config);
+      if (secRes.data?.config) {
+        const sc = secRes.data.config;
+        setConfig({
+          anti_spam_enabled: Boolean(sc.anti_spam_enabled),
+          spam_msg_limit: Number(sc.spam_msg_limit) || 5,
+          spam_time_sec: Number(sc.spam_time_sec) || 5,
+          mass_mention_limit: Number(sc.mass_mention_limit) || 5,
+          log_channel_id: sc.log_channel_id || '',
+          image_scan_enabled: Boolean(sc.image_scan_enabled),
+        });
       }
-      if (chanRes.status === 'fulfilled' && chanRes.value.data?.channels) {
-        setChannels(chanRes.value.data.channels || []);
+      if (chanRes.data?.channels) {
+        setChannels(chanRes.data.channels || []);
       }
-      if (anRes.status === 'fulfilled' && anRes.value.data?.config) {
-        const c = anRes.value.data.config;
+      if (anRes.data?.config) {
+        const c = anRes.data.config;
         setAntinuke({
           ...c,
           enabled: Boolean(c.enabled),
           strict_mode: Boolean(c.strict_mode ?? 1),
           anti_bot: Boolean(c.anti_bot),
         });
-        if (anRes.value.data.whitelist) {
-          setWhitelist(anRes.value.data.whitelist);
+        if (anRes.data.whitelist) {
+          setWhitelist(anRes.data.whitelist);
         }
       }
     } catch (err) {
       console.error('Failed to load security config', err);
-      setError(err.response?.data?.error || 'Failed to load security config');
+      setError(err.response?.data?.error || 'Failed to load security configuration from server');
     } finally {
       setLoading(false);
     }
@@ -106,9 +116,22 @@ function Security() {
     setError('');
     setSaving(true);
     try {
-      await api.post(`/guilds/${guildId}/security`, withSync(config));
+      const anPayload = {
+        ...antinuke,
+        enabled: antinuke.enabled ? 1 : 0,
+        strict_mode: antinuke.strict_mode ? 1 : 0,
+        anti_bot: antinuke.anti_bot ? 1 : 0,
+      };
+      await Promise.all([
+        api.post(`/guilds/${guildId}/security`, withSync(config)),
+        api.post(`/guilds/${guildId}/antinuke`, withSync(anPayload)),
+      ]);
       setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
+      setAntinukeSaved(true);
+      setTimeout(() => {
+        setSaved(false);
+        setAntinukeSaved(false);
+      }, 2500);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save security configuration');
     } finally {
@@ -127,7 +150,7 @@ function Security() {
         strict_mode: antinuke.strict_mode ? 1 : 0,
         anti_bot: antinuke.anti_bot ? 1 : 0,
       };
-      await api.post(`/guilds/${guildId}/antinuke`, payload);
+      await api.post(`/guilds/${guildId}/antinuke`, withSync(payload));
       setAntinukeSaved(true);
       setTimeout(() => setAntinukeSaved(false), 2500);
     } catch (err) {

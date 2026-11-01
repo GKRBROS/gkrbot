@@ -411,21 +411,34 @@ def _replicate_security(bot, source_guild_id):
         count = 0
         with s_db._conn() as conn:
             s_row = conn.execute("SELECT * FROM security_config WHERE guild_id = ?", (str(source_guild_id),)).fetchone()
-            if not s_row:
+            an_row = conn.execute("SELECT * FROM antinuke_config WHERE guild_id = ?", (str(source_guild_id),)).fetchone()
+            if not s_row and not an_row:
                 return 0
             for g in _target_guilds(bot, source_guild_id):
                 try:
-                    t_row = conn.execute("SELECT log_channel_id FROM security_config WHERE guild_id = ?", (str(g.id),)).fetchone()
-                    conn.execute("""
-                        INSERT OR REPLACE INTO security_config
-                        (guild_id, anti_spam_enabled, spam_msg_limit, spam_time_sec, mass_mention_limit, log_channel_id, image_scan_enabled)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        str(g.id), s_row["anti_spam_enabled"], s_row["spam_msg_limit"],
-                        s_row["spam_time_sec"], s_row["mass_mention_limit"],
-                        t_row["log_channel_id"] if t_row else None,
-                        s_row["image_scan_enabled"],
-                    ))
+                    if s_row:
+                        t_row = conn.execute("SELECT log_channel_id FROM security_config WHERE guild_id = ?", (str(g.id),)).fetchone()
+                        conn.execute("""
+                            INSERT OR REPLACE INTO security_config
+                            (guild_id, anti_spam_enabled, spam_msg_limit, spam_time_sec, mass_mention_limit, log_channel_id, image_scan_enabled)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            str(g.id), s_row["anti_spam_enabled"], s_row["spam_msg_limit"],
+                            s_row["spam_time_sec"], s_row["mass_mention_limit"],
+                            t_row["log_channel_id"] if t_row else None,
+                            s_row["image_scan_enabled"],
+                        ))
+                    if an_row:
+                        conn.execute("""
+                            INSERT OR REPLACE INTO antinuke_config
+                            (guild_id, enabled, strict_mode, ban_limit, kick_limit, channel_delete_limit, channel_create_limit, role_delete_limit, role_create_limit, anti_bot, action, time_window_sec)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            str(g.id), an_row["enabled"], an_row["strict_mode"], an_row["ban_limit"],
+                            an_row["kick_limit"], an_row["channel_delete_limit"], an_row["channel_create_limit"],
+                            an_row["role_delete_limit"], an_row["role_create_limit"], an_row["anti_bot"],
+                            an_row["action"], an_row["time_window_sec"]
+                        ))
                     count += 1
                 except Exception as e:
                     print(f"[AutoSync] security -> {g.name}: {e}")
@@ -1814,19 +1827,19 @@ async def handle_security_get(request: web.Request):
         row = conn.execute("SELECT * FROM security_config WHERE guild_id = ?", (str(guild_id),)).fetchone()
     if not row:
         cfg = {
-            "anti_spam_enabled": True,
+            "anti_spam_enabled": False,
             "spam_msg_limit": 5,
             "spam_time_sec": 5,
             "mass_mention_limit": 5,
             "log_channel_id": "",
-            "image_scan_enabled": True
+            "image_scan_enabled": False
         }
     else:
         cfg = {
             "anti_spam_enabled": bool(row["anti_spam_enabled"]),
-            "spam_msg_limit": row["spam_msg_limit"],
-            "spam_time_sec": row["spam_time_sec"],
-            "mass_mention_limit": row["mass_mention_limit"],
+            "spam_msg_limit": int(row["spam_msg_limit"]) if row["spam_msg_limit"] is not None else 5,
+            "spam_time_sec": int(row["spam_time_sec"]) if row["spam_time_sec"] is not None else 5,
+            "mass_mention_limit": int(row["mass_mention_limit"]) if row["mass_mention_limit"] is not None else 5,
             "log_channel_id": str(row["log_channel_id"]) if row["log_channel_id"] else "",
             "image_scan_enabled": bool(row["image_scan_enabled"])
         }
@@ -1840,6 +1853,11 @@ async def handle_security_post(request: web.Request):
     import security
     db = security.SecurityDatabase()
     db.initialize()
+
+    anti_spam = 1 if bool(data.get("anti_spam_enabled")) else 0
+    img_scan = 1 if bool(data.get("image_scan_enabled")) else 0
+    log_ch = str(data["log_channel_id"]).strip() if data.get("log_channel_id") else None
+
     with db._conn() as conn:
         conn.execute("""
             INSERT OR REPLACE INTO security_config 
@@ -1847,14 +1865,32 @@ async def handle_security_post(request: web.Request):
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             str(guild_id),
-            1 if data.get("anti_spam_enabled", True) else 0,
+            anti_spam,
             int(data.get("spam_msg_limit", 5)),
             int(data.get("spam_time_sec", 5)),
             int(data.get("mass_mention_limit", 5)),
-            str(data.get("log_channel_id")) if data.get("log_channel_id") else None,
-            1 if data.get("image_scan_enabled", True) else 0
+            log_ch,
+            img_scan
         ))
         conn.commit()
+
+    # Also handle antinuke fields if sent in payload
+    if "antinuke" in data or "enabled" in data:
+        an_data = data["antinuke"] if isinstance(data.get("antinuke"), dict) else data
+        updates = {}
+        if "enabled" in an_data: updates["enabled"] = 1 if bool(an_data["enabled"]) else 0
+        if "strict_mode" in an_data: updates["strict_mode"] = 1 if bool(an_data["strict_mode"]) else 0
+        if "ban_limit" in an_data: updates["ban_limit"] = int(an_data["ban_limit"])
+        if "kick_limit" in an_data: updates["kick_limit"] = int(an_data["kick_limit"])
+        if "channel_delete_limit" in an_data: updates["channel_delete_limit"] = int(an_data["channel_delete_limit"])
+        if "channel_create_limit" in an_data: updates["channel_create_limit"] = int(an_data["channel_create_limit"])
+        if "role_delete_limit" in an_data: updates["role_delete_limit"] = int(an_data["role_delete_limit"])
+        if "role_create_limit" in an_data: updates["role_create_limit"] = int(an_data["role_create_limit"])
+        if "anti_bot" in an_data: updates["anti_bot"] = 1 if bool(an_data["anti_bot"]) else 0
+        if "action" in an_data: updates["action"] = str(an_data["action"])
+        if "time_window_sec" in an_data: updates["time_window_sec"] = int(an_data["time_window_sec"])
+        if updates:
+            db.update_antinuke_config(guild_id, **updates)
 
     try:
         from weblog import post_weblog
@@ -1914,6 +1950,11 @@ async def handle_antinuke_post(request: web.Request):
 
     db.update_antinuke_config(guild_id, **updates)
 
+    if _auto_sync_requested(data, request):
+        bot: commands.Bot = request.app["bot"]
+        synced = _replicate_security(bot, guild_id)
+        print(f"[AutoSync] Security/Anti-Nuke replicated to {synced} other server(s)")
+
     await _log_dashboard_action(
         request,
         guild_id,
@@ -1929,14 +1970,15 @@ async def handle_antinuke_whitelist_post(request: web.Request):
     if not sess: return web.json_response({"error": "Unauthorized"}, status=401)
     guild_id = int(request.match_info["guild_id"])
     data = await request.json()
-    target_id = data.get("target_id")
-    if not target_id:
-        return web.json_response({"error": "Target user/bot ID required"}, status=400)
+    target_id_raw = str(data.get("target_id", "")).strip()
+    if not target_id_raw or not target_id_raw.isdigit():
+        return web.json_response({"error": "Target user/bot ID must be a valid numeric Discord ID"}, status=400)
+    target_id = int(target_id_raw)
     import security
     db = security.SecurityDatabase()
     db.initialize()
     added_by = sess.get("user_id", 0)
-    db.add_antinuke_whitelist(guild_id, int(target_id), int(added_by))
+    db.add_antinuke_whitelist(guild_id, target_id, int(added_by))
 
     # If member is in guild, remove any active timeout
     bot: commands.Bot = request.app.get("bot")
@@ -2998,7 +3040,7 @@ async def handle_guild_sync(request: web.Request):
             except Exception as e:
                 print(f"[Sync] Welcome sync error for {tgt_int}: {e}")
 
-        # 2. Sync Security
+        # 2. Sync Security & Anti-Nuke
         if "security" in modules or "all" in modules:
             try:
                 import security
@@ -3020,9 +3062,29 @@ async def handle_guild_sync(request: web.Request):
                             str(tgt_int),
                             s_row["image_scan_enabled"]
                         ))
-                        conn.commit()
+                    an_row = conn.execute("SELECT * FROM antinuke_config WHERE guild_id = ?", (str(source_guild_id),)).fetchone()
+                    if an_row:
+                        conn.execute("""
+                            INSERT OR REPLACE INTO antinuke_config
+                            (guild_id, enabled, strict_mode, ban_limit, kick_limit, channel_delete_limit, channel_create_limit, role_delete_limit, role_create_limit, anti_bot, action, time_window_sec)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (
+                            str(tgt_int),
+                            an_row["enabled"],
+                            an_row["strict_mode"],
+                            an_row["ban_limit"],
+                            an_row["kick_limit"],
+                            an_row["channel_delete_limit"],
+                            an_row["channel_create_limit"],
+                            an_row["role_delete_limit"],
+                            an_row["role_create_limit"],
+                            an_row["anti_bot"],
+                            an_row["action"],
+                            an_row["time_window_sec"]
+                        ))
+                    conn.commit()
             except Exception as e:
-                print(f"[Sync] Security sync error for {tgt_int}: {e}")
+                print(f"[Sync] Security/Anti-Nuke sync error for {tgt_int}: {e}")
 
         # 3. Sync Sticky Messages
         if "sticky" in modules or "all" in modules:
@@ -3142,6 +3204,12 @@ async def handle_guild_sync(request: web.Request):
                 print(f"[Sync] Moderation sync error for {tgt_int}: {e}")
 
         synced_count += 1
+
+    return web.json_response({
+        "success": True,
+        "synced_guilds": synced_count,
+        "message": f"Successfully synchronized settings to {synced_count} server(s)."
+    })
 
 
 # --- Dynamic Registration & Application Endpoints ---
@@ -3844,13 +3912,16 @@ async def handle_overview_get(request: web.Request):
         features["registration"] = False
         features["registration_count"] = 0
 
-    # Security
+    # Security & Anti-Nuke
     try:
         import security
         s_db = security.SecurityDatabase()
         with s_db._conn() as conn:
-            row = conn.execute("SELECT anti_spam_enabled FROM security_config WHERE guild_id = ?", (str(guild_id),)).fetchone()
-            features["security"] = bool(row and row["anti_spam_enabled"])
+            row = conn.execute("SELECT anti_spam_enabled, image_scan_enabled FROM security_config WHERE guild_id = ?", (str(guild_id),)).fetchone()
+            an_row = conn.execute("SELECT enabled FROM antinuke_config WHERE guild_id = ?", (str(guild_id),)).fetchone()
+            sec_on = bool(row and (row["anti_spam_enabled"] or row["image_scan_enabled"]))
+            an_on = bool(an_row and an_row["enabled"])
+            features["security"] = sec_on or an_on
     except Exception:
         features["security"] = False
 

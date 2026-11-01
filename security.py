@@ -63,17 +63,17 @@ class SecurityDatabase:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS security_config (
                     guild_id TEXT PRIMARY KEY,
-                    anti_spam_enabled INTEGER DEFAULT 1,
+                    anti_spam_enabled INTEGER DEFAULT 0,
                     spam_msg_limit INTEGER DEFAULT 5,
                     spam_time_sec INTEGER DEFAULT 5,
                     mass_mention_limit INTEGER DEFAULT 5,
                     log_channel_id TEXT,
-                    image_scan_enabled INTEGER DEFAULT 1
+                    image_scan_enabled INTEGER DEFAULT 0
                 )
             """)
             # Migrate: add image_scan_enabled column if missing
             try:
-                conn.execute("ALTER TABLE security_config ADD COLUMN image_scan_enabled INTEGER DEFAULT 1")
+                conn.execute("ALTER TABLE security_config ADD COLUMN image_scan_enabled INTEGER DEFAULT 0")
             except Exception:
                 pass  # Already exists
             # Punishment Ladder
@@ -98,7 +98,7 @@ class SecurityDatabase:
                     channel_create_limit INTEGER DEFAULT 3,
                     role_delete_limit INTEGER DEFAULT 1,
                     role_create_limit INTEGER DEFAULT 3,
-                    anti_bot INTEGER DEFAULT 1,
+                    anti_bot INTEGER DEFAULT 0,
                     action TEXT DEFAULT 'strip_roles',
                     time_window_sec INTEGER DEFAULT 20
                 )
@@ -165,18 +165,19 @@ class SecurityDatabase:
             row = conn.execute("SELECT * FROM security_config WHERE guild_id = ?", (str(guild_id),)).fetchone()
             if row:
                 d = dict(row)
-                # Ensure new field exists in result
-                d.setdefault("image_scan_enabled", 1)
+                # Ensure fields exist in result
+                d.setdefault("image_scan_enabled", 0)
+                d.setdefault("anti_spam_enabled", 0)
                 return d
-            # Default config
+            # Default config: protections are not falsely enabled until configured/turned on
             return {
                 "guild_id": str(guild_id),
-                "anti_spam_enabled": 1,
+                "anti_spam_enabled": 0,
                 "spam_msg_limit": 5,
                 "spam_time_sec": 5,
                 "mass_mention_limit": 5,
                 "log_channel_id": None,
-                "image_scan_enabled": 1,
+                "image_scan_enabled": 0,
             }
 
     def update_config(self, guild_id: int, **kwargs) -> None:
@@ -192,7 +193,7 @@ class SecurityDatabase:
             """, (
                 str(guild_id), cfg["anti_spam_enabled"], cfg["spam_msg_limit"], 
                 cfg["spam_time_sec"], cfg["mass_mention_limit"], cfg["log_channel_id"],
-                cfg.get("image_scan_enabled", 1)
+                cfg.get("image_scan_enabled", 0)
             ))
             conn.commit()
 
@@ -214,6 +215,8 @@ class SecurityDatabase:
             if row:
                 d = dict(row)
                 d.setdefault("strict_mode", 1)
+                d.setdefault("enabled", 0)
+                d.setdefault("anti_bot", 0)
                 return d
             return {
                 "guild_id": str(guild_id),
@@ -225,7 +228,7 @@ class SecurityDatabase:
                 "channel_create_limit": 3,
                 "role_delete_limit": 1,
                 "role_create_limit": 3,
-                "anti_bot": 1,
+                "anti_bot": 0,
                 "action": "strip_roles",
                 "time_window_sec": 20,
             }
@@ -1221,7 +1224,7 @@ class SecurityCog(commands.Cog):
         now = asyncio.get_running_loop().time()
 
         # 0. Image Scanning — runs before other checks
-        if cfg.get("image_scan_enabled", 1):
+        if cfg.get("image_scan_enabled", 0):
             image_exts = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"}
             for att in message.attachments:
                 ext = os.path.splitext(att.filename.lower())[1]
@@ -1268,7 +1271,7 @@ class SecurityCog(commands.Cog):
                 return  # Stop processing this message further
 
         # 2. Anti-Spam Check
-        if cfg["anti_spam_enabled"]:
+        if cfg.get("anti_spam_enabled", 0):
             limit = cfg["spam_msg_limit"]
             time_window = cfg["spam_time_sec"]
             
@@ -1546,17 +1549,22 @@ class SecurityCog(commands.Cog):
     @app_commands.default_permissions(administrator=True)
     async def security_status(self, interaction: discord.Interaction) -> None:
         cfg = self.db.get_config(interaction.guild.id)
+        an_cfg = self.db.get_antinuke_config(interaction.guild.id)
         log_ch_id = cfg.get("log_channel_id")
         log_ch = interaction.guild.get_channel(int(log_ch_id)) if log_ch_id else None
+
+        spam_state = "🟢 Enabled" if cfg.get("anti_spam_enabled") else "🔴 Disabled"
+        img_state = "🟢 Enabled" if cfg.get("image_scan_enabled") else "🔴 Disabled"
+        an_state = "🟢 Enabled" if an_cfg.get("enabled") else "🔴 Disabled"
         
         status_lines = [
-            f"• **Security Logs Channel:** {log_ch.mention if log_ch else '`Auto-Detect (Fallback Active)`'}",
-            f"• **Anti-Spam / Flood:** {'`Enabled`' if cfg.get('anti_spam_enabled') else '`Disabled`'} ({cfg.get('spam_msg_limit', 5)} msgs / {cfg.get('spam_time_sec', 5)}s)",
-            f"• **Anti-Everyone / Here:** `Enabled (Unauthorized Block & Auto-Warn)`",
-            f"• **User Mentions:** `Allowed (Friends & Group Tagging Permitted)`",
-            f"• **Auto Image Scanner:** {'`Enabled`' if cfg.get('image_scan_enabled') else '`Disabled`'}",
-            f"• **Anti-Nuke Defense:** `Active (/antinuke status)`",
-            f"• **Moderation Audit Logging:** `Bans, Unbans, Kicks, Timeouts (Active)`",
+            f"• **Security Logs Channel:** {log_ch.mention if log_ch else '`None Configured`'}",
+            f"• **Anti-Spam / Flood:** `{spam_state}` ({cfg.get('spam_msg_limit', 5)} msgs / {cfg.get('spam_time_sec', 5)}s)",
+            f"• **Anti-Everyone / Here:** `🟢 Enabled (Unauthorized Block & Auto-Warn)`",
+            f"• **Mass Mention Limit:** `{cfg.get('mass_mention_limit', 5)} mentions`",
+            f"• **Auto Image Scanner:** `{img_state}`",
+            f"• **Anti-Nuke Defense:** `{an_state}` (/antinuke status)",
+            f"• **Moderation Audit Logging:** `🟢 Active`",
         ]
 
         embed = discord.Embed(
@@ -1565,6 +1573,37 @@ class SecurityCog(commands.Cog):
             color=C.BRAND
         )
         embed.set_footer(text=f"{BOT_NAME} Security  •  Advanced Server Protection")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @security_group.command(name="antispam", description="Configure Anti-Spam message throttling shield")
+    @app_commands.describe(
+        enabled="Turn Anti-Spam protection ON or OFF",
+        msg_limit="Maximum messages allowed inside evaluation window (e.g. 5)",
+        time_sec="Evaluation interval in seconds (e.g. 5)"
+    )
+    @app_commands.choices(enabled=[
+        app_commands.Choice(name="Enable (ON)", value=1),
+        app_commands.Choice(name="Disable (OFF)", value=0),
+    ])
+    @app_commands.default_permissions(administrator=True)
+    async def security_antispam(
+        self,
+        interaction: discord.Interaction,
+        enabled: int,
+        msg_limit: Optional[int] = None,
+        time_sec: Optional[int] = None
+    ) -> None:
+        updates = {"anti_spam_enabled": enabled}
+        if msg_limit is not None and 2 <= msg_limit <= 50:
+            updates["spam_msg_limit"] = msg_limit
+        if time_sec is not None and 1 <= time_sec <= 60:
+            updates["spam_time_sec"] = time_sec
+        self.db.update_config(interaction.guild.id, **updates)
+        state_str = "Enabled" if enabled else "Disabled"
+        embed = embed_success(
+            "Anti-Spam Updated",
+            f"Anti-Spam protection is now **{state_str}** for this server."
+        ) if enabled else embed_warning(f"Anti-Spam protection is now **{state_str}**.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @security_group.command(name="antinuke", description="Quick shortcut to check Anti-Nuke protection status")

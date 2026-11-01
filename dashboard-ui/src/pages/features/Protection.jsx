@@ -18,7 +18,7 @@ export default function Protection() {
   const [error, setError] = useState('');
 
   const [prot, setProt] = useState({ anti_link: false, anti_spam: false, anti_raid: false, log_channel_id: '' });
-  const [hack, setHack] = useState({ enabled: true, log_channel_id: '' });
+  const [hack, setHack] = useState({ enabled: false, log_channel_id: '' });
 
   const fetchData = useCallback(async () => {
     try {
