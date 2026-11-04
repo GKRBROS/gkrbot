@@ -230,7 +230,7 @@ async def fetch_dynamic_birthday_gif() -> str:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     giphy_url,
-                    timeout=aiohttp.ClientTimeout(total=5)
+                    timeout=aiohttp.ClientTimeout(total=5, connect=3)
                 ) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -573,9 +573,12 @@ class BirthdayCog(commands.Cog):
     @app_commands.checks.has_permissions(manage_guild=True)
     async def birthday_testwish(self, interaction: discord.Interaction, user: discord.Member):
         """Test the birthday wish system by sending a wish immediately."""
+        # Defer immediately — GIF fetch + channel send can exceed 3-second interaction window.
+        await interaction.response.defer(ephemeral=True)
+
         channel_id = self.db.get_birthday_channel(interaction.guild.id)
         if not channel_id:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ No birthday channel set! Use `/birthday setchannel` first.",
                 ephemeral=True
             )
@@ -583,7 +586,7 @@ class BirthdayCog(commands.Cog):
 
         channel = interaction.guild.get_channel(channel_id)
         if not channel or not isinstance(channel, discord.TextChannel):
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "❌ Birthday channel not found. Please re-set it with `/birthday setchannel`.",
                 ephemeral=True
             )
@@ -599,7 +602,7 @@ class BirthdayCog(commands.Cog):
             allowed_mentions=discord.AllowedMentions(everyone=True)
         )
 
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ Test birthday wish sent for {user.mention} in {channel.mention}!",
             ephemeral=True
         )
