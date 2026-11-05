@@ -963,6 +963,25 @@ class MusicCog(commands.Cog):
 
     async def cog_load(self):
         await self._connect_lavalink()
+        self._node_watchdog.start()
+
+    @tasks.loop(seconds=30)
+    async def _node_watchdog(self):
+        """Reconnect to Lavalink if all nodes have dropped."""
+        try:
+            if not hasattr(wavelink, 'Pool'):
+                return
+            nodes = getattr(wavelink.Pool, 'nodes', {})
+            connected = [n for n in nodes.values() if getattr(n, 'status', None) == wavelink.NodeStatus.CONNECTED]
+            if not connected:
+                print('[Music] Watchdog: no connected Lavalink nodes — reconnecting...')
+                await self._connect_lavalink()
+        except Exception as e:
+            print(f'[Music] Watchdog error: {e}')
+
+    @_node_watchdog.before_loop
+    async def _before_watchdog(self):
+        await self.bot.wait_until_ready()
 
     async def cog_unload(self):
         """Cleanup all active music players, voice connections, and Wavelink nodes when cog unloads."""
@@ -976,6 +995,10 @@ class MusicCog(commands.Cog):
             except Exception as e:
                 print(f"[Music] Error cleaning up player for guild {guild_id}: {e}")
         self.guild_players.clear()
+
+        # Stop the node watchdog before closing the pool
+        if self._node_watchdog.is_running():
+            self._node_watchdog.cancel()
 
         # Cleanly close all Wavelink nodes and stop reconnect loops
         try:
@@ -1018,6 +1041,13 @@ class MusicCog(commands.Cog):
     @commands.Cog.listener()
     async def on_wavelink_node_ready(self, payload: wavelink.NodeReadyEventPayload):
         print(f"🎵 Lavalink node '{payload.node.identifier}' is ready and connected!")
+
+    @commands.Cog.listener()
+    async def on_wavelink_node_disconnected(self, payload: wavelink.NodeDisconnectedEventPayload):
+        """Fires when a Lavalink node drops. Schedule a reconnect with backoff."""
+        print(f"[Music] ⚠️ Lavalink node '{payload.node.identifier}' disconnected. Reconnecting in 5s...")
+        await asyncio.sleep(5)
+        await self._connect_lavalink()
 
 
     @commands.Cog.listener()
