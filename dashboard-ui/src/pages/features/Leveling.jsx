@@ -16,10 +16,10 @@ import {
   Megaphone
 } from 'lucide-react';
 import api from '../../api';
-import PageHeader from '../../components/PageHeader';
-import Card, { CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
-import Button from '../../components/Button';
-import Toggle from '../../components/Toggle';
+import { PageHeader } from '../../components/PageHeader';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '../../components/Card';
+import { Button } from '../../components/Button';
+import { Toggle } from '../../components/Toggle';
 import { ChannelSelect } from '../../components/ChannelSelect';
 import { RoleSelect } from '../../components/RoleSelect';
 import { useToast } from '../../components/ToastContext';
@@ -359,7 +359,12 @@ export function Leveling() {
         <CardContent>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-72 overflow-y-auto p-1">
             {channels
-              .filter(c => c.type === 'text' || c.type === 'news')
+              .filter(c => {
+                const t = c.type;
+                // API returns numeric type (0=text, 5=news/announcement) or string 'text'/'news'
+                if (typeof t === 'number' || /^\d+$/.test(String(t))) return [0, 5].includes(Number(t));
+                return /text|news|announ/i.test(String(t));
+              })
               .map(ch => {
                 const isBlacklisted = (config.channel_blacklist || []).includes(String(ch.id));
                 return (

@@ -1102,16 +1102,27 @@ export function Welcome() {
                 </div>
               </CardHeader>
               <CardContent>
-                <ScaledCanvas>
-                  <CardArt
-                    style={config.card_style}
-                    bg={cardBg}
-                    drawAvatar={config.draw_avatar}
-                    drawText={config.draw_text}
-                    showIcon={config.show_guild_icon}
-                    onBgError={() => setBgFailed(true)}
-                  />
-                </ScaledCanvas>
+                <div className="relative">
+                  <ScaledCanvas>
+                    <CardArt
+                      style={config.card_style}
+                      bg={cardBg}
+                      drawAvatar={config.draw_avatar}
+                      drawText={config.draw_text}
+                      showIcon={config.show_guild_icon}
+                      onBgError={() => setBgFailed(true)}
+                    />
+                  </ScaledCanvas>
+                  {!config.enabled && (
+                    <div className="absolute inset-0 rounded-xl bg-black/60 flex flex-col items-center justify-center gap-2 backdrop-blur-[2px]">
+                      <div className="w-10 h-10 rounded-full bg-surface border border-border flex items-center justify-center">
+                        <Bot size={20} className="text-muted" />
+                      </div>
+                      <span className="text-xs font-semibold text-muted">Welcome system is disabled</span>
+                      <span className="text-[11px] text-muted/60">Enable the system above to activate card delivery</span>
+                    </div>
+                  )}
+                </div>
 
                 {bgFailed && (
                   <div className="mt-3! text-center text-xs text-danger">

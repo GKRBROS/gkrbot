@@ -21,14 +21,22 @@ export function ChannelSelect({
   const [dropUp, setDropUp] = useState(false);
   const ref = useRef(null);
 
-  // Normalize channel list
+  // Normalize channel list — API may send numeric Discord channel types (0=text, 5=news/announcement)
+  const normalizeType = (t) => {
+    if (t === 0 || t === '0') return 'text';
+    if (t === 5 || t === '5') return 'news';
+    if (t === 2 || t === '2') return 'voice';
+    if (t === 4 || t === '4') return 'category';
+    if (!t) return 'text';
+    return String(t);
+  };
   const normalizedChannels = useMemo(() => {
     return channels.map(c => ({
       id: String(c.id),
       name: c.name || 'unnamed-channel',
-      type: c.type || 'text',
+      type: normalizeType(c.type),
       category_name: c.category_name || (c.category ? c.category.name : null),
-      can_send: c.can_send_messages !== undefined ? c.can_send_messages : (c.type === 'text' || c.type === 'news'),
+      can_send: c.can_send_messages !== undefined ? c.can_send_messages : ([0, 5, 'text', 'news'].includes(c.type)),
     }));
   }, [channels]);
 
