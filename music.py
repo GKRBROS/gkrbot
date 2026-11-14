@@ -176,6 +176,15 @@ async def get_or_create_music_vc(bot: commands.Bot, guild: discord.Guild, channe
                     await cog._connect_lavalink()
                 except Exception:
                     pass
+            # Wait up to 5s for node to reach CONNECTED state instead of hanging wavelink player
+            for _ in range(10):
+                await asyncio.sleep(0.5)
+                nodes = getattr(wavelink.Pool, "nodes", {})
+                connected_nodes = [n for n in nodes.values() if getattr(n, "status", None) == wavelink.NodeStatus.CONNECTED]
+                if connected_nodes:
+                    break
+            if not connected_nodes:
+                raise ConnectionError("No Lavalink node is connected. Please check Lavalink server or wait a moment.")
 
     vc = get_player(guild)
     if vc is None:
@@ -192,18 +201,22 @@ async def get_or_create_music_vc(bot: commands.Bot, guild: discord.Guild, channe
                 except Exception:
                     pass
 
-        timeout = connect_kwargs.pop("timeout", 30.0)
+        timeout = connect_kwargs.pop("timeout", 12.0)
         try:
             return await channel.connect(cls=wavelink.Player, timeout=timeout, **connect_kwargs)
         except (TimeoutError, asyncio.TimeoutError):
-            print(f"[Music] Initial voice connect to {channel.name} timed out. Resetting voice state and retrying once...")
+            print(f"[Music] Initial voice connect to {channel.name} timed out. Resetting gateway voice state and retrying...")
             try:
                 if guild.voice_client:
                     await guild.voice_client.disconnect(force=True)
+                await guild.change_voice_state(channel=None)
             except Exception:
                 pass
             await asyncio.sleep(1.0)
-            return await channel.connect(cls=wavelink.Player, timeout=timeout, **connect_kwargs)
+            try:
+                return await channel.connect(cls=wavelink.Player, timeout=timeout, **connect_kwargs)
+            except (TimeoutError, asyncio.TimeoutError):
+                raise TimeoutError("Voice connection handshake timed out. Discord voice servers may be slow or unresponsive.")
 
     if vc.channel and vc.channel.id != channel.id:
         await vc.move_to(channel)

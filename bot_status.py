@@ -21,6 +21,7 @@ import sqlite3
 import datetime
 import platform
 import aiohttp
+import asyncio
 
 import discord
 from discord import app_commands
@@ -454,7 +455,7 @@ async def _build_embed(bot: commands.Bot, *, online: bool = True, chart_url: str
         embed.set_image(url=f"{chart_url}?_t={int(now.timestamp())}")
 
     embed.set_footer(
-        text="GKR Bot • Live Monitoring • Refreshes every 60 seconds",
+        text="GKR Bot • Live Monitoring • Refreshes every 3 minutes",
         icon_url=bot.user.display_avatar.url if bot.user else None
     )
     return embed
@@ -495,17 +496,6 @@ class BotStatusCog(commands.Cog):
         ch = self.bot.get_channel(channel_id)
         return ch if isinstance(ch, discord.TextChannel) else None
 
-    async def _fetch_message(self, guild_id: int) -> discord.Message | None:
-        ch = self._get_channel(guild_id)
-        cfg = self._configs.get(guild_id, {})
-        msg_id = cfg.get("message_id")
-        if not ch or not msg_id:
-            return None
-        try:
-            return await ch.fetch_message(msg_id)
-        except (discord.NotFound, discord.HTTPException):
-            return None
-
     async def _post_fresh(self, guild_id: int, embed_msg: discord.Embed = None) -> discord.Message | None:
         """Post a brand-new status embed and save the message ID."""
         ch = self._get_channel(guild_id)
@@ -521,12 +511,20 @@ class BotStatusCog(commands.Cog):
             self._configs[guild_id]["message_id"] = msg.id
             _save_cfg(guild_id, self._configs[guild_id]["channel_id"], msg.id)
             return msg
+        except discord.HTTPException as exc:
+            if exc.status == 429:
+                print(f"[BotStatus] ⚠️ Rate limited (429) posting status embed in {guild_id}.")
+                if "1015" in str(exc) or "Cloudflare" in str(exc):
+                    print("[BotStatus] 🚨 Cloudflare Error 1015 IP ban detected while posting.")
+            else:
+                print(f"[BotStatus] ❌ Failed to post status embed in {guild_id}: {exc}")
+            return None
         except Exception as exc:
             print(f"[BotStatus] ❌ Failed to post status embed in {guild_id}: {exc}")
             return None
 
     async def _update(self, *, online: bool = True) -> None:
-        """Edit the pinned status message across all configured guilds, posting a new one if missing."""
+        """Edit the pinned status message across configured guilds with rate-limit pacing and get_partial_message."""
         if not self._configs:
             return
             
@@ -534,19 +532,46 @@ class BotStatusCog(commands.Cog):
         embed_msg = await _build_embed(self.bot, online=online, chart_url=chart_url)
 
         for guild_id in list(self._configs.keys()):
-            msg = await self._fetch_message(guild_id)
-            if msg is None:
+            ch = self._get_channel(guild_id)
+            if not ch:
+                continue
+
+            cfg = self._configs.get(guild_id, {})
+            msg_id = cfg.get("message_id")
+
+            if not msg_id:
                 if online:
                     await self._post_fresh(guild_id, embed_msg)
+                    await asyncio.sleep(2.0)
                 continue
+
+            # Use get_partial_message to avoid burning a GET fetch_message HTTP call
+            msg = ch.get_partial_message(msg_id)
             try:
                 await msg.edit(embed=embed_msg, view=BotStatusView())
+                await asyncio.sleep(2.0)  # Paced delay between guilds to prevent Cloudflare rate limits
+            except discord.NotFound:
+                # Message was deleted from channel by user; post fresh
+                if online:
+                    await self._post_fresh(guild_id, embed_msg)
+                    await asyncio.sleep(2.0)
+            except discord.HTTPException as exc:
+                if exc.status == 429:
+                    err_text = str(exc)
+                    print(f"[BotStatus] ⚠️ Discord/Cloudflare 429 rate limit hit for guild {guild_id}.")
+                    if "1015" in err_text or "Cloudflare" in err_text or "banned" in err_text:
+                        print("[BotStatus] 🚨 Cloudflare Error 1015 IP ban active. Sleeping for 5 minutes.")
+                        await asyncio.sleep(300)
+                    else:
+                        await asyncio.sleep(30)
+                    return
+                print(f"[BotStatus] ❌ Failed to edit status embed in {guild_id}: {exc}")
             except Exception as exc:
                 print(f"[BotStatus] ❌ Failed to edit status embed in {guild_id}: {exc}")
 
-    # ── Task loop — heartbeat every 60 seconds ────────────────────────────────
+    # ── Task loop — heartbeat every 3 minutes ────────────────
 
-    @tasks.loop(seconds=60)
+    @tasks.loop(minutes=3)
     async def _heartbeat(self) -> None:
         try:
             _update_history()
@@ -633,20 +658,23 @@ class BotStatusCog(commands.Cog):
         embed.set_footer(text=footer)
 
         msg_id = _load_owner_msg_id(ch_id)
-        msg = None
         if msg_id:
-            try:
-                msg = await ch.fetch_message(msg_id)
-            except Exception:
-                msg = None
-
-        if msg:
+            msg = ch.get_partial_message(msg_id)
             try:
                 await msg.edit(embed=embed, view=BotStatusView())
-                print(f"[OwnerStatus] ✅ Edited status message ({msg.id}) in #{ch.name}")
+                print(f"[OwnerStatus] ✅ Edited status message ({msg_id}) in #{ch.name}")
                 return True, f"Updated existing status embed in {ch.mention}"
+            except discord.NotFound:
+                pass  # Deleted from channel, proceed to post new
+            except discord.HTTPException as e:
+                if e.status == 429:
+                    print(f"[OwnerStatus] ⚠️ Rate limited (429) editing status in #{ch.name}")
+                    return False, "Rate limited (429)"
+                print(f"[OwnerStatus] Edit failed: {e}")
+                return False, f"Edit failed: {e}"
             except Exception as e:
-                print(f"[OwnerStatus] Edit failed, posting fresh message: {e}")
+                print(f"[OwnerStatus] Edit failed: {e}")
+                return False, f"Edit failed: {e}"
 
         if state != "offline":
             try:
