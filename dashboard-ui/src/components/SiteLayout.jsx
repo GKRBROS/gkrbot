@@ -99,6 +99,8 @@ export function SiteFooter() {
           <Link to="/support">Support</Link>
           <Link to="/status">Status</Link>
           <Link to="/docs">Docs</Link>
+          <Link to="/terms">Terms of Service</Link>
+          <Link to="/privacy">Privacy Policy</Link>
         </div>
         <div className="site-footer-copy">&copy; {new Date().getFullYear()} {brand}. All rights reserved.</div>
       </div>

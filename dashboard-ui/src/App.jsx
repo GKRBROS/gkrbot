@@ -12,6 +12,8 @@ import DevNews from './pages/DevNews';
 import Support from './pages/Support';
 import Docs from './pages/Docs';
 import Status from './pages/Status';
+import Privacy from './pages/Privacy';
+import Terms from './pages/Terms';
 import Admin from './pages/Admin';
 import BlacklistManagement from './pages/BlacklistManagement';
 import Weblog from './pages/Weblog';
@@ -153,6 +155,8 @@ function App() {
       <Route path="/support" element={<Support user={user} />} />
       <Route path="/docs" element={<Docs user={user} />} />
       <Route path="/status" element={<Status user={user} />} />
+      <Route path="/privacy" element={<Privacy user={user} />} />
+      <Route path="/terms" element={<Terms user={user} />} />
       <Route path="/admin" element={<Admin user={user} />} />
       <Route path="/admin/blacklist" element={<BlacklistManagement user={user} />} />
       <Route path="/admin/weblog" element={<Weblog user={user} />} />

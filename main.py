@@ -272,6 +272,11 @@ bot_kwargs = {
 if APPLICATION_ID:
     bot_kwargs['application_id'] = APPLICATION_ID
 
+discord_proxy = (os.getenv('DISCORD_PROXY') or os.getenv('HTTPS_PROXY') or os.getenv('HTTP_PROXY') or '').strip()
+if discord_proxy:
+    bot_kwargs['proxy'] = discord_proxy
+    print(f"\U0001f310 Routing Discord connection through proxy: {discord_proxy}")
+
 bot = commands.Bot(**bot_kwargs)
 
 # Add app_commands tree for slash commands
@@ -2584,6 +2589,21 @@ if __name__ == "__main__":
         print("\n📋 To fix this issue:")
         print("1. Check your .env file and ensure DISCORD_TOKEN is correct")
         print("2. Generate a new token if necessary at https://discord.com/developers/applications/")
+        print('='*50)
+    except discord.HTTPException as e:
+        print('='*50)
+        if getattr(e, 'status', None) == 429:
+            err_s = str(e)
+            if '1015' in err_s or 'Cloudflare' in err_s:
+                print("🚨 ERROR: Cloudflare Error 1015 IP Ban Active.")
+                print("🛡️ Host IP is banned by Cloudflare edge. Breaking Pterodactyl restart loop.")
+                print("⏳ Sleeping for 15 minutes so Cloudflare ban can expire without traffic...")
+                import time; time.sleep(900)
+            else:
+                print(f"⚠️ ERROR: Discord 429 Rate Limit hit on startup: {e}")
+                import time; time.sleep(60)
+        else:
+            print(f"❌ Discord HTTP Error: {e}")
         print('='*50)
     except Exception as e:
         print('='*50)
