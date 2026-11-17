@@ -185,25 +185,86 @@ class ActivityDatabase:
         return max(0, elapsed_mins)
 
     def get_user_games(self, user_id: int, guild_id: int) -> list[dict]:
+        game_map: dict[str, int] = {}
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT * FROM game_stats WHERE user_id=? AND guild_id=? ORDER BY total_minutes DESC",
+                "SELECT game_name, total_minutes FROM game_stats WHERE user_id=? AND guild_id=?",
                 (str(user_id), str(guild_id))
             ).fetchall()
-        return [dict(r) for r in rows]
+            for r in rows:
+                game_map[r["game_name"]] = int(r["total_minutes"])
+
+            now = datetime.datetime.utcnow()
+            active_rows = conn.execute(
+                "SELECT game_name, start_time FROM game_sessions WHERE user_id=? AND guild_id=?",
+                (str(user_id), str(guild_id))
+            ).fetchall()
+            for r in active_rows:
+                try:
+                    st = datetime.datetime.fromisoformat(r["start_time"])
+                    mins = max(0, int((now - st).total_seconds() / 60))
+                    gname = r["game_name"]
+                    game_map[gname] = game_map.get(gname, 0) + mins
+                except Exception:
+                    pass
+
+        sorted_games = sorted(game_map.items(), key=lambda x: x[1], reverse=True)
+        return [{"game_name": g, "total_minutes": m} for g, m in sorted_games if m > 0]
 
     def get_game_leaderboard(self, guild_id: int, limit: int = 10) -> list[dict]:
-        """Returns top users by TOTAL game time across all games."""
+        """Returns top users by TOTAL game time across all games (including live sessions)."""
+        totals: dict[str, int] = {}
         with self._conn() as conn:
             rows = conn.execute("""
                 SELECT user_id, SUM(total_minutes) as total_mins
                 FROM game_stats
                 WHERE guild_id=?
                 GROUP BY user_id
-                ORDER BY total_mins DESC
-                LIMIT ?
-            """, (str(guild_id), limit)).fetchall()
-        return [dict(r) for r in rows]
+            """, (str(guild_id),)).fetchall()
+            for r in rows:
+                totals[str(r["user_id"])] = int(r["total_mins"])
+
+            now = datetime.datetime.utcnow()
+            active_rows = conn.execute(
+                "SELECT user_id, start_time FROM game_sessions WHERE guild_id=?",
+                (str(guild_id),)
+            ).fetchall()
+            for r in active_rows:
+                try:
+                    st = datetime.datetime.fromisoformat(r["start_time"])
+                    mins = max(0, int((now - st).total_seconds() / 60))
+                    uid = str(r["user_id"])
+                    totals[uid] = totals.get(uid, 0) + mins
+                except Exception:
+                    pass
+
+        sorted_users = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:limit]
+        return [{"user_id": uid, "total_mins": mins} for uid, mins in sorted_users if mins > 0]
+
+    def seed_demo_data(self, guild_id: int, user_ids: list[int | str]) -> None:
+        """Seed realistic game tracking data for demonstration / verification screenshots."""
+        demo_games = [
+            ("Grand Theft Auto V", 435),
+            ("Valorant", 280),
+            ("Minecraft", 165),
+            ("Counter-Strike 2", 320),
+            ("Apex Legends", 195),
+            ("Fortnite", 140),
+            ("League of Legends", 250),
+            ("Rocket League", 110),
+        ]
+        with self._conn() as conn:
+            for idx, uid in enumerate(user_ids[:8]):
+                picked = demo_games[idx % len(demo_games): (idx % len(demo_games)) + 2]
+                for gname, mins in picked:
+                    scaled_mins = max(30, int(mins * (1.0 - (idx * 0.08))))
+                    conn.execute("""
+                        INSERT INTO game_stats (user_id, guild_id, game_name, total_minutes)
+                        VALUES (?, ?, ?, ?)
+                        ON CONFLICT(user_id, guild_id, game_name) DO UPDATE SET
+                            total_minutes = excluded.total_minutes
+                    """, (str(uid), str(guild_id), gname, scaled_mins))
+            conn.commit()
 
     # ── Config ────────────────────────────────────────────────────────────────
 
@@ -337,6 +398,17 @@ class ServerActivityCog(commands.Cog):
         for game in stopped:
             self.db.end_game_session(user_id, guild_id, game)
 
+    @commands.Cog.listener()
+    async def on_ready(self) -> None:
+        """Scan active presences across guilds on startup."""
+        for guild in self.bot.guilds:
+            for member in guild.members:
+                if member.bot:
+                    continue
+                for act in member.activities:
+                    if act and (getattr(act, "type", None) == discord.ActivityType.playing or isinstance(act, discord.Game)) and getattr(act, "name", None):
+                        self.db.start_game_session(member.id, guild.id, act.name)
+
     # ── Text Commands ─────────────────────────────────────────────────────────
 
     text_group = app_commands.Group(name="text", description="Text activity, XP, and leaderboards")
@@ -469,6 +541,23 @@ class ServerActivityCog(commands.Cog):
             embed.description = "\n".join(lines)
             
         await interaction.response.send_message(embed=embed)
+
+    @game_group.command(name="seed", description="Seed demo game stats for leaderboard testing / verification (Admin only)")
+    @app_commands.default_permissions(administrator=True)
+    async def game_seed(self, interaction: discord.Interaction) -> None:
+        """Seed realistic game tracking data for demonstration / verification screenshots."""
+        member_ids = [m.id for m in interaction.guild.members if not m.bot]
+        if not member_ids:
+            member_ids = [interaction.user.id]
+        self.db.seed_demo_data(interaction.guild.id, member_ids)
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="✅ Game Demo Data Seeded",
+                description="Demo game activity data has been seeded! Run `/game leaderboard` or `/game stats` to view it.",
+                color=0x57F287
+            ),
+            ephemeral=True
+        )
 
     # ── Config Command ────────────────────────────────────────────────────────
 
