@@ -259,6 +259,7 @@ def load_message_id():
 intents = discord.Intents.default()
 intents.voice_states = True  # Required for Discord voice connection state handshake
 intents.members = True  # Required for member events (privileged intent)
+intents.presences = True  # Required for game activity tracking (privileged intent)
 intents.guilds = True
 intents.message_content = True  # Required for reading message content (privileged intent)
 intents.reactions = True  # Required for reaction events
@@ -756,6 +757,7 @@ async def botdiagnostics(interaction: discord.Interaction):
 
         # Check intents status
         members_intent = "✅ Enabled" if bot.intents.members else "❌ Disabled"
+        presence_intent = "✅ Enabled" if bot.intents.presences else "❌ Disabled"
         message_intent = "✅ Enabled" if bot.intents.message_content else "❌ Disabled"
         
         # Check command sync success status
@@ -773,6 +775,7 @@ async def botdiagnostics(interaction: discord.Interaction):
         embed.add_field(name="📋 Registered Slash Commands", value=f"`{total_cmds}`", inline=True)
         embed.add_field(name="🌐 Loaded Guilds", value=f"`{len(bot.guilds)}`", inline=True)
         embed.add_field(name="👥 Members Intent", value=members_intent, inline=True)
+        embed.add_field(name="🎮 Presence Intent", value=presence_intent, inline=True)
         embed.add_field(name="💬 Message Content Intent", value=message_intent, inline=True)
         embed.add_field(name="✅ Command Sync Status", value=sync_status, inline=True)
         embed.set_footer(text=f"Diagnostics run at: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1468,6 +1471,8 @@ async def on_ready():
     # Check intents
     if not bot.intents.members:
         print("⚠️  WARNING: Members intent not enabled. Member join/update events won't work.")
+    if not bot.intents.presences:
+        print("⚠️  WARNING: Presence intent not enabled. Game tracking (/game stats) won't work.")
     if not bot.intents.message_content:
         print("⚠️  WARNING: Message Content intent not enabled.")
     print('='*50)

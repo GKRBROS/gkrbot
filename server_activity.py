@@ -321,7 +321,7 @@ class ServerActivityCog(commands.Cog):
             """Extracts game names from a member's activities."""
             games = []
             for act in activities:
-                if act.type == discord.ActivityType.playing and act.name:
+                if act and (getattr(act, "type", None) == discord.ActivityType.playing or isinstance(act, discord.Game)) and getattr(act, "name", None):
                     games.append(act.name)
             return set(games)
             
