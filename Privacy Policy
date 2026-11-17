@@ -1,0 +1,21 @@
+# Privacy Policy for GKR Bot
+Last updated: November 17, 2026
+
+1. Information We Collect
+GKR Bot ("the Bot") collects limited data necessary to provide moderation, engagement, and utility services:
+- Discord User IDs, Guild IDs, and Channel IDs to associate server configurations, permissions, and XP levels.
+- System Telemetry & Aggregated Statistics (e.g., command usage counts, uptime).
+
+2. Data We DO NOT Collect or Store
+- We DO NOT permanently store chat message contents. Messages are evaluated in memory for spam/automod heuristics and immediately discarded.
+- We DO NOT collect personal identifiers (real names, physical addresses, email addresses, payment information).
+- We DO NOT sell, rent, or trade any user data to third parties.
+
+3. Data Storage & Security
+Stored configuration IDs and XP scores are maintained in secure databases with access restricted solely to bot runtime processes. Data is kept only as long as the Bot remains in the respective Discord server.
+
+4. User Rights & Data Deletion
+Users and server administrators may request immediate deletion of all server and user data at any time by removing the bot from their server or by contacting support via our official support server.
+
+5. Third-Party Services
+For optional AI conversational features, queries are routed through secure, authorized API providers (Groq/Google Gemini) strictly to generate responses. No user data is retained for external model training.
