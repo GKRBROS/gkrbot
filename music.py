@@ -176,8 +176,8 @@ async def get_or_create_music_vc(bot: commands.Bot, guild: discord.Guild, channe
                     await cog._connect_lavalink()
                 except Exception:
                     pass
-            # Wait up to 5s for node to reach CONNECTED state instead of hanging wavelink player
-            for _ in range(10):
+            # Wait up to 10s for node to reach CONNECTED state instead of hanging wavelink player
+            for _ in range(20):
                 await asyncio.sleep(0.5)
                 nodes = getattr(wavelink.Pool, "nodes", {})
                 connected_nodes = [n for n in nodes.values() if getattr(n, "status", None) == wavelink.NodeStatus.CONNECTED]
@@ -201,21 +201,21 @@ async def get_or_create_music_vc(bot: commands.Bot, guild: discord.Guild, channe
                 except Exception:
                     pass
 
-        timeout = connect_kwargs.pop("timeout", 12.0)
+        timeout = connect_kwargs.pop("timeout", 30.0)
         try:
             return await channel.connect(cls=wavelink.Player, timeout=timeout, **connect_kwargs)
-        except (TimeoutError, asyncio.TimeoutError):
-            print(f"[Music] Initial voice connect to {channel.name} timed out. Resetting gateway voice state and retrying...")
+        except (TimeoutError, asyncio.TimeoutError, wavelink.ChannelTimeoutException):
+            print(f"[Music] Initial voice connect to {channel.name} timed out ({timeout}s). Resetting gateway voice state and retrying...")
             try:
                 if guild.voice_client:
                     await guild.voice_client.disconnect(force=True)
                 await guild.change_voice_state(channel=None)
             except Exception:
                 pass
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.5)
             try:
                 return await channel.connect(cls=wavelink.Player, timeout=timeout, **connect_kwargs)
-            except (TimeoutError, asyncio.TimeoutError):
+            except (TimeoutError, asyncio.TimeoutError, wavelink.ChannelTimeoutException):
                 raise TimeoutError("Voice connection handshake timed out. Discord voice servers may be slow or unresponsive.")
 
     if vc.channel and vc.channel.id != channel.id:
@@ -698,7 +698,7 @@ class GuildPlayer:
     def __init__(self, guild_id: int):
         self.guild_id = guild_id
         self.loop_mode: Optional[str] = None   # None, "single", "queue"
-        self.mode_247: bool = False
+        self.mode_247: bool = True
         self.panel_message: Optional[discord.Message] = None
         self.text_channel: Optional[discord.TextChannel] = None
         self.history: List[wavelink.Playable] = []
@@ -1032,6 +1032,9 @@ class MusicCog(commands.Cog):
                 if getattr(n, "status", None) == wavelink.NodeStatus.CONNECTED:
                     print(f"✅ Lavalink already connected → {n.uri}")
                     return
+                elif getattr(n, "status", None) == wavelink.NodeStatus.CONNECTING:
+                    print(f"🔄 Lavalink currently connecting → {n.uri}")
+                    return
             try:
                 await wavelink.Pool.close()
             except Exception:
@@ -1043,8 +1046,8 @@ class MusicCog(commands.Cog):
             node = wavelink.Node(
                 uri=LAVALINK_URI,
                 password=LAVALINK_PASSWORD,
-                inactive_player_timeout=300,
-                retries=3
+                inactive_player_timeout=None,
+                retries=None
             )
             await wavelink.Pool.connect(nodes=[node], client=self.bot, cache_capacity=300)
             print(f"✅ Lavalink node registered → {LAVALINK_URI}")
@@ -1841,10 +1844,10 @@ class MusicCog(commands.Cog):
                 vc = await get_or_create_music_vc(self.bot, interaction.guild, user_channel, self_deaf=True)
             elif vc.channel != user_channel:
                 await vc.move_to(user_channel)
-        except (TimeoutError, asyncio.TimeoutError) as te:
+        except (TimeoutError, asyncio.TimeoutError, wavelink.ChannelTimeoutException) as te:
             print(f"[Music] Voice connection timed out for {interaction.guild.name}: {te}")
             return await interaction.edit_original_response(
-                embed=embed_error("⏱️ Voice connection timed out. Please try again.")
+                embed=embed_error("⏱️ Voice connection timed out. Discord voice servers may be slow or unresponsive. Please try again.")
             )
         except Exception as exc:
             print(f"[Music] Voice connection failed for {interaction.guild.name}: {exc}")
@@ -1949,6 +1952,11 @@ class MusicCog(commands.Cog):
             try:
                 await set_india_voice_region(user_channel)
                 vc = await get_or_create_music_vc(self.bot, interaction.guild, user_channel)
+            except (TimeoutError, asyncio.TimeoutError, wavelink.ChannelTimeoutException):
+                return await interaction.followup.send(
+                    embed=embed_error("⏱️ Voice connection timed out. Discord voice servers may be slow or unresponsive. Please try again."),
+                    ephemeral=True
+                )
             except Exception as e:
                 return await interaction.followup.send(embed=embed_error(f"Could not connect: {e}"), ephemeral=True)
         elif vc.channel != user_channel:
