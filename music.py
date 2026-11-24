@@ -1938,7 +1938,9 @@ class MusicCog(commands.Cog):
             if interaction.response.is_done(): await interaction.edit_original_response(embed=embed, view=None)
             else: await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="random", description="Play a random trending song.")
+    music_group = app_commands.Group(name="music", description="Music playback and queue management")
+
+    @music_group.command(name="random", description="Play a random trending song.")
     async def random(self, interaction: discord.Interaction):
         await interaction.response.defer()
 
@@ -2007,7 +2009,7 @@ class MusicCog(commands.Cog):
             embed = embed_success("🎲 Random Song", f"Added **{track.title}** to queue")
             await interaction.followup.send(embed=embed)
 
-    @app_commands.command(name="stop", description="Stop music and disconnect.")
+    @music_group.command(name="stop", description="Stop music and disconnect.")
     async def stop(self, interaction: discord.Interaction):
         vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc:
@@ -2023,7 +2025,7 @@ class MusicCog(commands.Cog):
         await restore_voice_from(self.bot, interaction.guild, "music")
         await interaction.response.send_message(embed=embed_success("Stopped", "Stopped and disconnected."))
 
-    @app_commands.command(name="skip", description="Skip the current track.")
+    @music_group.command(name="skip", description="Skip the current track.")
     async def skip(self, interaction: discord.Interaction):
         vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or not vc.playing:
@@ -2031,7 +2033,7 @@ class MusicCog(commands.Cog):
         await vc.skip(force=True)
         await interaction.response.send_message(embed=embed_success("Skipped", "Skipped track."))
 
-    @app_commands.command(name="pause", description="Pause the current track.")
+    @music_group.command(name="pause", description="Pause the current track.")
     async def pause(self, interaction: discord.Interaction):
         vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or not vc.playing:
@@ -2041,7 +2043,7 @@ class MusicCog(commands.Cog):
             await set_voice_channel_status(self.bot, vc.channel.id, f"⏸️ Paused: {vc.current.title[:85]}")
         await interaction.response.send_message(embed=embed_success("Paused", "Paused playback."))
 
-    @app_commands.command(name="resume", description="Resume playback.")
+    @music_group.command(name="resume", description="Resume playback.")
     async def resume(self, interaction: discord.Interaction):
         vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or not vc.paused:
@@ -2052,7 +2054,7 @@ class MusicCog(commands.Cog):
             await set_voice_channel_status(self.bot, vc.channel.id, st[:100])
         await interaction.response.send_message(embed=embed_success("Resumed", "Resumed playback."))
 
-    @app_commands.command(name="volume", description="Set the volume (0–100).")
+    @music_group.command(name="volume", description="Set the volume (0–100).")
     @app_commands.describe(level="Volume level 0-100")
     async def volume(self, interaction: discord.Interaction, level: int):
         if not 0 <= level <= 100:
@@ -2063,7 +2065,7 @@ class MusicCog(commands.Cog):
         await vc.set_volume(level)
         await interaction.response.send_message(embed=embed_success("Volume", f"Volume set to **{level}%**"))
 
-    @app_commands.command(name="filter", description="Open the audio filter control panel.")
+    @music_group.command(name="filter", description="Open the audio filter control panel.")
     async def filter_cmd(self, interaction: discord.Interaction):
         vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc:
@@ -2083,7 +2085,7 @@ class MusicCog(commands.Cog):
         embed.set_footer(text=f"Current filter: {gp.current_filter}")
         await interaction.response.send_message(embed=embed, view=AudioFilterView(gp), ephemeral=True)
 
-    @app_commands.command(name="queue", description="Show the music queue.")
+    @music_group.command(name="queue", description="Show the music queue.")
     async def queue_cmd(self, interaction: discord.Interaction):
         vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc:
@@ -2114,7 +2116,7 @@ class MusicCog(commands.Cog):
         embed.set_footer(text=f"Total: {vc.queue.count + (1 if vc.current else 0)} tracks in session")
         await interaction.response.send_message(embed=embed)
 
-    @app_commands.command(name="nowplaying", description="Show the now playing panel with controls.")
+    @music_group.command(name="nowplaying", description="Show the now playing panel with controls.")
     async def nowplaying(self, interaction: discord.Interaction):
         vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or not vc.playing:
@@ -2126,7 +2128,7 @@ class MusicCog(commands.Cog):
         await interaction.response.send_message(embed=embed, view=view)
         gp.panel_message = await interaction.original_response()
 
-    @app_commands.command(name="loop", description="Toggle loop mode (single → queue → off).")
+    @music_group.command(name="loop", description="Toggle loop mode (single → queue → off).")
     async def loop(self, interaction: discord.Interaction):
         gp = self.get_gp(interaction.guild.id)
         modes = [None, "single", "queue"]
@@ -2135,7 +2137,7 @@ class MusicCog(commands.Cog):
         mode_str = {"single": "Single Song", "queue": "Queue"}.get(gp.loop_mode, "Off")
         await interaction.response.send_message(embed=embed_info("Loop Mode", f"Loop mode: **{mode_str}**"))
 
-    @app_commands.command(name="shuffle", description="Shuffle the queue.")
+    @music_group.command(name="shuffle", description="Shuffle the queue.")
     async def shuffle(self, interaction: discord.Interaction):
         vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc or vc.queue.is_empty:
@@ -2147,7 +2149,7 @@ class MusicCog(commands.Cog):
             await vc.queue.put_wait(it)
         await interaction.response.send_message(embed=embed_success("Queue Shuffled", "Queue shuffled!"))
 
-    @app_commands.command(name="remove", description="Remove a track from the queue by position.")
+    @music_group.command(name="remove", description="Remove a track from the queue by position.")
     @app_commands.describe(index="Position in queue (1 = first)")
     async def remove(self, interaction: discord.Interaction, index: int):
         vc: Optional[wavelink.Player] = get_player(interaction.guild)
@@ -2162,7 +2164,7 @@ class MusicCog(commands.Cog):
             await vc.queue.put_wait(it)
         await interaction.response.send_message(embed=embed_success("Removed", f"Removed **{removed.title}**"))
 
-    @app_commands.command(name="clear", description="Clear the entire queue.")
+    @music_group.command(name="clear", description="Clear the entire queue.")
     async def clear(self, interaction: discord.Interaction):
         vc: Optional[wavelink.Player] = get_player(interaction.guild)
         if not vc:
@@ -2170,7 +2172,7 @@ class MusicCog(commands.Cog):
         vc.queue.clear()
         await interaction.response.send_message(embed=embed_success("Cleared", "Queue cleared."))
 
-    @app_commands.command(name="toggle_247", description="Toggle 24/7 mode (bot stays in VC forever).")
+    @music_group.command(name="mode247", description="Toggle 24/7 mode (bot stays in VC forever).")
     async def toggle_247(self, interaction: discord.Interaction):
         gp = self.get_gp(interaction.guild.id)
         gp.mode_247 = not gp.mode_247

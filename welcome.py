@@ -1815,15 +1815,9 @@ class WelcomeCog(commands.Cog):
         self.welcome_group.add_command(app_commands.Command(name="setbg", description="Upload a custom background image or GIF (Recommended 1024x500)", callback=self.set_bg))
         self.welcome_group.add_command(app_commands.Command(name="setbgurl", description="Set a custom background image or GIF from a direct URL", callback=self.set_bg_url))
         self.welcome_group.add_command(app_commands.Command(name="test", description="Simulate a welcome card message inside the setup channel", callback=self.test_welcome))
+        self.welcome_group.add_command(app_commands.Command(name="setup", description="Open the interactive Welcome system setup panel", callback=self.welcomesetup))
         
         self.bot.tree.add_command(self.welcome_group)
-
-        # Single all-in-one interactive setup panel
-        self.bot.tree.add_command(app_commands.Command(
-            name="welcomesetup",
-            description="Open the interactive Welcome system setup panel",
-            callback=self.welcomesetup,
-        ))
         
         # We assign the commands to the leave group
         self.leave_group.add_command(app_commands.Command(name="toggle", description="Toggle the leave message system on or off", callback=self.leave_toggle))

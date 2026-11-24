@@ -683,7 +683,10 @@ async def help_cmd(interaction: discord.Interaction, category: str = None):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-@tree.command(name="sync-commands", description="Sync the bot's slash commands to this server")
+bot_group = app_commands.Group(name="bot", description=f"Bot utilities, diagnostics, and management")
+tree.add_command(bot_group)
+
+@bot_group.command(name="sync", description="Sync the bot's slash commands to this server")
 async def sync_commands(interaction: discord.Interaction):
     """Sync slash commands to the current guild."""
     if interaction.guild is None:
@@ -714,7 +717,7 @@ async def reactionroles(interaction: discord.Interaction):
     await auto_setup_reaction_roles()
 
 # Debug command to test custom emojis
-@tree.command(name="testemojis", description="Test if custom emojis are working")
+@bot_group.command(name="testemojis", description="Test if custom emojis are working")
 async def testemojis(interaction: discord.Interaction):
     """Test custom emojis (slash command)"""
     if not interaction.user.guild_permissions.manage_roles:
@@ -741,7 +744,7 @@ async def testemojis(interaction: discord.Interaction):
 command_sync_succeeded = False
 
 # Diagnostics command
-@tree.command(name="botdiagnostics", description=f"Display system and diagnostic info for {BOT_NAME} Bot")
+@bot_group.command(name="diagnostics", description=f"Display system and diagnostic info for {BOT_NAME} Bot")
 async def botdiagnostics(interaction: discord.Interaction):
     """Display system diagnostics (slash command)"""
     if not interaction.user.guild_permissions.manage_guild:
@@ -1180,7 +1183,10 @@ async def announcement(
     )
 
 
-@tree.command(name="valo", description="Invite players to join Valorant (Malayalam gaming call)")
+gaming_group = app_commands.Group(name="gaming", description="Gaming call invitations")
+tree.add_command(gaming_group)
+
+@gaming_group.command(name="valo", description="Invite players to join Valorant (Malayalam gaming call)")
 @app_commands.describe(
     role="Specific game/gaming role to ping",
     format="Text formatting style (optional)",
@@ -1204,7 +1210,7 @@ async def valo(
     await send_with_role_ping(interaction, interaction, content, role)
 
 
-@tree.command(name="pubg", description="Invite players to join PUBG (Malayalam gaming call)")
+@gaming_group.command(name="pubg", description="Invite players to join PUBG (Malayalam gaming call)")
 @app_commands.describe(
     role="Specific game/gaming role to ping",
     format="Text formatting style (optional)",

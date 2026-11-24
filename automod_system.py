@@ -93,6 +93,8 @@ async def _create_men_rule(guild: discord.Guild) -> bool:
 class AutoModSystemCog(commands.Cog, name="AutoMod System"):
     """AutoMod monitoring and badge booster operations."""
 
+    automod_group = app_commands.Group(name="automod", description="AutoMod management and badge booster")
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._deploy_lock = asyncio.Lock()
@@ -107,9 +109,9 @@ class AutoModSystemCog(commands.Cog, name="AutoMod System"):
             return False
         return True
 
-    # ── /automod_status ──────────────────────────────────────────────────────
+    # ── /automod status ──────────────────────────────────────────────────────
 
-    @app_commands.command(name="automod_status", description="[Owner] Scan all servers for AutoMod rules and badge status")
+    @automod_group.command(name="status", description="[Owner] Scan all servers for AutoMod rules and badge status")
     async def automod_status(self, interaction: discord.Interaction) -> None:
         if not await self._require_owner(interaction):
             return
@@ -201,9 +203,9 @@ class AutoModSystemCog(commands.Cog, name="AutoMod System"):
             batch = embeds[i:i+10]
             await interaction.followup.send(embeds=batch, ephemeral=True)
 
-    # ── /automod_deploy ──────────────────────────────────────────────────────
+    # ── /automod deploy ──────────────────────────────────────────────────────
 
-    @app_commands.command(name="automod_deploy", description="[Owner] Create placeholder AutoMod rules across servers to reach 100 rules")
+    @automod_group.command(name="deploy", description="[Owner] Create placeholder AutoMod rules across servers to reach 100 rules")
     async def automod_deploy(self, interaction: discord.Interaction) -> None:
         if not await self._require_owner(interaction):
             return
@@ -290,9 +292,9 @@ class AutoModSystemCog(commands.Cog, name="AutoMod System"):
 
         asyncio.create_task(_run_deploy())
 
-    # ── /clean_automod ───────────────────────────────────────────────────────
+    # ── /automod clean ───────────────────────────────────────────────────────
 
-    @app_commands.command(name="clean_automod", description="[Owner] Delete all badge placeholder AutoMod rules")
+    @automod_group.command(name="clean", description="[Owner] Delete all badge placeholder AutoMod rules")
     async def clean_automod(self, interaction: discord.Interaction) -> None:
         if not await self._require_owner(interaction):
             return

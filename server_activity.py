@@ -561,7 +561,7 @@ class ServerActivityCog(commands.Cog):
 
     # ── Config Command ────────────────────────────────────────────────────────
 
-    @app_commands.command(name="activity_config", description="Configure Text & Game analytics (Admin only)")
+    @text_group.command(name="config", description="Configure Text & Game analytics (Admin only)")
     @app_commands.describe(
         text_xp="Text XP per message (default 5, 30s cooldown)",
         text_coins="Coins per message (default 2, 30s cooldown)",

@@ -51,9 +51,9 @@ class BotProfileCog(commands.Cog):
         description="Customize the bot's name and profile picture in this server"
     )
 
-    # ── Owner-only guild approval: /bb ─────────────────────────────────────────
+    # ── Owner-only guild approval: /botprofile approve_banner ──────────────────
 
-    @app_commands.command(name="bb", description="Bot owner: approve or revoke banner access for a guild")
+    @profile_group.command(name="approve_banner", description="Bot owner: approve or revoke banner access for a guild")
     @app_commands.describe(guild_id="The Discord server ID", action="Approve or revoke banner access")
     @app_commands.choices(action=[
         app_commands.Choice(name="Approve", value="approve"),
@@ -96,9 +96,9 @@ class BotProfileCog(commands.Cog):
                 "❌ Could not save the approval registry. No change was confirmed.", ephemeral=True
             )
 
-    # ── Global profile banner command: /botbanner ───────────────────────────────
+    # ── Global profile banner command: /botprofile set_banner ───────────────────
 
-    @app_commands.command(name="botbanner", description="Change the bot's global profile banner using an image URL")
+    @profile_group.command(name="set_banner", description="Change the bot's global profile banner using an image URL")
     @app_commands.describe(url="Direct HTTPS image URL (PNG, JPG, WEBP, or GIF)")
     @app_commands.checks.has_permissions(administrator=True)
     async def botbanner(self, interaction: discord.Interaction, url: str):

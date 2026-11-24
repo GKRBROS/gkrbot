@@ -1329,7 +1329,9 @@ class SecurityCog(commands.Cog):
 
     # ── Slash Commands ──────────────────────────────────────────────────────
 
-    @app_commands.command(name="warn", description="Issue a formal warning to a member")
+    warn_group = app_commands.Group(name="warn", description="Member warnings & infraction management")
+
+    @warn_group.command(name="add", description="Issue a formal warning to a member")
     @app_commands.describe(user="The member to warn", reason="Reason for the warning")
     @app_commands.default_permissions(moderate_members=True)
     async def warn_user(self, interaction: discord.Interaction, user: discord.Member, reason: str) -> None:
@@ -1375,7 +1377,7 @@ class SecurityCog(commands.Cog):
         except discord.Forbidden:
             pass
 
-    @app_commands.command(name="warnings", description="View a member's warning history")
+    @warn_group.command(name="list", description="View a member's warning history")
     @app_commands.describe(user="The member to inspect")
     @app_commands.default_permissions(moderate_members=True)
     async def view_warnings(self, interaction: discord.Interaction, user: discord.Member) -> None:
@@ -1408,8 +1410,8 @@ class SecurityCog(commands.Cog):
             embed.set_footer(text=f"Showing latest 10 of {len(warns):,} total warnings")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="delwarn", description="Delete a specific warning by its ID")
-    @app_commands.describe(warning_id="The warning ID (found in /warnings)")
+    @warn_group.command(name="remove", description="Delete a specific warning by its ID")
+    @app_commands.describe(warning_id="The warning ID (found in /warn list)")
     @app_commands.default_permissions(moderate_members=True)
     async def delwarn(self, interaction: discord.Interaction, warning_id: int) -> None:
         success = self.db.remove_warning(interaction.guild.id, warning_id)
@@ -1427,7 +1429,7 @@ class SecurityCog(commands.Cog):
         else:
             await interaction.response.send_message(embed=embed_error(f"Warning `#{warning_id}` could not be found."), ephemeral=True)
 
-    @app_commands.command(name="clearwarns", description="Clear all warnings for a member")
+    @warn_group.command(name="clear", description="Clear all warnings for a member")
     @app_commands.describe(user="The member to clear warnings for")
     @app_commands.default_permissions(administrator=True)
     async def clearwarns(self, interaction: discord.Interaction, user: discord.Member) -> None:
@@ -1443,7 +1445,9 @@ class SecurityCog(commands.Cog):
             event="security_warn"
         )
 
-    @app_commands.command(name="imagescan", description="Toggle automatic image scanning for this server")
+    imagescan_group = app_commands.Group(name="imagescan", description="Automatic image security scanner")
+
+    @imagescan_group.command(name="toggle", description="Toggle automatic image scanning for this server")
     @app_commands.describe(enabled="Turn image scanning ON or OFF")
     @app_commands.choices(enabled=[
         app_commands.Choice(name="Enable", value=1),
@@ -1465,7 +1469,7 @@ class SecurityCog(commands.Cog):
             event="security_warn"
         )
 
-    @app_commands.command(name="imagescan_test", description="Test the image scanner against a sample file or URL")
+    @imagescan_group.command(name="test", description="Test the image scanner against a sample file or URL")
     @app_commands.describe(image="Upload an image file to scan", url="Or paste a direct image URL (https://...)")
     @app_commands.default_permissions(administrator=True)
     async def imagescan_test(self, interaction: discord.Interaction, image: Optional[discord.Attachment] = None, url: Optional[str] = None) -> None:
@@ -1833,9 +1837,9 @@ class SecurityCog(commands.Cog):
             else:
                 await self._safe_respond(interaction, embed_info("Not Found", f"{target.mention} is not in the Anti-Nuke whitelist."), ephemeral=True)
 
-    # ── Top-Level /whitelist and /unwhitelist Commands ─────────────────────────
+    # ── /security whitelist and /security unwhitelist Commands ────────────────
 
-    @app_commands.command(name="whitelist", description="Whitelist a user or bot for Anti-Nuke immunity and assign power role")
+    @security_group.command(name="whitelist", description="Whitelist a user or bot for Anti-Nuke immunity and assign power role")
     @app_commands.describe(target="The member, user, or bot to whitelist", role="Optional power role to grant them")
     @app_commands.default_permissions(administrator=True)
     async def whitelist(
@@ -1887,7 +1891,7 @@ class SecurityCog(commands.Cog):
         )
         await self._safe_respond(interaction, embed, ephemeral=False)
 
-    @app_commands.command(name="unwhitelist", description="Remove a user or bot from whitelist and immediately strip all power roles")
+    @security_group.command(name="unwhitelist", description="Remove a user or bot from whitelist and immediately strip all power roles")
     @app_commands.describe(target="The member, user, or bot to unwhitelist")
     @app_commands.default_permissions(administrator=True)
     async def unwhitelist(
