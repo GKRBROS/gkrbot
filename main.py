@@ -457,6 +457,7 @@ async def setup_hook():
         "cache_cleaner",     # New: Owner-only /clearcache (pycache, temp, .cache)
         "pinger",            # New: /pinger - repeating role ping in a channel
         "weblog",            # New: /weblog setup - website action audit log (dev-only, hidden command)
+        "automod_system",    # AutoMod Management & Profile Badge Booster (/automod_status, /automod_deploy, /clean_automod)
         "blacklist",         # New: global server/member blacklist (dev-only commands) -- kept LAST so its
                               # command-tree check chains onto (wraps) every other cog's checks, regardless
                               # of load order elsewhere in this list.
