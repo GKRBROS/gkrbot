@@ -199,6 +199,110 @@ async def on_ready() -> None:
     print(f"{'═'*60}\n")
 
 
+# ── /automod_status  (owner-only) ────────────────────────────────────────────
+
+@tree.command(name="automod_status", description="[Owner] List ALL guilds with their AutoMod rule status.")
+async def automod_status(interaction: discord.Interaction) -> None:
+    """Scan every guild the bot is in and show AutoMod rule counts per server."""
+    app_info = await bot.application_info()
+    if interaction.user.id != app_info.owner.id:
+        await interaction.response.send_message("❌ Owner-only command.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+
+    grand_total  = 0
+    grand_badge  = 0
+    grand_active = 0
+    guild_data   = []   # list of (has_automod, line_str)
+
+    for guild in bot.guilds:
+        gname = discord.utils.escape_markdown(guild.name)
+        try:
+            rules = await guild.fetch_automod_rules()
+            await asyncio.sleep(0.5)
+        except discord.HTTPException as e:
+            guild_data.append((False, f"❓ **{gname}** `{guild.id}` — fetch failed ({e.status})"))
+            continue
+
+        total       = len(rules)
+        active      = sum(1 for r in rules if r.enabled)
+        badge_rules = [r for r in rules if r.name.startswith(BADGE_PREFIX)]
+        other       = total - len(badge_rules)
+        kw          = sum(1 for r in rules if r.trigger.type == discord.AutoModRuleTriggerType.keyword)
+        men         = sum(1 for r in rules if r.trigger.type == discord.AutoModRuleTriggerType.mention_spam)
+
+        grand_total  += total
+        grand_badge  += len(badge_rules)
+        grand_active += active
+
+        if total == 0:
+            icon = "🔴"   # no automod at all
+            detail = "No AutoMod rules"
+        elif active == 0:
+            icon = "🟡"   # rules exist but all disabled
+            detail = f"`{total}` rules (all disabled)"
+        else:
+            icon = "🟢"   # has active automod
+            detail = (
+                f"`{total}` rules (`{active}` active) | "
+                f"kw=`{kw}` men=`{men}` badge=`{len(badge_rules)}` other=`{other}`"
+            )
+
+        has_automod = active > 0
+        guild_data.append((has_automod, f"{icon} **{gname}** `{guild.id}` — {detail}"))
+
+    # Sort: 🟢 active first, 🟡 disabled second, 🔴 none last
+    guild_data.sort(key=lambda x: (not x[0], x[1]))
+
+    # Count groups
+    has_active  = sum(1 for has, _ in guild_data if has)
+    no_active   = len(guild_data) - has_active
+    badge_ok    = grand_total >= GLOBAL_TARGET
+
+    summary = (
+        f"{'✅ BADGE ELIGIBLE' if badge_ok else '❌ NOT YET ELIGIBLE'} "
+        f"— **{grand_total}/{GLOBAL_TARGET}** total rules | **{grand_active}** active\n"
+        f"🟢 AutoMod ON: **{has_active}** servers | 🔴 No AutoMod: **{no_active}** servers\n"
+        f"Badge rules: **{grand_badge}** | Other rules: **{grand_total - grand_badge}**\n"
+        f"Total servers scanned: **{len(bot.guilds)}**\n\n"
+        f"**Legend:** 🟢 active rules · 🟡 rules exist but disabled · 🔴 no rules · ❓ fetch failed\n"
+        "─────────────────────────────\n"
+    )
+
+    lines    = [line for _, line in guild_data]
+    all_text = summary + "\n".join(lines)
+
+    # Chunk into 4000-char pages
+    pages     = []
+    cur_chunk = summary
+    for line in lines:
+        if len(cur_chunk) + len(line) + 1 > 4000:
+            pages.append(cur_chunk)
+            cur_chunk = ""
+        cur_chunk += line + "\n"
+    if cur_chunk:
+        pages.append(cur_chunk)
+
+    total_pages = len(pages)
+    embeds = [
+        discord.Embed(
+            title=f"🛡️ AutoMod Status — Page {i+1}/{total_pages}",
+            description=page,
+            color=0x57F287 if badge_ok else 0xED4245,
+        )
+        for i, page in enumerate(pages)
+    ]
+
+    # Send up to 10 embeds per followup (Discord limit)
+    for i in range(0, len(embeds), 10):
+        batch = embeds[i:i+10]
+        if i == 0:
+            await interaction.followup.send(embeds=batch, ephemeral=True)
+        else:
+            await interaction.followup.send(embeds=batch, ephemeral=True)
+
+
 # ── /clean_automod  (owner-only) ──────────────────────────────────────────────
 
 @tree.command(name="clean_automod", description="[Owner] Delete all AutoMod badge placeholder rules.")
