@@ -919,9 +919,23 @@ class DevLogsCog(commands.Cog):
             await interaction.response.send_message(embed=embed_error("Developer only."), ephemeral=True)
             return
 
-        lines = [f"• **{g.name}** — `{g.member_count:,}` members" for g in self.bot.guilds]
-        embed = embed_info(f"🌐  Active Guilds ({len(self.bot.guilds)})", "\n".join(lines[:25]))
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        guilds = sorted(self.bot.guilds, key=lambda g: g.member_count or 0, reverse=True)
+        all_lines = [
+            f"`{i+1}.` **{g.name}** — `{g.member_count:,}` members  •  `{g.id}`"
+            for i, g in enumerate(guilds)
+        ]
+        page_size = 20
+        chunks = [all_lines[i:i+page_size] for i in range(0, len(all_lines), page_size)]
+        total = len(guilds)
+        pages = [
+            embed_info(
+                f"🌐  Active Guilds ({total})  —  Page {idx+1}/{len(chunks)}",
+                "\n".join(chunk)
+            )
+            for idx, chunk in enumerate(chunks)
+        ]
+        view = Paginator(pages, interaction.user.id)
+        await interaction.response.send_message(embed=pages[0], view=view, ephemeral=True)
 
     @dev_group.command(name="members", description="View members of any guild the bot is in")
     @app_commands.describe(guild_id="The server ID to inspect")
